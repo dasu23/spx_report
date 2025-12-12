@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>粒子星球手势控制</title>
+    <!-- 引入 Tailwind CSS CDN for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 设置全局字体和背景 */
+        body {
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            overflow: hidden; /* 隐藏滚动条 */
+            background-color: #0d0d1f; /* 深蓝色/紫色背景 */
+        }
+        canvas {
+            display: block;
+        }
+        /* 隐藏 MediaPipe 视频流，但保留其用于处理帧 */
+        #videoElement {
+            display: none;
+            visibility: hidden;
+            position: absolute;
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center h-screen w-screen">
+
+    <!-- 状态和加载信息 -->
+    <div id="status" class="absolute top-0 left-0 p-4 text-white text-sm bg-gray-900 bg-opacity-70 rounded-br-lg z-50">
+        <p id="loading-msg">正在加载 MediaPipe 模型和摄像头...</p>
+        <p id="detection-msg" class="hidden">手势检测：未检测到手</p>
+        <p id="gesture-msg" class="hidden">当前手势：中立</p>
+    </div>
+
+    <!-- 视频元素 (用于 MediaPipe 处理) -->
+    <video id="videoElement" autoplay playsinline></video>
+
+    <!-- 3D 渲染容器 -->
+    <div id="container" class="w-full h-full"></div>
+
+    <!-- 引入 Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <!--
+        重要修复：移除 MediaPipe 静态加载，改为通过 JS 动态加载，利用 onload 事件确保库已定义。
+
+        Removed:
+        <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469614/hands.js" crossorigin="anonymous"></script>
+        <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675467364/camera_utils.js" crossorigin="anonymous"></script>
+    -->
+
+    <script>
+        // --- Three.js 全局变量 ---
+        let scene, camera, renderer, container;
+        let coreParticles, ring1Particles, ring2Particles;
+        let clock = new THREE.Clock();
+
+        // --- 摄像机控制状态 (模仿 OrbitControls) ---
+        const target = new THREE.Vector3(0, 0, 0); // 摄像机始终注视的点
+        let cameraDistance = 600; // 当前摄像机到目标的距离
+        const MIN_DISTANCE = 300;
+        const MAX_DISTANCE = 1200;
+        let phi = 0; // 极角 (俯仰角)
+        let theta = 0; // 方位角 (水平旋转)
+        let zoomVelocity = 0; // 缩放速度
+        const ZOOM_ACCELERATION = 2.0;
+        const ZOOM_DAMPING = 0.92;
+        const ROTATION_DAMPING = 0.9;
+        const CAMERA_SMOOTHNESS = 0.1; // 摄像机移动平滑度
+
+        // --- MediaPipe 状态 ---
+        let hands, cameraUtils;
+        let isMediaPipeReady = false;
+        let lastZ = null; // 记录上一帧的手部 Z 坐标
+        let targetTheta = 0; // 目标水平旋转角度
+        let rollVelocity = 0; // 手部旋转引起的旋转速度
+
+
+        // 初始化 Three.js 场景
+        function initThree() {
+            container = document.getElementById('container');
+
+            // 1. 场景
+            scene = new THREE.Scene();
+
+            // 2. 摄像机
+            const aspect = container.clientWidth / container.clientHeight;
+            camera = new THREE.PerspectiveCamera(75, aspect, 1, 5000);
+            camera.position.set(0, 0, cameraDistance);
+            camera.lookAt(target);
+
+            // 3. 渲染器
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            container.appendChild(renderer.domElement);
+
+            // 4. 灯光 (粒子材质不需要，但可以增加环境光)
+            const ambientLight = new THREE.AmbientLight(0x404040, 5); // 柔和的环境光
+            scene.add(ambientLight);
+
+            // 5. 创建粒子系统
+            createParticles();
+
+            // 6. 窗口大小调整监听
+            window.addEventListener('resize', onWindowResize);
+
+            document.getElementById('loading-msg').textContent = 'MediaPipe 和 3D 场景已加载，正在开始动态加载 MediaPipe 库...';
+
+            // 开始动画循环
+            animate();
+        }
+
+        // 调整窗口大小
+        function onWindowResize() {
+            const width = container.clientWidth;
+            const height = container.clientHeight;
+            camera.aspect = width / height;
+            camera.updateProjectionMatrix();
+            renderer.setSize(width, height);
+        }
+
+        // 创建粒子系统 (星球核心和两层环绕粒子)
+        function createParticles() {
+            // --- 粒子材质 ---
+            const coreMaterial = new THREE.PointsMaterial({
+                color: 0xFF8C00, // 绚烂的橙色
+                size: 3.5,
+                blending: THREE.AdditiveBlending,
+                transparent: true,
+                depthWrite: false, // 提高性能
+            });
+
+            const ringMaterial = new THREE.PointsMaterial({
+                color: 0xFFFFFF, // 白色
+                size: 2.0,
+                blending: THREE.AdditiveBlending,
+                transparent: true,
+                depthWrite: false,
+            });
+
+            // --- 1. 星球核心 (密集橙色粒子) ---
+            const coreCount = 15000;
+            const coreGeometry = new THREE.BufferGeometry();
+            const corePositions = [];
+            const radius = 100;
+
+            for (let i = 0; i < coreCount; i++) {
+                // 使用球坐标随机分布
+                const r = Math.random() * radius;
+                const theta = Math.random() * 2 * Math.PI;
+                const phi = Math.acos(Math.random() * 2 - 1); // 均匀分布在球面上
+
+                const x = r * Math.sin(phi) * Math.cos(theta);
+                const y = r * Math.sin(phi) * Math.sin(theta);
+                const z = r * Math.cos(phi);
+
+                // 在靠近球面处增加密度（例如，将 r 偏向 radius）
+                const finalR = radius * (1 - (Math.random() ** 3));
+
+                corePositions.push(x, y, z);
+            }
+            coreGeometry.setAttribute('position', new THREE.Float32BufferAttribute(corePositions, 3));
+            coreParticles = new THREE.Points(coreGeometry, coreMaterial);
+            scene.add(coreParticles);
+
+
+            // --- 2. 第一层环绕粒子 (白色，更靠近核心) ---
+            const ring1Count = 5000;
+            const ring1Geometry = new THREE.BufferGeometry();
+            const ring1Positions = [];
+            const ring1Radius = 250;
+            for (let i = 0; i < ring1Count; i++) {
+                const r = ring1Radius + (Math.random() * 50 - 25);
+                const theta = Math.random() * 2 * Math.PI;
+                const phi = (Math.random() * 2 - 1) * Math.PI * 0.2; // 限制在赤道面附近
+
+                const x = r * Math.sin(phi) * Math.cos(theta);
+                const y = r * Math.sin(phi) * Math.sin(theta);
+                const z = r * Math.cos(phi);
+
+                ring1Positions.push(x, y, z);
+            }
+            ring1Geometry.setAttribute('position', new THREE.Float32BufferAttribute(ring1Positions, 3));
+            ring1Particles = new THREE.Points(ring1Geometry, ringMaterial);
+            scene.add(ring1Particles);
+
+            // --- 3. 第二层环绕粒子 (白色，较远) ---
+            const ring2Count = 5000;
+            const ring2Geometry = new THREE.BufferGeometry();
+            const ring2Positions = [];
+            const ring2Radius = 450;
+            for (let i = 0; i < ring2Count; i++) {
+                const r = ring2Radius + (Math.random() * 100 - 50);
+                const theta = Math.random() * 2 * Math.PI;
+                const phi = Math.acos(Math.random() * 2 - 1); // 均匀分布在球壳上
+
+                const x = r * Math.sin(phi) * Math.cos(theta);
+                const y = r * Math.sin(phi) * Math.sin(theta);
+                const z = r * Math.cos(phi);
+
+                ring2Positions.push(x, y, z);
+            }
+            ring2Geometry.setAttribute('position', new THREE.Float32BufferAttribute(ring2Positions, 3));
+            ring2Particles = new THREE.Points(ring2Geometry, ringMaterial);
+            scene.add(ring2Particles);
+
+            // 稍微旋转一下粒子系统，增加动态感
+            coreParticles.rotation.x = Math.PI / 8;
+        }
+
+        /**
+         * 动态加载脚本并执行回调函数
+         * @param {string} src 脚本的 URL
+         * @param {function} onloadCallback 脚本加载成功后的回调
+         */
+        function loadScript(src, onloadCallback) {
+            const script = document.createElement('script');
+            script.src = src;
+            script.crossOrigin = 'anonymous';
+
+            script.onload = () => {
+                console.log(`Script loaded successfully: ${src}`);
+                onloadCallback();
+            };
+
+            script.onerror = () => {
+                const loadingMsg = document.getElementById('loading-msg');
+                loadingMsg.textContent = `严重错误：无法加载 MediaPipe 库 (${src.split('/').pop()})，请检查网络连接。`;
+                console.error(`MediaPipe library failed to load: ${src}`);
+            };
+
+            document.head.appendChild(script);
+        }
+
+        // 启动动态加载流程
+        function startMediaPipeLoading() {
+            // 检查是否在 HTTPS 环境下（摄像头访问需要 HTTPS）
+            if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+                document.getElementById('loading-msg').textContent = '错误：摄像头访问需要 HTTPS 环境。请使用 HTTPS 访问此页面。';
+                document.getElementById('status').classList.add('bg-red-900');
+                return;
+            }
+
+            // 修复: 将版本号从具体构建时间戳改为稳定版本号 @0.4 和 @0.3，提高 CDN 链接的稳定性
+            const HANDS_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js";
+            const CAMERA_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js";
+
+            document.getElementById('loading-msg').textContent = '正在加载 MediaPipe Hands 模型...';
+
+            // 1. 先加载 Hands
+            loadScript(HANDS_URL, () => {
+                document.getElementById('loading-msg').textContent = 'MediaPipe Hands 已加载，正在加载 Camera Utils...';
+
+                // 2. Hands 加载成功后，再加载 CameraUtils
+                loadScript(CAMERA_URL, () => {
+                    // 3. 两个库都加载完毕，执行初始化逻辑
+                    initMediaPipeLogic();
+                });
+            });
+        }
+
+        // 实际的 MediaPipe Hands 初始化逻辑
+        async function initMediaPipeLogic() {
+            // 此时 window.Hands 和 window.Camera 保证已存在
+            console.log("MediaPipe libraries detected and ready. Initializing...");
+
+            // 使用 window.Hands 确保引用正确
+            hands = new window.Hands({
+                locateFile: (file) => {
+                    // 修复: 保持 locateFile 的模型路径与新的 CDN 路径一致
+                    return `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${file}`;
+                }
+            });
+
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+
+            hands.onResults(onResults);
+
+            const videoElement = document.getElementById('videoElement');
+            const loadingMsg = document.getElementById('loading-msg');
+            const statusDiv = document.getElementById('status');
+
+            // 首先检查是否有可用的摄像头设备
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(device => device.kind === 'videoinput');
+
+                if (videoDevices.length === 0) {
+                    loadingMsg.textContent = '错误：未检测到摄像头设备。请确保摄像头已连接。';
+                    console.error('No camera devices found');
+                    statusDiv.classList.add('bg-red-900');
+                    return;
+                }
+
+                console.log(`Found ${videoDevices.length} camera device(s)`);
+            } catch (err) {
+                console.error('Error enumerating devices:', err);
+                loadingMsg.textContent = '错误：无法访问媒体设备。请检查权限设置。';
+                statusDiv.classList.add('bg-red-900');
+                return;
+            }
+
+            // 使用 window.Camera 确保引用正确
+            try {
+                cameraUtils = new window.Camera(videoElement, {
+                    onFrame: async () => {
+                        await hands.send({ image: videoElement });
+                    },
+                    width: 640,
+                    height: 480
+                });
+
+                await cameraUtils.start();
+
+                isMediaPipeReady = true;
+                loadingMsg.textContent = 'MediaPipe 模型和摄像头已启动，手势控制激活。';
+                console.log('Camera started successfully');
+
+            } catch (error) {
+                console.error('Camera initialization error:', error);
+
+                if (error.name === 'NotFoundError' || error.message.includes('Requested device not found')) {
+                    loadingMsg.textContent = '错误：找不到摄像头设备。请确保摄像头已连接并未被其他应用占用。';
+                } else if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+                    loadingMsg.textContent = '错误：摄像头权限被拒绝。请在浏览器设置中允许摄像头访问。';
+                } else if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
+                    loadingMsg.textContent = '错误：摄像头被其他应用占用。请关闭其他使用摄像头的应用后重试。';
+                } else {
+                    loadingMsg.textContent = `错误：摄像头启动失败 (${error.name})。请检查摄像头连接和权限设置。`;
+                }
+
+                statusDiv.classList.add('bg-red-900');
+
+                // 添加重试按钮
+                const retryButton = document.createElement('button');
+                retryButton.textContent = '重试';
+                retryButton.className = 'mt-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors';
+                retryButton.onclick = () => {
+                    statusDiv.classList.remove('bg-red-900');
+                    retryButton.remove();
+                    initMediaPipeLogic();
+                };
+                statusDiv.appendChild(retryButton);
+            }
+        }
+
+
+        // 核心：处理 MediaPipe 结果并更新 3D 状态
+        function onResults(results) {
+            const detectionMsg = document.getElementById('detection-msg');
+            const gestureMsg = document.getElementById('gesture-msg');
+
+            if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+                // 未检测到手
+                detectionMsg.classList.remove('hidden');
+                detectionMsg.textContent = '手势检测：未检测到手';
+                lastZ = null; // 重置 Z 深度
+                return;
+            }
+
+            detectionMsg.classList.remove('hidden');
+            detectionMsg.textContent = '手势检测：已检测到手';
+
+            const landmarks = results.multiHandLandmarks[0];
+            const wrist = landmarks[0];
+            const indexTip = landmarks[8];
+            const thumbTip = landmarks[4];
+            const pinkyTip = landmarks[20];
+            const middleTip = landmarks[12];
+
+            // 1. 识别手势 (Fist / Open Hand)
+            // 简化判断：检查指尖和手腕的距离，以及指尖相互间的距离
+            const dist = (p1, p2) => Math.sqrt((p1.x - p2.x)**2 + (p1.y - p2.y)**2 + (p1.z - p2.z)**2);
+
+            // 握拳: 拇指尖和食指尖距离非常小 (在 Normalized 坐标系中)
+            const indexThumbDist = dist(indexTip, thumbTip);
+            const isFist = indexThumbDist < 0.05;
+
+            // 张开手: 食指尖和尾指尖距离较大
+            const indexPinkyDist = dist(indexTip, pinkyTip);
+            const isOpenHand = indexPinkyDist > 0.25 && indexThumbDist > 0.1;
+
+            let currentGesture = '中立';
+            let acceleration = 0; // 加速度值
+
+            // 2. 深度控制 (Zoom)
+            const currentZ = wrist.z; // Z 坐标 (0.5 是中心，越小越靠近摄像头)
+
+            if (lastZ !== null) {
+                const deltaZ = currentZ - lastZ;
+
+                if (isFist) {
+                    currentGesture = '握拳 (Zoom Out)';
+                    gestureMsg.classList.remove('hidden');
+                    // 握拳并远离摄像头 (deltaZ > 0) -> 快速远离
+                    if (deltaZ > 0.005) {
+                        acceleration = ZOOM_ACCELERATION;
+                    }
+                } else if (isOpenHand) {
+                    currentGesture = '张开 (Zoom In)';
+                    gestureMsg.classList.remove('hidden');
+                    // 张开手并靠近摄像头 (deltaZ < -0.005) -> 快速靠近
+                    if (deltaZ < -0.005) {
+                        acceleration = -ZOOM_ACCELERATION;
+                    }
+                } else {
+                    currentGesture = '中立';
+                }
+            }
+
+            gestureMsg.textContent = `当前手势：${currentGesture}`;
+
+            // 应用加速度到缩放速度
+            zoomVelocity += acceleration;
+            lastZ = currentZ;
+
+            // 3. 旋转控制 (Roll)
+            // 计算手部 roll 角度 (从手腕到中指尖的向量与 Y 轴的角度)
+            // 使用屏幕 XY 坐标，忽略 Z 深度对角度的影响
+            const handVectorX = middleTip.x - wrist.x;
+            const handVectorY = middleTip.y - wrist.y;
+
+            // 角度 (弧度) - Math.atan2(y, x)
+            const rollRad = Math.atan2(handVectorY, handVectorX);
+
+            // 将弧度映射到旋转速度。当手接近水平时，rollRad 接近 0 或 PI。
+            // 简单地使用水平分量 handVectorX 的变化来控制旋转，更符合直觉。
+            // 也可以直接用 rollRad 的值来驱动旋转。
+
+            // 目标旋转速度: 范围 -1 到 1
+            let targetRollSpeed = -Math.sin(rollRad * 2);
+
+            // 将目标速度平滑地应用到 rotation velocity
+            rollVelocity = rollVelocity * 0.9 + targetRollSpeed * 0.1;
+
+            // 将 roll velocity 转换为水平旋转
+            targetTheta += rollVelocity * 0.005; // 旋转速度系数
+        }
+
+        // 动画循环
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // 1. 更新粒子自身的旋转
+            const delta = clock.getDelta();
+            const rotationSpeed = delta * 0.1;
+            if (coreParticles) {
+                coreParticles.rotation.y += rotationSpeed * 0.5;
+                ring1Particles.rotation.y -= rotationSpeed;
+                ring2Particles.rotation.y += rotationSpeed * 0.3;
+            }
+
+            // 2. 更新摄像机距离 (Zoom Physics)
+
+            // 应用缩放速度
+            cameraDistance += zoomVelocity;
+
+            // 阻尼/衰减 (速度先快后慢/先慢后快的效果)
+            zoomVelocity *= ZOOM_DAMPING;
+
+            // 限制距离
+            cameraDistance = Math.max(MIN_DISTANCE, Math.min(MAX_DISTANCE, cameraDistance));
+
+
+            // 3. 更新摄像机旋转 (Rotation)
+
+            // 平滑地将当前旋转角度朝向目标旋转角度
+            theta += (targetTheta - theta) * ROTATION_DAMPING * delta * 5;
+
+            // 将球坐标转换为直角坐标 (摄像机位置)
+            const radTheta = theta;
+            // 保持 phi (俯仰角) 接近水平，避免摄像机移到上下方
+            const radPhi = 0; // 始终保持在赤道面上
+
+            const camX = cameraDistance * Math.cos(radPhi) * Math.sin(radTheta);
+            const camZ = cameraDistance * Math.cos(radPhi) * Math.cos(radTheta);
+            const camY = cameraDistance * Math.sin(radPhi);
+
+            // 更新摄像机位置
+            camera.position.x += (camX - camera.position.x) * CAMERA_SMOOTHNESS;
+            camera.position.y += (camY - camera.position.y) * CAMERA_SMOOTHNESS;
+            camera.position.z += (camZ - camera.position.z) * CAMERA_SMOOTHNESS;
+
+            // 始终看向目标中心
+            camera.lookAt(target);
+
+            // 4. 渲染
+            renderer.render(scene, camera);
+        }
+
+        // 页面加载完成后启动
+        window.onload = function() {
+            initThree();
+            // 启动动态加载流程
+            startMediaPipeLoading();
+        };
+
+    </script>
+</body>
+</html>
