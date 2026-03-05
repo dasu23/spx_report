@@ -182,24 +182,24 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: spx-brand | 生成时间: 2026-03-05 05:46:23</p>
+      <p class="hero-meta">服务: spx-brand | 生成时间: 2026-03-05 08:11:06</p>
     </header>
 
     <section class="summary">
       <h2>总体结论</h2>
-      <p>基线为 `LAST_TAG v1.13.2`（对比区间：`v1.13.2..HEAD`）。本次变更存在 1 个 Critical（敏感数据日志泄露）和 2 个 Major（GA 事件失效、错误告警降级）问题，建议优先修复后再发布。</p>
+      <p>基于 `LAST_TAG v1.13.2` 对比 `HEAD` 审查：本次变更主要风险集中在新增日志策略，存在多处敏感信息全量落日志的问题（高风险），并伴随错误日志级别降级导致监控退化。</p>
       <p class="risk-line">Risk Score: 8 / 10</p>
       <div class="chips">
-        <span class="chip critical">Critical: 1</span>
-        <span class="chip major">Major: 2</span>
+        <span class="chip critical">Critical: 3</span>
+        <span class="chip major">Major: 1</span>
         <span class="chip minor">Minor: 0</span>
         <span class="chip info">Info: 0</span>
-        <span class="chip">Total: 3</span>
+        <span class="chip">Total: 4</span>
       </div>
     </section>
 
     <h2 class="section-title">审查发现</h2>
-    <div class="file-block"><h3>src/app/api/error-log/route.ts</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>31-37</td><td>异常处理</td><td>错误上报接口将错误日志级别从 `error` 改为 `info`，会导致依赖 error-level 的告警/监控漏报，降低故障可观测性。</td><td>恢复为 `logger.error`，并保留结构化字段；若担心噪声，可增加采样或按 source 分级，而不是下调所有错误日志级别。</td><td>向 `/api/error-log` 发送一条前端异常，验证日志系统中该记录级别为 `ERROR` 且能触发既有告警规则。</td></tr></tbody></table></div><div class="file-block"><h3>src/app/api/tracking/[id]/route.ts</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>157-163</td><td>安全风险</td><td>新增日志将 `newData/data` 全量 `JSON.stringify` 输出，可能包含运单轨迹明细与用户相关信息。若日志被集中采集或开放查询，会形成敏感数据暴露风险。</td><td>改为最小化日志：仅记录必要字段（如 `trackingId` 脱敏值、`success`、`eventCount`、`code`），禁止输出完整 payload。可增加通用脱敏函数，对 tracking number/地址类字段做掩码。</td><td>构造包含真实收件信息的追踪返回，调用 `/api/tracking/[id]` 后检查日志，确认不再出现完整 payload、完整 tracking number 或地址相关字段。</td></tr></tbody></table></div><div class="file-block"><h3>src/app/layout.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>56-58</td><td>业务逻辑</td><td>GA 初始化脚本中仅声明了局部 `gtag` 函数，未挂载到 `window.gtag`。而埋点发送逻辑依赖 `window.gtag`，会导致 `track_search/track_success/track_click` 等事件静默丢失。</td><td>在初始化时显式赋值：`window.gtag = function(){ window.dataLayer.push(arguments); }`，或改造 `gtagEvent` 直接向 `dataLayer` push 并兼容 `window.gtag` 不存在场景。</td><td>打开追踪页并触发搜索，使用浏览器网络面板验证除 `gtag/js` 外，能看到对应 GA event 请求（如 `track_click`）。</td></tr></tbody></table></div>
+    <div class="file-block"><h3>src/app/api/error-log/route.ts</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>31</td><td>异常处理</td><td>客户端错误上报从 `logger.error` 降级为 `logger.info`，会导致依赖 error 级别告警/监控的链路失效，线上异常可见性下降。</td><td>恢复为 `logger.error`（保留结构化字段），若担心噪音可按 `source` 做采样或限流，而不是降级日志级别。</td><td>触发一次前端 ErrorBoundary 上报，验证日志平台仍能命中 error 级别告警规则。</td></tr></tbody></table></div><div class="file-block"><h3>src/app/api/tracking/[id]/route.ts</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>157-164</td><td>安全风险</td><td>新增对 `newData`/`data` 的全量日志输出，会把轨迹明细与可能的用户相关字段写入日志，扩大敏感数据暴露面。</td><td>仅记录必要摘要字段（如 `trackingNumber` 掩码、events 数量、最终状态、耗时）；对异常时返回码和错误类型打点，不记录全量 payload。</td><td>请求一个真实运单后检查日志，确认不出现完整事件数组与地址/联系人类字段。</td></tr></tbody></table></div><div class="file-block"><h3>src/app/update-address/[id]/page.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>49-67</td><td>安全风险</td><td>将 `addressData` 和 `trackingData` 全量 `JSON.stringify` 到 info 日志，极可能包含收件地址等个人信息，属于高风险敏感数据暴露。</td><td>改为结构化最小日志：仅记录 `trackingNumber`（掩码后）、`success/code`、错误码与 traceId；禁止打印 `payload` 全量对象。</td><td>触发一次 update-address 请求并检查日志，确认不包含 street/city/postcode/name 等地址字段原文。</td></tr></tbody></table></div><div class="file-block"><h3>src/lib/logger/transports.ts</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>11-14</td><td>安全风险</td><td>新增 `referer` 原文写入日志（并在 138-140 行拼接到控制台日志），会把 URL 查询参数中的 token/手机号/邮箱等敏感信息直接落盘，存在数据泄露风险。</td><td>对 `referer` 做脱敏后再记录：仅保留 `origin + pathname`，移除 query/hash；并增加敏感参数黑名单（如 token、code、email、phone）统一替换为 `***`。</td><td>构造请求头 `referer: https://example.com/reset?token=abc123&amp;email=a@b.com`，确认日志中不出现 `abc123` 和邮箱明文。</td></tr></tbody></table></div>
   </div>
   <script>
     (function () {
