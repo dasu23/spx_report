@@ -182,24 +182,24 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: spx-brand | 生成时间: 2026-03-05 02:23:51</p>
+      <p class="hero-meta">服务: spx-brand | 生成时间: 2026-03-05 04:31:32</p>
     </header>
 
     <section class="summary">
       <h2>总体结论</h2>
-      <p>本次变更存在1个Critical和3个Major问题，主要集中在第三方脚本引入与日志敏感信息暴露，建议优先处理前端脚本供应链防护和日志脱敏。</p>
+      <p>本次变更整体较小，但存在一个高风险前端安全问题（全局外部脚本加载缺乏安全约束）和一个可观测性退化问题。建议优先修复脚本加载安全控制。</p>
       <p class="risk-line">Risk Score: 8 / 10</p>
       <div class="chips">
         <span class="chip critical">Critical: 1</span>
-        <span class="chip major">Major: 3</span>
-        <span class="chip minor">Minor: 0</span>
+        <span class="chip major">Major: 0</span>
+        <span class="chip minor">Minor: 1</span>
         <span class="chip info">Info: 0</span>
-        <span class="chip">Total: 4</span>
+        <span class="chip">Total: 2</span>
       </div>
     </section>
 
     <h2 class="section-title">审查发现</h2>
-    <div class="file-block"><h3>src/app/api/tracking/[id]/route.ts</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>157-160</td><td>安全风险</td><td>新增日志将 `newData`/`data` 整体输出到日志。该响应对象包含完整运单轨迹与业务字段，存在将用户/物流敏感数据长期落盘的风险。</td><td>改为结构化白名单日志，仅记录必要字段（如 trackingId、eventCount、success、errorCode）；禁止整对象 `%o` 输出业务 payload。</td><td>调用该接口返回包含用户地址/联系方式的样本数据，检查日志文件与控制台输出，确认仅保留白名单字段且无敏感明文。</td></tr></tbody></table></div><div class="file-block"><h3>src/app/api/tracks/route.ts</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>36</td><td>安全风险</td><td>新增日志 `tracks api new list: %o` 会输出批量 trackingNumber 列表及事件信息，扩大了可识别物流数据的暴露面。</td><td>仅记录聚合指标（请求条数、成功条数、耗时、traceId），对 trackingNumber 做部分掩码（如仅保留后4位）。</td><td>提交包含多个真实运单号的请求，验证日志中运单号已掩码且不输出完整事件内容。</td></tr></tbody></table></div><div class="file-block"><h3>src/app/layout.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>64</td><td>前端安全</td><td>在全局布局中直接加载第三方远程脚本 `https://sap-sit1.speedx.io/bridge.js`，未见完整性校验或 CSP 约束。该脚本会在所有页面执行，一旦源站脚本被篡改，将形成供应链型 XSS，可能导致用户数据泄露。</td><td>将脚本改为本地托管并随版本发布；若必须远程加载，至少增加 `integrity` + `crossOrigin`，并配置严格 CSP（仅允许可信脚本源，禁用内联未授权脚本）。同时按页面/功能按需加载，避免全站暴露面。</td><td>在测试环境将 `bridge.js` 替换为包含恶意代码的版本，验证浏览器是否因 SRI/CSP 拦截执行；再验证非依赖该脚本的页面不再加载该资源。</td></tr></tbody></table></div><div class="file-block"><h3>src/lib/logger/transports.ts</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>24-27</td><td>安全风险</td><td>新增 `referer` 全量采集并写入日志，`referer` 可能包含查询参数中的 token、邮箱、手机号等敏感信息，导致日志侧数据泄露风险。</td><td>记录前对 `referer` 做脱敏：仅保留 origin 或 path，移除 query/hash；对常见敏感参数名（如 `token`,`code`,`email`,`phone`）做统一掩码。</td><td>构造请求头 `referer=https://example.com/callback?token=abc123&amp;email=a@b.com`，确认日志中不出现明文 `abc123` 与邮箱。</td></tr></tbody></table></div>
+    <div class="file-block"><h3>src/app/layout.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>64</td><td>前端安全</td><td>在全局 RootLayout 中新增了外部脚本 `https://sap-sit1.speedx.io/bridge.js`，该脚本会在所有页面执行；当前未见完整性校验（SRI）、来源约束或环境开关控制，若外部资源被篡改/劫持可能直接导致用户数据泄露或前端被注入恶意逻辑。</td><td>将脚本改为受控静态资源（同源托管优先）；若必须第三方托管，至少增加 SRI 校验与 `crossOrigin`，并通过环境变量白名单控制仅在必要环境加载，同时配套严格 CSP（`script-src` 限制来源）。</td><td>1) 在生产配置下校验 CSP 是否仅允许白名单脚本来源；2) 将脚本 URL 切换为非白名单域名应被浏览器拦截；3) 篡改脚本内容后验证 SRI 能阻止执行。</td></tr></tbody></table></div><div class="file-block"><h3>src/app/update-address/[id]/page.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip minor">minor</span></td><td>59</td><td>异常处理</td><td>`!addressData.success` 分支的日志级别从 `logger.error` 变为 `logger.info`，会降低错误可观测性，导致告警/监控漏报，问题定位成本上升。</td><td>将该分支恢复为 `logger.error`（或至少 `warn` 并确保被监控系统采集），并保持与其他失败路径一致的错误级别策略。</td><td>模拟 `addressData.success=false`，验证日志平台中能以 error 级别检索到该事件，并可触发既有告警规则。</td></tr></tbody></table></div>
   </div>
   <script>
     (function () {
