@@ -182,12 +182,12 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: spx-brand | 生成时间: 2026-03-05 03:27:48</p>
+      <p class="hero-meta">服务: spx-brand | 生成时间: 2026-03-05 05:10:49</p>
     </header>
 
     <section class="summary">
       <h2>总体结论</h2>
-      <p>本次审查基线为 LAST_TAG `v1.13.2`（对比 `v1.13.2..HEAD`）。发现 2 个 Critical（日志敏感信息暴露）和 1 个 Major（错误日志降级导致告警缺失），建议优先修复日志脱敏与分级问题。</p>
+      <p>基线为 `LAST_TAG: v1.13.2`。本次变更主要风险集中在新增日志的敏感数据暴露，以及 middleware 鉴权头契约的脆弱实现。</p>
       <p class="risk-line">Risk Score: 8 / 10</p>
       <div class="chips">
         <span class="chip critical">Critical: 2</span>
@@ -199,7 +199,7 @@
     </section>
 
     <h2 class="section-title">审查发现</h2>
-    <div class="file-block"><h3>src/app/api/error-log/route.ts</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>31</td><td>异常处理</td><td>客户端错误上报由 `logger.error` 改为 `logger.info`，会导致错误级别告警/监控漏报，降低线上异常可观测性与响应速度。</td><td>恢复为 `logger.error`，并附带结构化字段（`source`、`url`、`componentStack`）。如担心噪音，可按 `source` 做采样而不是降级日志级别。</td><td>触发一次 error-boundary 上报，验证日志平台中该记录进入 error 通道并可触发既有告警规则。</td></tr></tbody></table></div><div class="file-block"><h3>src/app/api/tracking/[id]/route.ts</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>157-160</td><td>安全风险</td><td>将 `newData`/`data` 全量打到 info 日志，包含完整 tracking 事件与业务字段，容易在日志系统中长期留存并造成敏感数据暴露（符合数据泄露级别风险）。</td><td>改为最小化日志：仅记录 `trackingNumber`、`success`、`eventCount`、`errorCode` 等必要元数据；对 tracking 号做脱敏（如仅保留后4位）；严禁记录完整 payload。若排障必须打印详情，增加受控开关（仅临时、仅非生产）。</td><td>构造包含敏感字段的 tracking 返回（如地址/联系方式），调用 `/api/tracking/[id]` 后检查日志输出，断言不出现完整 payload 与明文敏感字段。</td></tr></tbody></table></div><div class="file-block"><h3>src/lib/logger/transports.ts</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>24-27</td><td>安全风险</td><td>新增对 `referer` 的全量采集并注入所有日志上下文，`referer` 常携带查询参数/业务标识，可能把用户标识或 token 写入日志，扩大敏感信息暴露面。</td><td>默认不要记录完整 referer；仅保留 `origin` 或路径白名单字段。若必须记录，先做脱敏（移除 query/hash、屏蔽常见敏感参数如 `token`/`email`/`phone`）。</td><td>请求携带 `Referer: https://example.com/page?token=abc&amp;email=a@b.com`，检查日志，断言不包含 query 中的敏感参数值。</td></tr></tbody></table></div>
+    <div class="file-block"><h3>src/app/api/tracking/[id]/route.ts</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>157-164</td><td>安全风险</td><td>将 `newData`/`data` 整体 `JSON.stringify` 后写入 info 日志，返回体中包含完整轨迹事件与可能的个人物流信息（如地址相关事件、时间线）。这会把业务敏感数据扩散到日志系统，形成敏感信息暴露风险。</td><td>移除整包 payload 日志，改为最小化字段记录：仅保留 `trackingNumber`（可脱敏）、`success`、`eventCount`、`errorCode`、`traceId`。如确需排障，增加受控 debug 开关并默认关闭，且对 tracking number 做掩码。</td><td>请求 `/api/tracking/{id}` 后检查日志内容，断言不出现完整 `payload/events` JSON，且仅包含约定的脱敏字段。</td></tr></tbody></table></div><div class="file-block"><h3>src/app/update-address/[id]/page.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>49-67</td><td>安全风险</td><td>新增日志把 `addressData` 与 `data` 全量序列化输出，地址更新场景数据通常包含收件地址等 PII。该改动会导致用户敏感信息进入应用日志。</td><td>改为结构化最小日志：记录 `trackingNumber`（脱敏）、`addressData.success`、`addressData.code`、`events.length`，禁止输出 `addressData.payload` 及完整 `data`。同时在日志层增加 PII 字段黑名单过滤。</td><td>访问更新地址页面并触发成功/失败分支，验证日志中不包含街道、姓名、电话等字段，也不包含完整 payload JSON。</td></tr></tbody></table></div><div class="file-block"><h3>src/middleware.ts</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>4-10</td><td>API契约</td><td>鉴权头名通过 `Object.keys(API_CONFIG.HEADERS)[0]` 动态取首项，和配置顺序强耦合。后续若 `HEADERS` 新增字段或调整顺序，middleware 可能校验到错误 header，导致 `/api/tracking/*` 被误拦截（404）。</td><td>显式定义固定 header 常量（例如 `const INTERNAL_KEY_HEADER = &#x27;inner-api-key&#x27;`），并仅对该键做校验；同时在启动时校验配置缺失并报错，避免静默失败。</td><td>在 `API_CONFIG.HEADERS` 中新增第二个 header 并调整顺序，验证 `/api/tracking/*` 仍只校验 `inner-api-key` 且请求行为不变。</td></tr></tbody></table></div>
   </div>
   <script>
     (function () {
