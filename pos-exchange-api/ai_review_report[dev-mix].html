@@ -182,24 +182,24 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: pos-exchange-api | 生成时间: 2026-03-05 11:48:43</p>
+      <p class="hero-meta">服务: pos-exchange-api | 生成时间: 2026-03-05 12:05:10</p>
     </header>
 
     <section class="summary">
       <h2>总体结论</h2>
-      <p>本次变更存在 1 个高风险安全问题和 2 个高价值稳定性问题。建议优先处理明文凭证泄露，再修复任务失败误判与 HttpClient 资源膨胀风险。</p>
-      <p class="risk-line">Risk Score: 8 / 10</p>
+      <p>本次变更存在多处高风险问题：明文凭证提交、鉴权 fail-open 以及多处动态 SQL 拼接。建议优先修复安全与查询构造问题后再合并。</p>
+      <p class="risk-line">Risk Score: 9 / 10</p>
       <div class="chips">
-        <span class="chip critical">Critical: 1</span>
-        <span class="chip major">Major: 2</span>
+        <span class="chip critical">Critical: 4</span>
+        <span class="chip major">Major: 1</span>
         <span class="chip minor">Minor: 0</span>
         <span class="chip info">Info: 0</span>
-        <span class="chip">Total: 3</span>
+        <span class="chip">Total: 5</span>
       </div>
     </section>
 
     <h2 class="section-title">审查发现</h2>
-    <div class="file-block"><h3>backend-common/src/main/java/com/miq/backendcommon/http/HttpClientUtil.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>120-128</td><td>资源管理</td><td>每个 host 创建一个 `HttpClientHolder` 时都会新建并启动一个 `IdleConnectionCleanTask` 线程；host 数量无上限控制，若出现大量动态域名会快速累积线程与连接池对象，可能引发内存/线程资源耗尽并影响服务可用性。</td><td>改为全局单一清理调度器（如 `ScheduledExecutorService`）统一清理所有连接池，或对 `domainClients` 增加最大容量与淘汰策略（LRU/TTL+上限）。</td><td>压测中连续请求大量唯一 host（如 5k+），监控线程数与堆内存，验证优化后线程数保持稳定且无明显资源飙升。</td></tr></tbody></table></div><div class="file-block"><h3>trk-job/src/main/java/com/miq/trkjob/jobhandler/RecipientInfoEncryptionJob.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>41-43</td><td>异常处理</td><td>任务捕获所有异常后仅记录日志，不抛出异常也不调用 `XxlJobHelper.handleFail`，会导致调度平台将失败任务判定为成功，数据加密失败无法被及时发现与重试。</td><td>在 catch 中调用 `XxlJobHelper.handleFail(...)` 并返回失败状态，或直接抛出运行时异常让 XXL-Job 标记失败；同时补充告警字段（fetchSize/createdDate）。</td><td>构造 `labelService.labelDataEncryption` 抛异常，验证任务执行结果为失败（非成功），并可在调度端看到失败原因。</td></tr></tbody></table></div><div class="file-block"><h3>trk-job/src/main/resources/bootstrap.yml</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>8-9</td><td>安全风险</td><td>Nacos 凭证以明文（`username: dev` / `password: Speedx@123`）提交到代码库，存在凭证泄露后被未授权访问配置中心的高风险。</td><td>立即移除仓库中的明文凭证，改为从密钥管理系统或环境变量注入（如 KMS/Secrets Manager/CI Secret），并轮换当前已暴露的账号密码。</td><td>在本地与 CI 环境启动时，验证未提供密钥时启动失败；提供密钥后可正常连接 Nacos；同时确认仓库历史中不再包含旧凭证（含历史提交扫描）。</td></tr></tbody></table></div>
+    <div class="file-block"><h3>tracking-service/src/main/java/com/miq/trackingservice/dao/LabelStatus57409DaoImpl.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>47-59</td><td>安全风险</td><td>通过字符串拼接构造 SQL `IN` 条件并直接注入 `poeZone` 值，缺少参数绑定与转义，存在 SQL 注入风险。</td><td>改为参数化查询（`?` 占位符）或 `NamedParameterJdbcTemplate` 批量绑定；对 `poe/internal_zone` 做类型与白名单校验，禁止拼接原始输入。</td><td>构造包含引号/SQL 片段的 `poeZone` 输入，验证查询不会改变 SQL 结构且仅按参数值匹配。</td></tr></tbody></table></div><div class="file-block"><h3>tracking-service/src/main/java/com/miq/trackingservice/service/job/InsertUndeliveredService.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>173-180</td><td>业务逻辑</td><td>新增 `getLastEventIs57104(List&lt;String&gt;)` 直接拼接 `tracking_no in (...)`，且未给 trackingNo 加引号。对常见字符串单号会生成非法 SQL，导致任务执行失败；同时也引入注入面。</td><td>使用参数化 `IN` 查询（`NamedParameterJdbcTemplate` 的 `:trackingNos`）并在空列表时直接返回空结果；禁止字符串拼接生成 SQL。</td><td>使用字母数字单号列表（如 `SPX123`）触发该方法，预期 SQL 正常执行并返回结果；再输入恶意字符验证不会被注入。</td></tr></tbody></table></div><div class="file-block"><h3>trk-job/src/main/java/com/miq/trkjob/interceptor/InnerApiKeyInterceptor.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>115-119</td><td>安全风险</td><td>`isValidApiKey` 在配置项 `innerApiKey` 为空时直接返回 `true`，会导致受保护接口在配置缺失/加载失败场景下全部放行，形成鉴权绕过。</td><td>改为 fail-closed：当 `innerApiKey` 为空时拒绝请求并告警；仅在显式配置了“关闭鉴权”开关且处于受控环境时才允许放行。</td><td>将 `exchange.trk.innerApiKey` 置空后请求受保护接口，预期返回未授权；再配置正确 key，预期可访问。</td></tr><tr><td><span class="chip major">major</span></td><td>49-51</td><td>安全风险</td><td>鉴权失败日志打印了用户提交的 `inner-api-key` 原文，导致密钥在日志系统中二次扩散。</td><td>日志中不要记录完整密钥；改为仅记录哈希前缀或掩码值（如前3后2位），并保留请求路径与来源 IP 以便审计。</td><td>发送错误 `inner-api-key` 请求，检查日志不包含完整密钥明文，仅包含脱敏后的标识。</td></tr></tbody></table></div><div class="file-block"><h3>trk-job/src/main/resources/bootstrap.yml</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>8-9</td><td>安全风险</td><td>在代码仓库中提交了 Nacos 用户名与明文密码（`username: dev`、`password: Speedx@123`）。该凭证一旦泄露可被直接用于配置中心访问，属于敏感信息泄露高风险。</td><td>立即从仓库移除明文凭证，改为环境变量/密钥管理服务注入（如 KMS/Nacos 加密配置）；同时轮换已暴露的账号密码，并补充提交钩子或密钥扫描（如 gitleaks）阻断后续泄露。</td><td>在无本地明文密码文件的环境启动 `trk-job`，通过环境变量注入凭证并验证能正常拉取 Nacos 配置；确认仓库扫描不再检出明文密钥。</td></tr></tbody></table></div>
   </div>
   <script>
     (function () {
