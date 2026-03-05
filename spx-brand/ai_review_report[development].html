@@ -182,24 +182,24 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: spx-brand | 生成时间: 2026-03-05 04:31:32</p>
+      <p class="hero-meta">服务: spx-brand | 生成时间: 2026-03-05 05:22:59</p>
     </header>
 
     <section class="summary">
       <h2>总体结论</h2>
-      <p>本次变更整体较小，但存在一个高风险前端安全问题（全局外部脚本加载缺乏安全约束）和一个可观测性退化问题。建议优先修复脚本加载安全控制。</p>
+      <p>本次变更存在1个高风险前端供应链安全问题和1个日志敏感信息暴露风险，建议优先修复外链脚本治理，再补齐日志脱敏与约束。</p>
       <p class="risk-line">Risk Score: 8 / 10</p>
       <div class="chips">
         <span class="chip critical">Critical: 1</span>
-        <span class="chip major">Major: 0</span>
-        <span class="chip minor">Minor: 1</span>
+        <span class="chip major">Major: 1</span>
+        <span class="chip minor">Minor: 0</span>
         <span class="chip info">Info: 0</span>
         <span class="chip">Total: 2</span>
       </div>
     </section>
 
     <h2 class="section-title">审查发现</h2>
-    <div class="file-block"><h3>src/app/layout.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>64</td><td>前端安全</td><td>在全局 RootLayout 中新增了外部脚本 `https://sap-sit1.speedx.io/bridge.js`，该脚本会在所有页面执行；当前未见完整性校验（SRI）、来源约束或环境开关控制，若外部资源被篡改/劫持可能直接导致用户数据泄露或前端被注入恶意逻辑。</td><td>将脚本改为受控静态资源（同源托管优先）；若必须第三方托管，至少增加 SRI 校验与 `crossOrigin`，并通过环境变量白名单控制仅在必要环境加载，同时配套严格 CSP（`script-src` 限制来源）。</td><td>1) 在生产配置下校验 CSP 是否仅允许白名单脚本来源；2) 将脚本 URL 切换为非白名单域名应被浏览器拦截；3) 篡改脚本内容后验证 SRI 能阻止执行。</td></tr></tbody></table></div><div class="file-block"><h3>src/app/update-address/[id]/page.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip minor">minor</span></td><td>59</td><td>异常处理</td><td>`!addressData.success` 分支的日志级别从 `logger.error` 变为 `logger.info`，会降低错误可观测性，导致告警/监控漏报，问题定位成本上升。</td><td>将该分支恢复为 `logger.error`（或至少 `warn` 并确保被监控系统采集），并保持与其他失败路径一致的错误级别策略。</td><td>模拟 `addressData.success=false`，验证日志平台中能以 error 级别检索到该事件，并可触发既有告警规则。</td></tr></tbody></table></div>
+    <div class="file-block"><h3>src/app/[id]/page.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>37-39</td><td>安全风险</td><td>将 `referer` 和 `user-agent` 原样写入日志元数据。`referer` 可能包含查询参数中的订单号、token 等敏感信息，存在日志侧敏感数据暴露风险；并且未做长度/字符约束，可能污染日志检索与告警。</td><td>对日志字段做最小化与脱敏：仅记录 `referer` 的 origin/path（去掉 query/hash），限制最大长度并过滤控制字符；`user-agent` 建议做截断与规范化。为日志组件增加统一的敏感字段清洗中间层。</td><td>1) 构造带敏感 query 的 Referer 请求，确认日志不落敏感参数；2) 构造超长/异常字符的 header，确认日志被截断且不破坏日志格式；3) 回归验证追踪页面正常记录必要诊断信息。</td></tr></tbody></table></div><div class="file-block"><h3>src/app/layout.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>64</td><td>安全风险</td><td>在全局布局中新增了来自 `https://sap-sit1.speedx.io/bridge.js` 的远程脚本注入，且未做完整性校验（SRI）或环境隔离。该脚本可在所有页面执行任意 JS，一旦源站被篡改或供应链受污染，可能导致敏感数据窃取、页面劫持或服务不可用。</td><td>将脚本改为受控来源（优先同域自托管或正式生产域名），并通过环境变量严格区分生产/测试环境；为外链脚本增加 `integrity` + `crossOrigin`，同时在 CSP 中限制 `script-src` 到白名单域名。若非核心能力，建议按页面按需加载而非全局加载。</td><td>1) 在生产配置下验证不会加载 `sap-sit1` 测试域脚本；2) 为脚本内容制造篡改后确认因 SRI 校验失败而拒绝执行；3) 开启严格 CSP 后验证仅白名单脚本可执行。</td></tr></tbody></table></div>
   </div>
   <script>
     (function () {
