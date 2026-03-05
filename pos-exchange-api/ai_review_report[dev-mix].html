@@ -182,12 +182,12 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: pos-exchange-api | 生成时间: 2026-03-05 07:05:23</p>
+      <p class="hero-meta">服务: pos-exchange-api | 生成时间: 2026-03-05 11:48:43</p>
     </header>
 
     <section class="summary">
       <h2>总体结论</h2>
-      <p>本次变更存在高风险安全问题（明文凭据/令牌）及一个会掩盖任务失败的异常处理缺陷。建议先完成凭据轮换与失败语义修复，再推进合并。</p>
+      <p>本次变更存在 1 个高风险安全问题和 2 个高价值稳定性问题。建议优先处理明文凭证泄露，再修复任务失败误判与 HttpClient 资源膨胀风险。</p>
       <p class="risk-line">Risk Score: 8 / 10</p>
       <div class="chips">
         <span class="chip critical">Critical: 1</span>
@@ -199,7 +199,7 @@
     </section>
 
     <h2 class="section-title">审查发现</h2>
-    <div class="file-block"><h3>trk-job/src/main/java/com/miq/trkjob/jobhandler/RecipientInfoEncryptionJob.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>41-43</td><td>异常处理</td><td>任务执行异常被捕获后仅记录日志，不调用 `XxlJobHelper.handleFail` 也不抛出异常，调度侧会将该任务视为成功，导致数据加密失败但无告警闭环。</td><td>在 catch 中返回失败状态（`XxlJobHelper.handleFail(...)`）或抛出运行时异常；同时对 `XxlJobHelper.getJobParam()` 为空/非法 JSON 的场景做显式校验并失败退出。</td><td>1. 构造非法 JSON 参数触发异常，验证调度结果为失败而非成功。2. 模拟 `labelService.labelDataEncryption` 抛错，验证任务状态、告警和重试链路正常。</td></tr></tbody></table></div><div class="file-block"><h3>trk-job/src/main/resources/bootstrap.yml</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>8-12</td><td>安全风险</td><td>在配置文件中提交了明文 Nacos 凭据（`username: dev`、`password: Speedx@123`）及服务地址。该信息进入仓库后会形成长期泄露面，可能导致配置中心被未授权访问，进而影响配置完整性与服务可用性。</td><td>立即从仓库移除明文凭据，改为环境变量或密钥管理（如 `${NACOS_USERNAME}`、`${NACOS_PASSWORD}`）；同时轮换已暴露凭据并追踪使用范围。</td><td>1. 启动应用时仅通过环境变量注入凭据，确认可正常连接 Nacos。2. 在 CI 增加 secret-scan（如 gitleaks）并校验该文件不再含明文口令。</td></tr></tbody></table></div><div class="file-block"><h3>trk-job/src/test/resources/xxl-job.http</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>4-4</td><td>安全风险</td><td>测试请求样例中硬编码 `XXL-JOB-ACCESS-TOKEN`。即使位于测试资源，仍会随代码分发并增加令牌泄露风险，可能被用于伪造任务触发请求。</td><td>将令牌替换为占位符（如 `{{XXL_JOB_ACCESS_TOKEN}}`）并通过本地私有环境文件注入；若该令牌已在任何环境启用，需立即轮换。</td><td>1. 使用占位符变量执行本地调试请求，确认功能不受影响。2. 在 CI 增加规则，阻止提交包含 `ACCESS-TOKEN` 明文值的文件。</td></tr></tbody></table></div>
+    <div class="file-block"><h3>backend-common/src/main/java/com/miq/backendcommon/http/HttpClientUtil.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>120-128</td><td>资源管理</td><td>每个 host 创建一个 `HttpClientHolder` 时都会新建并启动一个 `IdleConnectionCleanTask` 线程；host 数量无上限控制，若出现大量动态域名会快速累积线程与连接池对象，可能引发内存/线程资源耗尽并影响服务可用性。</td><td>改为全局单一清理调度器（如 `ScheduledExecutorService`）统一清理所有连接池，或对 `domainClients` 增加最大容量与淘汰策略（LRU/TTL+上限）。</td><td>压测中连续请求大量唯一 host（如 5k+），监控线程数与堆内存，验证优化后线程数保持稳定且无明显资源飙升。</td></tr></tbody></table></div><div class="file-block"><h3>trk-job/src/main/java/com/miq/trkjob/jobhandler/RecipientInfoEncryptionJob.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>41-43</td><td>异常处理</td><td>任务捕获所有异常后仅记录日志，不抛出异常也不调用 `XxlJobHelper.handleFail`，会导致调度平台将失败任务判定为成功，数据加密失败无法被及时发现与重试。</td><td>在 catch 中调用 `XxlJobHelper.handleFail(...)` 并返回失败状态，或直接抛出运行时异常让 XXL-Job 标记失败；同时补充告警字段（fetchSize/createdDate）。</td><td>构造 `labelService.labelDataEncryption` 抛异常，验证任务执行结果为失败（非成功），并可在调度端看到失败原因。</td></tr></tbody></table></div><div class="file-block"><h3>trk-job/src/main/resources/bootstrap.yml</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>8-9</td><td>安全风险</td><td>Nacos 凭证以明文（`username: dev` / `password: Speedx@123`）提交到代码库，存在凭证泄露后被未授权访问配置中心的高风险。</td><td>立即移除仓库中的明文凭证，改为从密钥管理系统或环境变量注入（如 KMS/Secrets Manager/CI Secret），并轮换当前已暴露的账号密码。</td><td>在本地与 CI 环境启动时，验证未提供密钥时启动失败；提供密钥后可正常连接 Nacos；同时确认仓库历史中不再包含旧凭证（含历史提交扫描）。</td></tr></tbody></table></div>
   </div>
   <script>
     (function () {
