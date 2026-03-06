@@ -182,24 +182,24 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: rps-api | 生成时间: 2026-03-06 13:45:35</p>
+      <p class="hero-meta">服务: rps-api | 生成时间: 2026-03-06 14:01:00</p>
     </header>
 
     <section class="summary">
       <h2>总体结论</h2>
-      <p>本次变更存在 1 个 Critical 和 2 个 Major 问题，主要集中在凭据/令牌泄露与任务异常吞没导致的静默失败，建议优先修复后再合并。</p>
+      <p>本次变更存在高风险问题，主要集中在明文凭据泄露和 SQL 拼接（注入）两类 Critical 风险。另有任务失败状态误报与边界处理缺失，会导致作业静默失败或运行时异常。</p>
       <p class="risk-line">Risk Score: 8 / 10</p>
       <div class="chips">
-        <span class="chip critical">Critical: 1</span>
+        <span class="chip critical">Critical: 2</span>
         <span class="chip major">Major: 2</span>
         <span class="chip minor">Minor: 0</span>
         <span class="chip info">Info: 0</span>
-        <span class="chip">Total: 3</span>
+        <span class="chip">Total: 4</span>
       </div>
     </section>
 
     <h2 class="section-title">审查发现</h2>
-    <div class="file-block"><h3>trk-job/src/main/java/com/miq/trkjob/jobhandler/RecipientInfoEncryptionJob.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>28-43</td><td>异常处理</td><td>`process()` 先 `JsonParser.parseString(XxlJobHelper.getJobParam())`，当 job 参数为空/非法时会抛异常进入 catch，随后仅记录日志不 `handleFail`，导致任务被标记为成功且 `labelDataEncryption` 实际未执行，形成静默失败。</td><td>先判断参数是否为空，为空时使用默认参数继续执行；异常分支调用 `XxlJobHelper.handleFail(...)` 或抛出异常让调度系统感知失败，避免误报成功。</td><td>分别用空参数、非法 JSON、合法 JSON 触发任务：空参数应按默认值执行成功；非法 JSON 应标记任务失败；合法 JSON 应执行并返回成功。</td></tr></tbody></table></div><div class="file-block"><h3>trk-job/src/main/resources/bootstrap.yml</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>8-9</td><td>安全风险</td><td>在仓库中提交了明文 Nacos 凭据（`username`/`password`），一旦代码库被非授权访问会直接导致配置中心凭据泄露，进而可能引发配置篡改或敏感配置读取。</td><td>删除明文凭据，改为通过环境变量或密钥管理服务注入（如 `${NACOS_USERNAME}`、`${NACOS_PASSWORD}`），并立即轮换已暴露凭据。</td><td>在本地与 CI 环境分别启动 `trk-job`，验证未设置环境变量时启动失败并给出明确提示；设置变量后可正常连接 Nacos。</td></tr></tbody></table></div><div class="file-block"><h3>trk-job/src/test/resources/xxl-job.http</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>4-113</td><td>安全风险</td><td>测试请求文件中硬编码了 `XXL-JOB-ACCESS-TOKEN`，该令牌可被误用到联调或共享环境，存在任务接口被未授权调用的风险。</td><td>将 token 改为占位符（如 `{{XXL_JOB_ACCESS_TOKEN}}`）并通过本地私有环境文件注入；同时确认该 token 非生产可用，若可用需立即轮换。</td><td>使用占位符后在本地 HTTP Client（IDE/Apifox）通过环境变量加载 token 可正常调用；未配置 token 时请求应返回鉴权失败。</td></tr></tbody></table></div>
+    <div class="file-block"><h3>tracking-service/src/main/java/com/miq/trackingservice/dao/LabelStatus57409DaoImpl.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>47-53</td><td>安全风险</td><td>`findTrackingNosByPoeZone` 通过字符串拼接构造 SQL，并将 `poe/internal_zone` 直接拼入语句，存在 SQL 注入风险；同时该实现未使用参数绑定，输入含引号或特殊字符会破坏查询语义。</td><td>改为参数化查询（`JdbcTemplate` 占位符或 `NamedParameterJdbcTemplate`），按 `(poe = ? AND internal_zone = ?)` 组合动态拼接条件并绑定参数，禁止直接拼接值到 SQL 字符串。</td><td>构造 `poeZone` 含恶意值（如 `&quot;A&#x27; OR 1=1 --&quot;`）和正常值混合，验证查询结果仅返回精确匹配记录且 SQL 不报错。</td></tr></tbody></table></div><div class="file-block"><h3>tracking-service/src/main/java/com/miq/trackingservice/service/job/InsertUndeliveredService.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>173-179</td><td>边界条件</td><td>`getLastEventIs57104(List&lt;String&gt; trackingNos)` 未处理空列表，`substring(0, sb.length()-1)` 在空输入时会抛 `StringIndexOutOfBoundsException`；且 `IN` 子句直接拼接 trackingNo 未加引号，遇到常见字母数字单号会形成非法 SQL。</td><td>先对 `trackingNos` 判空直接返回空结果；SQL 改为参数化 `IN` 查询（动态占位符），由 JDBC 绑定每个 trackingNo，避免手工拼接与引号问题。</td><td>1) 传入空 `trackingNos`，方法应返回空列表且不抛异常；2) 传入 `SPX123...` 这类字符串单号，SQL 应执行成功并返回预期结果。</td></tr></tbody></table></div><div class="file-block"><h3>trk-job/src/main/java/com/miq/trkjob/jobhandler/RecipientInfoEncryptionJob.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>26-43</td><td>异常处理</td><td>任务执行中捕获所有异常后仅记录日志，不调用 `XxlJobHelper.handleFail` 且不抛出异常；当参数为空或 JSON 解析失败时，调度侧会误判任务成功，导致加密任务静默失败。</td><td>将任务改为显式失败语义：参数校验失败/解析失败/业务异常时调用 `XxlJobHelper.handleFail(...)` 并返回失败状态（或抛出运行时异常）；成功路径调用 `handleSuccess`。</td><td>分别使用空参数、非法 JSON、服务层抛异常三种情况触发任务，验证 XXL-Job 执行结果为失败并带明确错误信息。</td></tr></tbody></table></div><div class="file-block"><h3>trk-job/src/main/resources/bootstrap.yml</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>8-9</td><td>安全风险</td><td>新增配置中直接提交了 Nacos 账号和明文密码（`username: dev` / `password: Speedx@123`），会导致凭据泄露风险，一旦仓库或构建日志可见将直接暴露配置中心访问权限。</td><td>移除仓库内明文凭据，改为环境变量或密钥管理（如 `${NACOS_USERNAME}`、`${NACOS_PASSWORD}`）；同时立即轮换当前已暴露密码，并在 CI 中增加 secret scan 阻断明文密钥提交。</td><td>在本地与 CI 环境仅通过环境变量注入凭据启动 `trk-job`，验证可正常连接 Nacos；将明文密码提交到测试分支时，确认 secret scan 能拦截。</td></tr></tbody></table></div>
   </div>
   <script>
     (function () {
