@@ -182,24 +182,24 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: spx-brand | 生成时间: 2026-03-05 08:11:06</p>
+      <p class="hero-meta">服务: spx-brand | 生成时间: 2026-03-06 03:49:43</p>
     </header>
 
     <section class="summary">
       <h2>总体结论</h2>
-      <p>基于 `LAST_TAG v1.13.2` 对比 `HEAD` 审查：本次变更主要风险集中在新增日志策略，存在多处敏感信息全量落日志的问题（高风险），并伴随错误日志级别降级导致监控退化。</p>
+      <p>对比基线为 LAST_TAG `v1.13.2`。本次变更主要风险集中在“新增全量业务数据日志”导致的数据泄露面扩大，以及日志文件命名变更带来的采集兼容性风险。</p>
       <p class="risk-line">Risk Score: 8 / 10</p>
       <div class="chips">
-        <span class="chip critical">Critical: 3</span>
+        <span class="chip critical">Critical: 2</span>
         <span class="chip major">Major: 1</span>
         <span class="chip minor">Minor: 0</span>
         <span class="chip info">Info: 0</span>
-        <span class="chip">Total: 4</span>
+        <span class="chip">Total: 3</span>
       </div>
     </section>
 
     <h2 class="section-title">审查发现</h2>
-    <div class="file-block"><h3>src/app/api/error-log/route.ts</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>31</td><td>异常处理</td><td>客户端错误上报从 `logger.error` 降级为 `logger.info`，会导致依赖 error 级别告警/监控的链路失效，线上异常可见性下降。</td><td>恢复为 `logger.error`（保留结构化字段），若担心噪音可按 `source` 做采样或限流，而不是降级日志级别。</td><td>触发一次前端 ErrorBoundary 上报，验证日志平台仍能命中 error 级别告警规则。</td></tr></tbody></table></div><div class="file-block"><h3>src/app/api/tracking/[id]/route.ts</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>157-164</td><td>安全风险</td><td>新增对 `newData`/`data` 的全量日志输出，会把轨迹明细与可能的用户相关字段写入日志，扩大敏感数据暴露面。</td><td>仅记录必要摘要字段（如 `trackingNumber` 掩码、events 数量、最终状态、耗时）；对异常时返回码和错误类型打点，不记录全量 payload。</td><td>请求一个真实运单后检查日志，确认不出现完整事件数组与地址/联系人类字段。</td></tr></tbody></table></div><div class="file-block"><h3>src/app/update-address/[id]/page.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>49-67</td><td>安全风险</td><td>将 `addressData` 和 `trackingData` 全量 `JSON.stringify` 到 info 日志，极可能包含收件地址等个人信息，属于高风险敏感数据暴露。</td><td>改为结构化最小日志：仅记录 `trackingNumber`（掩码后）、`success/code`、错误码与 traceId；禁止打印 `payload` 全量对象。</td><td>触发一次 update-address 请求并检查日志，确认不包含 street/city/postcode/name 等地址字段原文。</td></tr></tbody></table></div><div class="file-block"><h3>src/lib/logger/transports.ts</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>11-14</td><td>安全风险</td><td>新增 `referer` 原文写入日志（并在 138-140 行拼接到控制台日志），会把 URL 查询参数中的 token/手机号/邮箱等敏感信息直接落盘，存在数据泄露风险。</td><td>对 `referer` 做脱敏后再记录：仅保留 `origin + pathname`，移除 query/hash；并增加敏感参数黑名单（如 token、code、email、phone）统一替换为 `***`。</td><td>构造请求头 `referer: https://example.com/reset?token=abc123&amp;email=a@b.com`，确认日志中不出现 `abc123` 和邮箱明文。</td></tr></tbody></table></div>
+    <div class="file-block"><h3>src/app/api/tracking/[id]/route.ts</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>157-164</td><td>安全风险</td><td>新增日志把 `newData`/`data` 全量 `JSON.stringify` 后写入日志，可能包含轨迹事件、时间、地址等敏感业务数据。该接口是高频查询接口，日志侧会形成持续的数据暴露面。</td><td>改为结构化最小化日志，只记录必要字段（如 `trackingNumber`、`success`、`eventCount`、`statusCode`、`traceId`），禁止打印完整 payload；对异常场景也仅输出错误码和摘要。</td><td>请求一个包含完整事件链路的运单，检查日志中不应出现完整 `payload/events` 内容，只允许出现脱敏后的摘要字段。</td></tr></tbody></table></div><div class="file-block"><h3>src/app/api/tracks/route.ts</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>36</td><td>安全风险</td><td>新增 `logger.info(...JSON.stringify(list))` 会把批量运单结果全量写日志，批量接口一次可写入多条运单信息，放大敏感数据泄露风险。</td><td>删除全量列表日志，改为记录统计信息（如请求数量、去重后数量、返回数量、耗时、traceId），必要时仅抽样记录已脱敏的运单号后4位。</td><td>提交多个运单号调用 `/api/tracks`，验证日志仅包含计数与脱敏标识，不包含完整运单列表内容。</td></tr></tbody></table></div><div class="file-block"><h3>src/lib/logger/transports.ts</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>149</td><td>向后兼容</td><td>日志文件名从 `info.%DATE%.json.log` 改为 `info.%DATE%.json`，会与现有基于 `*.json.log` 的采集/轮转/告警规则不兼容，导致日志漏采或监控失效。</td><td>保持原扩展名，或同步更新所有日志采集与告警配置并做灰度验证；若要迁移格式，建议双写一段时间后再切换。</td><td>在预发验证日志采集链路（filebeat/fluent-bit/agent）是否仍能匹配并上报新文件名；同时校验告警规则命中率。</td></tr></tbody></table></div>
   </div>
   <script>
     (function () {
