@@ -182,16 +182,16 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: rps-api | 生成时间: 2026-03-05 11:29:10</p>
+      <p class="hero-meta">服务: rps-api | 生成时间: 2026-03-06 02:29:05</p>
     </header>
 
     <section class="summary">
       <h2>总体结论</h2>
-      <p>本次变更存在 2 个 Critical 与 2 个 Major 问题，集中在鉴权 fail-open、明文凭据泄露及新引入 SQL 边界处理缺陷，整体风险偏高。建议优先修复安全项后再合并。</p>
+      <p>本次变更存在高风险安全问题（明文凭据/token）以及会导致任务“静默失败”和批处理中断的健壮性问题，建议在合并前修复。</p>
       <p class="risk-line">Risk Score: 8 / 10</p>
       <div class="chips">
-        <span class="chip critical">Critical: 2</span>
-        <span class="chip major">Major: 2</span>
+        <span class="chip critical">Critical: 1</span>
+        <span class="chip major">Major: 3</span>
         <span class="chip minor">Minor: 0</span>
         <span class="chip info">Info: 0</span>
         <span class="chip">Total: 4</span>
@@ -199,7 +199,7 @@
     </section>
 
     <h2 class="section-title">审查发现</h2>
-    <div class="file-block"><h3>tracking-service/src/main/java/com/miq/trackingservice/service/job/InsertUndeliveredService.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>173-180</td><td>边界条件</td><td>新增 SQL 构造将 `trackingNos` 直接拼接到 `IN (...)`，未加引号且未参数化；对字符串运单号会生成非法 SQL，并且空列表时 `substring(0, sb.length()-1)` 会抛 `StringIndexOutOfBoundsException`，导致任务失败。</td><td>改用参数化查询（`IN (?, ?, ...)`）并在入参为空时直接返回空结果；不要手工 `substring` 去尾逗号。</td><td>分别传入空列表、单个字符串运单号、多个运单号（含特殊字符）执行任务，均应不抛异常且 SQL 正确执行。</td></tr></tbody></table></div><div class="file-block"><h3>trk-job/src/main/java/com/miq/trkjob/interceptor/InnerApiKeyInterceptor.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>63-65</td><td>安全风险</td><td>当 `authUrls` 未配置或为空时，`needsAuthentication` 直接返回 `false`，导致拦截器对所有接口放行（fail-open）。在新模块默认配置缺失时会形成越权访问窗口。</td><td>改为 fail-closed：`authUrls` 为空时拒绝启动或默认保护内部接口前缀；同时在启动阶段做必填配置校验。</td><td>启动时不配置 `exchange.trk.authUrls`，请求受保护接口应返回鉴权失败而非 200；配置后仅白名单路径按预期放行。</td></tr><tr><td><span class="chip major">major</span></td><td>116-118</td><td>安全风险</td><td>`innerApiKey` 为空时 `isValidApiKey` 返回 `true`，会接受任意 header 值，等同关闭 key 校验。</td><td>当 `innerApiKey` 为空时应拒绝请求并记录配置错误，或在应用启动时直接 fail-fast。</td><td>将 `exchange.trk.innerApiKey` 置空，携带任意 `inner-api-key` 请求应返回未授权；配置正确 key 后仅正确 key 可通过。</td></tr></tbody></table></div><div class="file-block"><h3>trk-job/src/main/resources/bootstrap.yml</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>8-9</td><td>安全风险</td><td>在版本库中新增了 Nacos 明文凭据（`username: dev` / `password: Speedx@123`）。凭据一旦泄露可被直接用于配置中心访问，存在敏感配置泄露与被篡改风险。</td><td>移除仓库中的明文凭据；改为环境变量或密钥管理服务注入（如 `${NACOS_USERNAME}`/`${NACOS_PASSWORD}`），并立即轮换当前已暴露密码。</td><td>在 CI 中增加密钥扫描（如 gitleaks）并验证：提交包含明文密码时流水线失败；运行时通过环境变量成功读取 Nacos 凭据。</td></tr></tbody></table></div>
+    <div class="file-block"><h3>pos-service/src/main/java/com/miq/posservice/service/web/impl/WebReceivingBatchServiceImpl.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>1480-1483</td><td>边界条件</td><td>新增逻辑直接使用 `i.getSortType().split(&quot;-&quot;)[1]` 和 `routeCode.split(&quot;,&quot;)`，未校验 `sortType/routeCode` 是否为空或是否包含分隔符。遇到脏数据会触发 `NullPointerException` 或 `ArrayIndexOutOfBoundsException`，中断收货批次处理。</td><td>在 split 前增加非空与格式校验（例如 `StringUtils.isBlank`、`contains(&quot;-&quot;)`），不符合格式时记录告警并跳过该容器，避免影响整批处理。</td><td>准备 `sortType` 为空、无 `-`、`routeCode` 为空三类容器数据，验证方法不会抛异常且仅跳过异常记录。</td></tr></tbody></table></div><div class="file-block"><h3>trk-job/src/main/java/com/miq/trkjob/jobhandler/RecipientInfoEncryptionJob.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>28-43</td><td>异常处理</td><td>`process()` 里对参数解析与业务执行统一 `catch (Exception)` 后只记录日志、不调用 `XxlJobHelper.handleFail`，方法又是 `void`。当参数为空/非法或加密流程异常时，任务会被调度平台判定为成功，形成“静默失败”。</td><td>对参数为空提供默认值分支；对解析或业务异常调用 `XxlJobHelper.handleFail(...)` 或抛出运行时异常让任务失败可见。建议将方法返回值改为 `boolean` 并显式返回 `handleSuccess/handleFail`。</td><td>构造空 `jobParam` 和非法 JSON 两种触发，确认任务状态为失败且有明确错误信息；构造正常参数时状态为成功。</td></tr></tbody></table></div><div class="file-block"><h3>trk-job/src/main/resources/bootstrap.yml</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>8-9</td><td>安全风险</td><td>在仓库中新增了明文 Nacos 凭据（`username/password`）。一旦代码库被非授权访问或日志/镜像泄露，凭据可被直接复用，导致配置中心被未授权访问。</td><td>移除明文凭据，改为从安全配置源注入（环境变量、KMS/Secrets Manager、Nacos 加密配置）。同时立即轮换已暴露的账号密码，并在 CI 增加 secret 扫描拦截。</td><td>在无本地明文凭据的环境启动 `trk-job`，验证通过环境变量或密钥管理服务成功拉取配置；并验证旧凭据失效。</td></tr></tbody></table></div><div class="file-block"><h3>trk-job/src/test/resources/xxl-job.http</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>4-112</td><td>安全风险</td><td>测试请求文件中硬编码了 `XXL-JOB-ACCESS-TOKEN`，且多处重复。若该 token 与真实环境复用，会造成任务执行接口被未授权调用风险。</td><td>将 token 改为占位符（如 `{{XXL_JOB_ACCESS_TOKEN}}`）并通过本地环境变量注入；确保仓库内不存放真实可用 token，同时轮换当前 token。</td><td>使用占位符版本的 http 文件执行本地调试，验证在未注入 token 时请求失败、注入正确 token 后请求成功。</td></tr></tbody></table></div>
   </div>
   <script>
     (function () {
