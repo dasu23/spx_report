@@ -182,24 +182,24 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: pos-web | 生成时间: 2026-03-09 08:47:52</p>
+      <p class="hero-meta">服务: pos-web | 生成时间: 2026-03-09 08:59:07</p>
     </header>
 
     <section class="summary">
       <h2>总体结论</h2>
-      <p>本次变更存在一个高风险 SSO 安全问题，以及两个会直接影响登录/打印稳定性的业务与边界缺陷。建议先修复 SSO 回调安全与流程一致性，再处理打印参数边界与测试一致性。</p>
-      <p class="risk-line">Risk Score: 8 / 10</p>
+      <p>发现 2 个 Major 问题，主要集中在 SSO 业务链路一致性和异步异常处理，建议修复后再合并。</p>
+      <p class="risk-line">Risk Score: 6 / 10</p>
       <div class="chips">
-        <span class="chip critical">Critical: 1</span>
+        <span class="chip critical">Critical: 0</span>
         <span class="chip major">Major: 2</span>
-        <span class="chip minor">Minor: 1</span>
+        <span class="chip minor">Minor: 0</span>
         <span class="chip info">Info: 0</span>
-        <span class="chip">Total: 4</span>
+        <span class="chip">Total: 2</span>
       </div>
     </section>
 
     <h2 class="section-title">审查发现</h2>
-    <div class="file-block"><h3>src/components/PrintContainerLabel/ModalPrintContainerLabel.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>141-149</td><td>边界条件</td><td>`seq` 允许最小值为 0（`min={0}`），且校验只限制上限，导致 `startNumber/endNumber` 可提交为 0。该值与既有打印规则（1-200）不一致，可能触发后端校验失败或打印异常。</td><td>将 `seq` 下限改为 1，并在 validator 中同时校验 `1 &lt;= seq &lt;= MAX_LABEL_NUMBER`；提交前兜底拦截 0/负数。</td><td>在弹窗中输入 `seq=0` 与 `seq=-1`，应前端直接报错且不发请求；输入 `seq=1`、`seq=200` 应可正常提交。</td></tr></tbody></table></div><div class="file-block"><h3>src/pages/inbound/container/scan/components/ScanContainer.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip minor">minor</span></td><td>59-61</td><td>异常处理</td><td>无容器时扫描包裹返回的错误消息为 `Must scan the container instead of parcel`，但新增测试断言的是 `Please scan container first`，两者不一致会导致测试失败并掩盖真实回归。</td><td>统一错误文案（代码或测试其一），并将错误消息常量化避免再次漂移。</td><td>在 `/inbound/container/scan` 未扫描 CTN 直接扫描包裹，断言返回的错误消息与测试期望完全一致。</td></tr></tbody></table></div><div class="file-block"><h3>src/pages/user/sso/index.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>11-18</td><td>前端安全</td><td>SSO 回调直接读取 URL 中的 `authToken` 并写入 `localStorage`，且未校验登录发起态（state/nonce）。这会导致登录会话固定风险：攻击者可构造 `/user/sso?authToken=...` 链接诱导用户点击，使受害者浏览器被写入攻击者会话。</td><td>改为回调仅接收一次性 `code`，由后端完成 code-&gt;token 交换；前端至少校验登录前写入 `sessionStorage` 的 `state`/nonce，并在处理完成后用 `history.replaceState` 清理 URL 查询参数，避免 token 暴露在地址栏/历史记录。</td><td>在未发起 SSO 的情况下直接访问 `/user/sso?authToken=fake-token`，应被拒绝并跳转登录页；仅当 state 匹配时才允许建立会话。</td></tr><tr><td><span class="chip major">major</span></td><td>15-18</td><td>业务逻辑</td><td>实现与同分支测试/需求文档不一致：当前成功后只执行 `window.location.href=&#x27;/&#x27;`，没有 popup 场景下的 `window.opener.postMessage` 与 `window.close`，会导致弹窗登录流程无法回传结果。</td><td>补齐双模式逻辑：若存在 `window.opener`，向 opener 发送成功/失败消息并关闭当前窗口；否则走当前页重定向。同步更新 `src/pages/user/Login/index.tsx` 的发起方式与 `src/pages/user/Login/sso.md`。</td><td>使用 `window.open` 打开 Microsoft 登录，回调到 `/user/sso` 后应向 opener 发送登录结果并自动关闭弹窗。</td></tr></tbody></table></div>
+    <div class="file-block"><h3>src/hooks/useParcelToCtn.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>65-81</td><td>异常处理</td><td>`loadContainerTypes` 为异步请求但没有任何 `try/catch`，在 `useEffect` 中直接调用。接口失败时会出现未处理的 Promise 拒绝；同时该筛选项是必填（`containerType` required），失败后页面无法自动回退到可用状态。</td><td>给 `loadContainerTypes` 增加 `try/catch`，失败时显式提示并设置安全兜底（如空对象+禁用自动提交，或提供重试按钮）；同时在 effect 中处理卸载场景避免异步返回后继续 `setState`。</td><td>mock `queryOperateEnumV2` reject：页面不应出现未捕获异常，需展示可感知错误提示；用户可重试后恢复查询能力。</td></tr></tbody></table></div><div class="file-block"><h3>src/pages/user/sso/index.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>15-18</td><td>业务逻辑</td><td>SSO 回调成功后只执行 `localStorage.setItem + window.location.href=&#x27;/&#x27;`，没有处理 popup 场景（`window.opener.postMessage` + `window.close`）。这与同次变更中的测试预期（`src/pages/user/sso/__test__/index.test.tsx`）不一致，实际在弹窗登录链路下会导致登录页无法收到成功信号。</td><td>在回调页增加双模式处理：若存在 `window.opener` 且同源，则 `postMessage({ type: &#x27;MICROSOFT_LOGIN_SUCCESS&#x27;, authToken })` 并 `window.close()`；否则走当前的本页落地逻辑（写 token 后跳转首页）。错误分支同理发送 `MICROSOFT_LOGIN_ERROR`。</td><td>1) 弹窗方式打开 Microsoft 登录，回调到 `/user/sso?authToken=...` 后验证 opener 收到消息且弹窗关闭；2) 直接访问 `/user/sso?authToken=...` 时仍能写入 token 并跳转 `/`；3) `/user/sso?error=...` 在弹窗/直开两种模式都能正确处理。</td></tr></tbody></table></div>
   </div>
   <script>
     (function () {
