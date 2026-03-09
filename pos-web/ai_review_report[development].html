@@ -182,24 +182,24 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: pos-web | 生成时间: 2026-03-06 09:59:04</p>
+      <p class="hero-meta">服务: pos-web | 生成时间: 2026-03-09 01:33:02</p>
     </header>
 
     <section class="summary">
       <h2>总体结论</h2>
-      <p>发现 4 个高价值问题，均集中在新引入的 CTN 标签打印与扫描流程，主要是表单字段映射/提交契约和状态流转断点，建议修复后再合并。</p>
-      <p class="risk-line">Risk Score: 7 / 10</p>
+      <p>本次变更存在 3 个需优先修复的 Major 问题，集中在打印字段回填、异步异常兜底、以及容器扫描状态流转一致性，均可能导致业务流程异常。</p>
+      <p class="risk-line">Risk Score: 6 / 10</p>
       <div class="chips">
         <span class="chip critical">Critical: 0</span>
-        <span class="chip major">Major: 4</span>
+        <span class="chip major">Major: 3</span>
         <span class="chip minor">Minor: 0</span>
         <span class="chip info">Info: 0</span>
-        <span class="chip">Total: 4</span>
+        <span class="chip">Total: 3</span>
       </div>
     </section>
 
     <h2 class="section-title">审查发现</h2>
-    <div class="file-block"><h3>src/components/PrintContainerLabel/ModalPrintContainerLabel.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>135</td><td>边界条件</td><td>`seq` 允许最小值 `0`，而提交时会映射为 `startNumber=0,endNumber=0`。这与列表页“`endNumber=0` 禁止打印”的约束冲突，可能触发无效打印请求。</td><td>将 `seq` 最小值改为 `1`，并在 `onFinish` 增加校验（例如 `seq &lt; 1` 直接阻断并提示）。</td><td>输入 `seq=0` 提交，预期前端阻止提交并显示错误提示，不发送打印请求。</td></tr><tr><td><span class="chip major">major</span></td><td>43-45</td><td>API契约</td><td>`getSortDetail` 返回结构为 `routeDate`/`seqNo`，但这里直接 `setFieldsValue(payload)`；表单字段实际是 `sortDate`/`seq`。导致查询后日期与序号无法正确回填，单条打印会带着错误或空值提交。</td><td>在回填前做字段映射：`sortDate: payload.routeDate`、`seq: payload.seqNo`，并仅写入表单实际存在的字段。</td><td>mock `getSortDetail` 返回 `routeDate=2026-02-23, seqNo=3`，点击查询后断言 `sortDate` 日期控件和 `seq` 输入框都已正确显示对应值。</td></tr><tr><td><span class="chip major">major</span></td><td>69-76</td><td>API契约</td><td>`onFinish` 直接提交 `values`，其中 `ProFormDatePicker` 的 `sortDate` 在运行时通常是 `Dayjs` 对象而非字符串，POST JSON 时会产生不符合后端契约的日期格式。</td><td>提交前显式序列化：`sortDate: values.sortDate ? dayjs(values.sortDate).format(&#x27;YYYY-MM-DD&#x27;) : undefined`，再传给 `downloadFile`。</td><td>提交表单后拦截 `/container-label/batch-print` 请求，断言 `sortDate` 为 `YYYY-MM-DD` 字符串，而不是对象。</td></tr></tbody></table></div><div class="file-block"><h3>src/pages/inbound/container/scan/components/ScanContainerParcel.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>24-31</td><td>状态管理</td><td>组件固定使用 `inboundContainerParcel` 扫描类型；当用户点击 `Complete CTN` 后 `currentCode` 被清空，但页面没有切回容器扫描模式，后续所有扫描都会命中“Please scan container first”，流程卡死。</td><td>将 `Scanner.type` 改为基于 `currentCode` 动态切换（无容器时切 `inboundContainer` 并允许重新扫容器），或在关闭容器后自动跳转回容器列表/容器扫描入口。</td><td>带 `containerNo` 进入页面，点击关闭容器后再次扫描一个 `CTN-*`，应能恢复到可继续扫描状态而非持续报错。</td></tr></tbody></table></div>
+    <div class="file-block"><h3>src/components/PrintContainerLabel/ModalPrintContainerLabel.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>43-45</td><td>业务逻辑</td><td>查询 Sort 详情后直接 `setFieldsValue(payload)`，但返回结构为 `routeDate/seqNo`，表单字段使用 `sortDate/seq`，导致关键字段不会被回填；同时 `sortName` 字段也不会从返回的 `routeName` 映射，单条打印请求可能带空值或默认值，触发打印内容错误/后端校验失败。</td><td>在回填前做显式字段映射，例如：`sortDate: payload.routeDate`、`seq: payload.seqNo`、`sortName: payload.routeName`（或按后端真实字段映射）；并在提交前校验 `sortType/containerDestination/parcelDestination/routeName/sortDate` 均已就绪。</td><td>输入合法 `sortId` 点击查询后，验证 `Seq No` 与 `Sort Date` 自动回填；直接提交时请求体包含正确 `sortDate` 和序号，不出现默认 `1` 覆盖后端返回值。</td></tr></tbody></table></div><div class="file-block"><h3>src/pages/dms/route/delivery/index.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>77-80</td><td>异常处理</td><td>`fetchRejectCount` 为异步请求且无异常处理，在 `request` 中被直接调用（未 `await` 且无 `.catch`）。当 `/route/count-reject` 失败时会产生未捕获 Promise 拒绝，影响页面稳定性并污染错误日志。</td><td>为 `fetchRejectCount` 增加 `try/catch` 并在失败时兜底 `setRejectCount(0)`；在调用处使用 `void fetchRejectCount(cleanParams).catch(() =&gt; setRejectCount(0))` 或统一错误上报。</td><td>模拟 `/route/count-reject` 返回 500，确认页面不抛未捕获异常、列表仍可正常加载、告警条按兜底逻辑隐藏。</td></tr></tbody></table></div><div class="file-block"><h3>src/pages/inbound/container/scan/components/ScanContainerParcel.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>33-38</td><td>业务逻辑</td><td>`scanContainerParcel` 失败分支未处理新增的 `payload.drop` 语义（表示当前容器应被丢弃）；与 `ScanContainer.tsx` 的处理不一致，可能导致用户继续在已失效容器上扫描，产生错误流程。</td><td>在 `catch` 中解析 `error.payload.drop`，为 `true` 时执行 `setCurrentCode(&#x27;&#x27;)`（必要时同步提示用户重新扫描 CTN），与另一扫描入口保持一致。</td><td>构造扫描错误并返回 `{ payload: { drop: true } }`，确认页面清空当前容器状态、关闭按钮消失并提示先重新扫描容器。</td></tr></tbody></table></div>
   </div>
   <script>
     (function () {
