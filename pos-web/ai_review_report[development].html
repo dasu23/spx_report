@@ -182,24 +182,24 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: pos-web | 生成时间: 2026-03-09 10:17:18</p>
+      <p class="hero-meta">服务: pos-web | 生成时间: 2026-03-10 02:52:14</p>
     </header>
 
     <section class="summary">
       <h2>总体结论</h2>
-      <p>本次变更存在 1 个高风险安全问题和 3 个会引发回归/测试失真的实现契约问题，建议修复后再合并。</p>
-      <p class="risk-line">Risk Score: 8 / 10</p>
+      <p>本次变更存在 3 个高价值问题：1 个前端安全风险、1 个 API 字段映射缺陷、1 个 SSO 测试与实现不一致问题。建议先修复后再合并。</p>
+      <p class="risk-line">Risk Score: 7 / 10</p>
       <div class="chips">
-        <span class="chip critical">Critical: 1</span>
+        <span class="chip critical">Critical: 0</span>
         <span class="chip major">Major: 3</span>
         <span class="chip minor">Minor: 0</span>
         <span class="chip info">Info: 0</span>
-        <span class="chip">Total: 4</span>
+        <span class="chip">Total: 3</span>
       </div>
     </section>
 
     <h2 class="section-title">审查发现</h2>
-    <div class="file-block"><h3>src/components/PrintContainerLabel/ModalPrintContainerLabel.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>45-47</td><td>API契约</td><td>`getSortDetail` 返回字段与表单字段未对齐，直接 `setFieldsValue(payload)` 会遗漏关键字段映射（如 `routeDate -&gt; sortDate`、`seqNo -&gt; seq`，且 `sortName` 不会被填充）。导致单条打印表单出现必填项未预填或请求体字段不完整。</td><td>在设置表单值前做显式映射，例如 `{ sortDate: payload.routeDate, seq: payload.seqNo, sortName: payload.routeName, ... }`，并补充字段存在性校验。</td><td>输入有效 sortId 点击搜索后，`sortDate/seq/sortName` 应自动带出；直接提交应得到完整请求体且后端可成功打印。</td></tr></tbody></table></div><div class="file-block"><h3>src/pages/inbound/container/scan/__test__/index.test.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>75-77</td><td>业务逻辑</td><td>测试期望“未先扫容器时报错 `Please scan container first`”，但实现返回 `Must scan the container instead of parcel`（见 `ScanContainer.tsx` 59-61 行）。该不一致会直接导致单测失败。</td><td>统一错误消息常量（实现与测试共用），或将测试改为匹配业务语义而非硬编码字符串。</td><td>containerNo 为空时先扫包裹，单测应稳定断言同一条错误语义并通过。</td></tr></tbody></table></div><div class="file-block"><h3>src/pages/user/sso/__test__/index.test.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>70-100</td><td>异常处理</td><td>新增 SSO 测试断言的是“popup + postMessage + window.close”流程，但当前实现为“同窗口写 token 后跳转 `/`”。测试与实现契约不一致，会造成测试集持续失败或误报。</td><td>二选一统一：1) 保留同窗口实现并重写测试断言；2) 恢复 popup 通信实现并保持现有测试。不要同时存在两套互斥契约。</td><td>执行 SSO 页面单测应全部通过，并覆盖成功/失败两条路径且断言与实际交互模型一致。</td></tr></tbody></table></div><div class="file-block"><h3>src/pages/user/sso/index.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>11-18</td><td>前端安全</td><td>SSO 回调页直接从 URL query 读取 `authToken` 并写入 `localStorage` 登录，未做 `state` 校验或一次性 code 交换。该实现会把令牌暴露在浏览器历史/日志中，并允许构造链接触发登录置换（session fixation / login CSRF）。</td><td>改为 OAuth 标准回调：前端仅接收短期 `code` + `state`，先校验 `state`（如 sessionStorage 中的随机值）再调用后端换取 token；并在处理前立即 `history.replaceState` 清理敏感 query。</td><td>在未发起登录流程时直接访问 `/user/sso?authToken=attackerToken`，系统不应登录；回调 URL 中不应长期保留可用 token。</td></tr></tbody></table></div>
+    <div class="file-block"><h3>src/components/PrintContainerLabel/ModalPrintContainerLabel.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>45-47</td><td>API契约</td><td>`getSortDetail` 返回字段是 `routeDate`、`seqNo`，但这里直接 `setFieldsValue(payload)`，表单字段使用的是 `sortDate`、`seq`。结果是查询 Sort 详情后关键字段不会被正确回填，导致后续打印参数不完整或需要用户手工补填。</td><td>在回填前做字段映射，例如 `setFieldsValue({ ...payload, sortDate: payload.routeDate, seq: payload.seqNo })`，并补充对缺失字段的兜底处理。</td><td>输入有效 `sortId` 点击查询后，断言表单中的 `sortDate` 与 `seq` 已自动填充为接口返回值，并可直接提交打印。</td></tr></tbody></table></div><div class="file-block"><h3>src/pages/user/sso/__test__/index.test.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>83-100</td><td>业务逻辑</td><td>新增测试仍断言“popup + `postMessage` + `window.close`”流程，但当前实现（`src/pages/user/sso/index.tsx`）是“写本地 token 后 `window.location.href=&#x27;/&#x27;`”。测试与实现不一致，会导致该测试集稳定失败或失去有效性。</td><td>二选一统一方案：1) 恢复 popup 通知实现并保留当前断言；2) 保持当前实现并重写测试断言为 `localStorage.setItem` 与页面跳转行为。</td><td>执行 `src/pages/user/sso/__test__/index.test.tsx`，应全部通过；并确保测试断言与当前产品登录链路一致。</td></tr></tbody></table></div><div class="file-block"><h3>src/pages/user/sso/index.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>11-18</td><td>前端安全</td><td>SSO 回调页直接信任 URL 中的 `authToken` 并写入 `localStorage`，未做 `state/nonce` 校验，也未校验该 token 是否由当前发起的登录流程产生。攻击者可构造 `/user/sso?authToken=...` 链接触发会话固定（session fixation）或错误账号登录。</td><td>改为标准 OAuth 回调流程：前端仅接收 `code` 和 `state`，先校验本地保存的 `state`，再由后端换取 token；若继续使用 `authToken` 回传，至少增加一次性 `state` 校验并在校验失败时拒绝写入本地存储。</td><td>未登录状态下，手工访问 `/user/sso?authToken=fake-token&amp;state=invalid`，预期：不写入 `SPX_AUTH_TOKEN`、不跳首页、展示安全错误提示。</td></tr></tbody></table></div>
   </div>
   <script>
     (function () {
