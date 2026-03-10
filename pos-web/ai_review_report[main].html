@@ -182,12 +182,12 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: pos-web | 生成时间: 2026-03-09 07:20:31</p>
+      <p class="hero-meta">服务: pos-web | 生成时间: 2026-03-10 08:58:04</p>
     </header>
 
     <section class="summary">
       <h2>总体结论</h2>
-      <p>对比基线为 LAST_TAG `v1.117.0-dms`。本次变更主要风险集中在新增 reject 计数异步链路：存在未捕获异常与并发响应覆盖导致的数据不一致问题。</p>
+      <p>基线为 `LAST_TAG=v1.117.0-dms`（对比范围：`v1.117.0-dms..HEAD`）。本次变更整体风险中等，主要问题集中在新增 rejected 统计的异步异常处理和并发状态一致性。</p>
       <p class="risk-line">Risk Score: 6 / 10</p>
       <div class="chips">
         <span class="chip critical">Critical: 0</span>
@@ -199,7 +199,7 @@
     </section>
 
     <h2 class="section-title">审查发现</h2>
-    <div class="file-block"><h3>src/pages/dms/route/delivery/index.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>444</td><td>异常处理</td><td>`request` 回调中直接调用 `fetchRejectCount(cleanParams)` 且未等待/捕获异常。若 `countRejectRoute` 请求失败，会产生未处理的 Promise 拒绝，可能导致页面交互期间出现错误噪音并影响稳定性。</td><td>将调用改为 `await fetchRejectCount(cleanParams)` 并在 `fetchRejectCount` 内加入 `try/catch`（失败时 `setRejectCount(0)`）；或使用 `void fetchRejectCount(cleanParams).catch(() =&gt; setRejectCount(0))` 明确兜底。</td><td>Mock `/route/count-reject` 返回 500 或超时，验证控制台无 unhandled rejection，列表查询仍正常，reject 提示计数回落到可预期值。</td></tr><tr><td><span class="chip major">major</span></td><td>77-79</td><td>数据一致性</td><td>`fetchRejectCount` 每次查询都会异步更新 `rejectCount`，但没有并发请求的先后保护。快速切换筛选条件时，较早请求若后返回会覆盖较新结果，导致提示条显示过期计数。</td><td>增加“最新请求”保护（如 `useRef` 递增 requestId，仅在当前 requestId 匹配时 `setRejectCount`），或使用可取消请求机制中止旧请求。</td><td>连续快速修改筛选条件并让旧请求延迟返回，确认页面最终展示的 rejectCount 始终对应最后一次筛选参数。</td></tr></tbody></table></div>
+    <div class="file-block"><h3>src/pages/dms/route/delivery/index.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>444</td><td>异常处理</td><td>在 `request` 中调用 `fetchRejectCount(cleanParams)` 时未 `await` 且无 `try/catch`。当 `/route/count-reject` 请求失败时会产生未捕获的 Promise rejection，可能导致控制台报错、错误监控噪音，并使拒单告警状态不可预期。</td><td>将该调用改为受控异常处理：要么在 `request` 内 `await fetchRejectCount(cleanParams)` 并包裹 `try/catch`，要么在 `fetchRejectCount` 内部捕获异常并在失败时回退 `setRejectCount(0)`（或保留上次值并显式记录错误）。</td><td>模拟 `/route/count-reject` 返回 500/超时，验证页面不会出现未捕获异常；告警区域按预期降级（隐藏或显示默认值），且主表格查询仍可正常返回。</td></tr><tr><td><span class="chip major">major</span></td><td>77-80</td><td>状态管理</td><td>`fetchRejectCount` 直接异步写入 `rejectCount`，但页面存在轮询（60s）与多次查询触发，旧请求可能晚于新请求返回并覆盖最新结果，导致告警数量与当前筛选条件不一致。</td><td>增加并发保护（如 requestId/时间戳比对、AbortController 取消前一次请求，或仅应用最后一次查询结果）后再 `setRejectCount`，确保状态与当前 `cleanParams` 一致。</td><td>快速连续切换筛选条件并人为延迟接口响应（先发请求后返回），验证最终告警数量始终对应最后一次查询条件。</td></tr></tbody></table></div>
   </div>
   <script>
     (function () {
