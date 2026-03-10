@@ -182,24 +182,24 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: pos-web | 生成时间: 2026-03-10 02:56:52</p>
+      <p class="hero-meta">服务: pos-web | 生成时间: 2026-03-10 05:56:35</p>
     </header>
 
     <section class="summary">
       <h2>总体结论</h2>
-      <p>发现 2 个高价值问题：1 个认证安全风险、1 个扫描流程阻断问题，建议修复后再合并。</p>
+      <p>本次改动的主要风险集中在新引入的 SSO 登录和 CTN Label 打印流程。前者存在安全与流程实现偏差，后者存在明显的接口字段映射错误，建议修复后再合并。</p>
       <p class="risk-line">Risk Score: 7 / 10</p>
       <div class="chips">
         <span class="chip critical">Critical: 0</span>
-        <span class="chip major">Major: 2</span>
+        <span class="chip major">Major: 3</span>
         <span class="chip minor">Minor: 0</span>
         <span class="chip info">Info: 0</span>
-        <span class="chip">Total: 2</span>
+        <span class="chip">Total: 3</span>
       </div>
     </section>
 
     <h2 class="section-title">审查发现</h2>
-    <div class="file-block"><h3>src/pages/inbound/container/scan/components/ScanContainerParcel.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>19-31</td><td>业务逻辑</td><td>关闭 CTN 后仅将 `currentCode` 置空，但页面仍固定为 parcel 扫描模式。之后任何扫描都会触发“Please scan container first”，且界面没有重新扫描容器入口，流程会卡死。</td><td>关闭 CTN 后提供可恢复路径：1) 自动返回上一页，或 2) 切换到容器扫描模式并允许重新绑定容器；同时将 subtitle 绑定 `currentCode` 保持界面与状态一致。</td><td>在 `/inbound/container/scan?containerNo=CTN-xxx` 点击 Complete CTN 后再扫描条码，应可继续流程（返回列表或重新扫容器），而不是持续报错。</td></tr></tbody></table></div><div class="file-block"><h3>src/pages/user/sso/index.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>15-18</td><td>安全风险</td><td>SSO 回调页直接信任 URL 中的 `authToken` 并写入本地存储，未做 `state/nonce` 关联校验或来源校验。攻击者可构造 `/user/sso?authToken=&lt;attacker_token&gt;` 链接诱导访问，造成会话固定/账号混淆登录风险。</td><td>发起 SSO 前生成并保存一次性 `state`（含随机 nonce 与过期时间），回调时必须校验 `state` 且仅通过校验后写入 token；若后端支持，改为前端只接收 `code`，由后端换取 token。</td><td>1) 正常回调携带正确 `state` 可登录；2) 缺失/篡改 `state` 的回调必须失败；3) 直接访问 `/user/sso?authToken=...` 必须被拒绝并返回登录页。</td></tr></tbody></table></div>
+    <div class="file-block"><h3>src/components/PrintContainerLabel/ModalPrintContainerLabel.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>41-47</td><td>API契约</td><td>查询 sort detail 后直接 `setFieldsValue(payload)`，但当前类型定义里接口返回的是 `routeDate`/`seqNo`，表单字段却是 `sortDate`/`seq`。结果是查询成功后日期和序号不会回填，`sortDate` 仍为空导致表单校验失败，或者打印请求落回默认 `1-1`。</td><td>在回填前显式做字段映射，例如把 `routeDate` 映射到 `sortDate`、`seqNo` 映射到 `seq`，并补齐 `sortName` 等表单所需字段后再调用 `setFieldsValue`。同时为该映射补一个组件测试。</td><td>输入有效 `sortId` 并点击查询，确认表单会自动填充日期和序号；随后直接提交，接口请求中的 `sortDate/startNumber/endNumber` 应与查询结果一致，而不是空值或 `1-1`。</td></tr></tbody></table></div><div class="file-block"><h3>src/pages/user/Login/index.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>82-92</td><td>业务逻辑</td><td>这里把 Microsoft 登录 URL 直接赋给 `window.location.href`，会替换当前登录页；而新加的回调页实现也没有 `postMessage`/`window.close()` 逻辑。这与本次需求文档和新增测试里定义的“新窗口打开，回调通知 login 页后关闭”的流程不一致，导致弹窗式 SSO 流程实际上没有被实现。</td><td>在登录页使用 `window.open` 打开 SSO 窗口，并监听 `message` 事件；在 `/user/sso` 成功回调里向 `window.opener.postMessage(...)` 发送结果并关闭自身，失败时同样回传错误。保留直接访问兜底逻辑即可。</td><td>点击 Microsoft 登录后应保留原登录页、打开单独 SSO 窗口；回调成功后弹窗关闭，原登录页收到消息并跳转首页。现实现会直接离开登录页，且新增的 SSO 单测也无法通过。</td></tr></tbody></table></div><div class="file-block"><h3>src/pages/user/sso/index.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>11-18</td><td>安全风险</td><td>SSO 回调页会直接读取 URL 中的 `authToken` 并写入本地存储，没有校验任何 `state`/nonce/来源信息。任何拿到自己有效 token 的人都可以构造 `/user/sso?authToken=...` 链接，让受害者浏览器切换到攻击者账号，属于典型登录 CSRF / token 注入风险。</td><td>不要直接消费 URL 里的成品 token。改为在回调里校验登录发起时保存的随机 `state`，或只接收一次性 `code` 后再向后端换取 token；至少要在前端校验本次发起登录时写入的随机值后再落库。</td><td>先在浏览器 A 完成 Microsoft 登录拿到一个有效 `authToken`，然后在未登录浏览器 B 直接访问 `/user/sso?authToken=&lt;A的token&gt;`，确认当前实现会直接登录；修复后应拒绝该请求并回到登录页。</td></tr></tbody></table></div>
   </div>
   <script>
     (function () {
