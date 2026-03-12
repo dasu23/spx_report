@@ -182,24 +182,24 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: pos-web | 生成时间: 2026-03-12 06:08:09</p>
+      <p class="hero-meta">服务: pos-web | 生成时间: 2026-03-12 08:19:44</p>
     </header>
 
     <section class="summary">
       <h2>总体结论</h2>
-      <p>本次变更存在 4 个高价值问题，主要集中在 SSO 安全、权限绕过、状态覆盖导致的数据展示错误，以及打印机兼容性回归。建议优先修复前两个安全问题，再处理 Aging Dashboard 和 Urovo 打印兼容性。</p>
+      <p>本次变更主要风险集中在新增的 SSO 登录和 Fleet Dashboard tab 切换，两处都存在可被直接利用的前端权限/会话校验缺失问题，建议在合并前修正。</p>
       <p class="risk-line">Risk Score: 8 / 10</p>
       <div class="chips">
         <span class="chip critical">Critical: 0</span>
-        <span class="chip major">Major: 4</span>
+        <span class="chip major">Major: 2</span>
         <span class="chip minor">Minor: 0</span>
         <span class="chip info">Info: 0</span>
-        <span class="chip">Total: 4</span>
+        <span class="chip">Total: 2</span>
       </div>
     </section>
 
     <h2 class="section-title">审查发现</h2>
-    <div class="file-block"><h3>src/hooks/useConnectPrinter.ts</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>30-31</td><td>向后兼容</td><td>这里把“免 IP 直连”的打印机白名单从 `zicox || urovo` 缩成了仅 `zicox`。Urovo 设备会落入网络打印分支，并在 `onAssertPrinter` 中被要求配置 `print_ip`，与原有行为不兼容，移动端现网设备可能因此无法连接或打印。</td><td>如果 Urovo 仍然走原生直连能力，应保留 `urovo` 在免 IP 分支和校验豁免中；如果底层 SDK 已改成必须走网络模式，需要同步调整初始化、配置引导和回归测试，并确认旧设备固件兼容。</td><td>在 RN/Urovo 设备上清空 `print_ip` 后进入打印流程。预期仍能像旧版本一样直接连接并打印，或至少有明确的迁移提示而不是静默失效。</td></tr></tbody></table></div><div class="file-block"><h3>src/pages/dms/route/fleet-dashboard/index.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>18-22</td><td>安全风险</td><td>`tab` 查询参数只校验是否属于枚举值，没有校验当前用户是否具备 `dms:fleetDashboard:displayAgingDashboard` 权限。虽然按钮层在 `TabDashboardType` 里隐藏了 Aging Dashboard，但无权限用户仍可直接访问 `?tab=agingDashboard`，从而看到本应受限的老化看板数据。</td><td>在计算 `tabActive` 时同时校验权限；若用户无 `dms:fleetDashboard:displayAgingDashboard` 权限，则强制回退到 `plannedTasks` 或 `dailyActivity`，并避免渲染 `AgingDashboardCard`。</td><td>使用仅有 `dms:fleetDashboard:query`、没有 `dms:fleetDashboard:displayAgingDashboard` 的账号访问 `/bi/fleet-dashboard?tab=agingDashboard`，确认页面不会展示 Aging Dashboard 内容。</td></tr><tr><td><span class="chip major">major</span></td><td>80-86</td><td>状态管理</td><td>切换 Aging Dashboard 的 HUB/SC 时，`onUpdateHub` 调用 `setAgingDashboardTable` 时把 `planDeliveryDate` 丢掉了，而 store 的 `setAgingDashboardTable` 是整对象覆盖。随后表格层在 `planDeliveryDate` 为空时直接停止请求，导致图表已经按新筛选刷新，但下方表格继续显示旧数据或不再更新。</td><td>更新 Aging Dashboard 表格筛选时保留原有 `planDeliveryDate`，例如在 store 中做 merge 更新，或在 `onUpdateHub` 中显式传回当前日期范围。</td><td>进入 Aging Dashboard，先选择一个日期范围，再修改 HUB/SC。预期饼图和表格都应基于新的 HUB/SC 与原日期范围一起刷新。</td></tr></tbody></table></div><div class="file-block"><h3>src/pages/user/sso/index.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>10-19</td><td>安全风险</td><td>SSO 回调页直接信任 URL 中的 `authToken` 并写入本地存储，没有校验 OAuth `state`/nonce，也没有把授权结果和发起登录的会话绑定。任何人只要拿到一个有效 token，就可以构造 `/user/sso?authToken=...` 链接让受害者浏览器登录到攻击者账号，形成登录 CSRF / 会话注入风险。</td><td>发起 Microsoft 登录前生成随机 `state` 并写入 `sessionStorage`，回调时必须校验 `state` 一致后才能接受结果；更稳妥的做法是回调只接收一次性 `code`，由后端换取 token，前端不要直接消费 URL 中的 bearer token。</td><td>1. 发起一次 Microsoft 登录并记录生成的 `state`。2. 手工访问 `/user/sso?authToken=fake-or-other-user-token&amp;state=wrong-state`。3. 预期前端拒绝登录并提示回调非法。</td></tr></tbody></table></div>
+    <div class="file-block"><h3>src/pages/dms/route/fleet-dashboard/index.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>18-22</td><td>安全风险</td><td>当前页直接信任 URL 参数 `tab`，只要值合法就允许切到 `agingDashboard`，而实际渲染处也没有再次校验 `dms:fleetDashboard:displayAgingDashboard` 权限。没有该权限的用户只需手工访问 `?tab=agingDashboard` 就能看到 Aging Dashboard，形成前端权限绕过。</td><td>在解析 `tab` 时结合权限做白名单过滤；若用户没有 `dms:fleetDashboard:displayAgingDashboard`，应强制回退到 `plannedTasks` 或 `dailyActivity`，并在渲染 `AgingDashboardCard` 前再次做权限判断。</td><td>使用一个缺少 `dms:fleetDashboard:displayAgingDashboard` 权限的账号访问 `/bi/fleet-dashboard?tab=agingDashboard`，预期页面应自动回退到允许的 tab，且不会请求/展示 Aging Dashboard 数据。</td></tr></tbody></table></div><div class="file-block"><h3>src/pages/user/sso/index.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>10-19</td><td>安全风险</td><td>SSO 回调页会无条件读取 URL 中的 `authToken` 并写入本地存储，没有校验本次登录发起时的 `state`/nonce，也没有把一次性 `code` 交给后端换 token。只要有人诱导用户访问 `/user/sso?authToken=...`，前端就会接受该 token，存在登录 CSRF / 会话固定风险。</td><td>不要直接信任 URL 中的 `authToken`。登录发起前生成并保存随机 `state`，回调时先校验 `state`；更稳妥的做法是回调页只接收一次性 `code`，再调用后端完成 code-to-token 交换，前端只处理后端返回的受信任会话结果。</td><td>构造一个未经过登录按钮发起的 `/user/sso?authToken=fake-token&amp;state=wrong` 访问，确认页面不会写入 `SPX_AUTH_TOKEN`；再验证缺失/错误 `state` 时会进入错误态。</td></tr></tbody></table></div>
   </div>
   <script>
     (function () {
