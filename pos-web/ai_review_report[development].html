@@ -182,24 +182,24 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: pos-web | 生成时间: 2026-03-12 08:19:44</p>
+      <p class="hero-meta">服务: pos-web | 生成时间: 2026-03-12 08:28:05</p>
     </header>
 
     <section class="summary">
       <h2>总体结论</h2>
-      <p>本次变更主要风险集中在新增的 SSO 登录和 Fleet Dashboard tab 切换，两处都存在可被直接利用的前端权限/会话校验缺失问题，建议在合并前修正。</p>
-      <p class="risk-line">Risk Score: 8 / 10</p>
+      <p>本次变更整体可读性尚可，但存在一个权限绕过点和一个全局请求契约回归，风险主要集中在 Fleet Dashboard 新增页签与共享 HTTP 拦截器。另有一个路由迁移的兼容性缺口需要补上。</p>
+      <p class="risk-line">Risk Score: 7 / 10</p>
       <div class="chips">
         <span class="chip critical">Critical: 0</span>
         <span class="chip major">Major: 2</span>
         <span class="chip minor">Minor: 0</span>
-        <span class="chip info">Info: 0</span>
-        <span class="chip">Total: 2</span>
+        <span class="chip info">Info: 1</span>
+        <span class="chip">Total: 3</span>
       </div>
     </section>
 
     <h2 class="section-title">审查发现</h2>
-    <div class="file-block"><h3>src/pages/dms/route/fleet-dashboard/index.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>18-22</td><td>安全风险</td><td>当前页直接信任 URL 参数 `tab`，只要值合法就允许切到 `agingDashboard`，而实际渲染处也没有再次校验 `dms:fleetDashboard:displayAgingDashboard` 权限。没有该权限的用户只需手工访问 `?tab=agingDashboard` 就能看到 Aging Dashboard，形成前端权限绕过。</td><td>在解析 `tab` 时结合权限做白名单过滤；若用户没有 `dms:fleetDashboard:displayAgingDashboard`，应强制回退到 `plannedTasks` 或 `dailyActivity`，并在渲染 `AgingDashboardCard` 前再次做权限判断。</td><td>使用一个缺少 `dms:fleetDashboard:displayAgingDashboard` 权限的账号访问 `/bi/fleet-dashboard?tab=agingDashboard`，预期页面应自动回退到允许的 tab，且不会请求/展示 Aging Dashboard 数据。</td></tr></tbody></table></div><div class="file-block"><h3>src/pages/user/sso/index.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>10-19</td><td>安全风险</td><td>SSO 回调页会无条件读取 URL 中的 `authToken` 并写入本地存储，没有校验本次登录发起时的 `state`/nonce，也没有把一次性 `code` 交给后端换 token。只要有人诱导用户访问 `/user/sso?authToken=...`，前端就会接受该 token，存在登录 CSRF / 会话固定风险。</td><td>不要直接信任 URL 中的 `authToken`。登录发起前生成并保存随机 `state`，回调时先校验 `state`；更稳妥的做法是回调页只接收一次性 `code`，再调用后端完成 code-to-token 交换，前端只处理后端返回的受信任会话结果。</td><td>构造一个未经过登录按钮发起的 `/user/sso?authToken=fake-token&amp;state=wrong` 访问，确认页面不会写入 `SPX_AUTH_TOKEN`；再验证缺失/错误 `state` 时会进入错误态。</td></tr></tbody></table></div>
+    <div class="file-block"><h3>config/routes.ts</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip info">info</span></td><td>312-317</td><td>向后兼容</td><td>`/dms/route/dashboard` 路由已从 `dms/route` 下移除，并改挂到 `/bi/dashboard`。当前没有保留旧路由别名或重定向，已有书签、外链、系统内深链会直接失效。</td><td>保留旧路径做兼容跳转，或至少增加显式 redirect，把 `/dms/route/dashboard` 重定向到新的 `/bi/dashboard`。</td><td>直接访问历史路径 `/dms/route/dashboard`，确认会被无损跳转到新地址，而不是 404 或落到错误页面。</td></tr></tbody></table></div><div class="file-block"><h3>src/pages/dms/route/fleet-dashboard/index.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>17-22</td><td>安全风险</td><td>Aging Dashboard 的权限只在按钮渲染层做了隐藏，但页面实际展示逻辑直接信任 `tab` 查询参数。没有 `dms:fleetDashboard:displayAgingDashboard` 权限的用户，只要手动访问 `...?tab=agingDashboard`，仍然会渲染 Aging Dashboard 并触发对应数据请求。</td><td>在页面入口处也做权限校验：解析到 `agingDashboard` 时，先检查 `hasPermission(&#x27;dms:fleetDashboard:displayAgingDashboard&#x27;)`，无权限时强制回退到 `plannedTasks`，并避免渲染 `AgingDashboardCard` / 发送相关请求。</td><td>使用一个没有 `dms:fleetDashboard:displayAgingDashboard` 权限的账号，直接访问 `/bi/fleet-dashboard?tab=agingDashboard`，确认页面不会展示 Aging Dashboard，也不会发起 aging dashboard 的接口请求。</td></tr></tbody></table></div><div class="file-block"><h3>src/services/http.ts</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>132</td><td>API契约</td><td>响应拦截器将 `res.data` 改为 `res.payload || res.data`，会把合法的 falsy payload（如 `0`、`false`、空字符串）错误地替换成旧的 `res.data`。这会改变全局请求契约，导致依赖标量返回值的调用方拿到错误数据。</td><td>改为仅在 `payload === undefined` 时才回退，例如 `res.data = res.payload !== undefined ? res.payload : res.data`，保留 `0/false/&#x27;&#x27;` 这类合法返回值。</td><td>为一个返回 `payload: false` 或 `payload: 0` 的接口补充单测，验证调用方最终拿到的仍然是 `false/0`，而不是旧的 `res.data`。</td></tr></tbody></table></div>
   </div>
   <script>
     (function () {
