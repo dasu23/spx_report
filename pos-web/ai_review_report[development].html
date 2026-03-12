@@ -182,24 +182,24 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: pos-web | 生成时间: 2026-03-12 08:28:05</p>
+      <p class="hero-meta">服务: pos-web | 生成时间: 2026-03-12 09:17:01</p>
     </header>
 
     <section class="summary">
       <h2>总体结论</h2>
-      <p>本次变更整体可读性尚可，但存在一个权限绕过点和一个全局请求契约回归，风险主要集中在 Fleet Dashboard 新增页签与共享 HTTP 拦截器。另有一个路由迁移的兼容性缺口需要补上。</p>
+      <p>本次变更里最值得关注的是新增 SSO 登录链路的安全校验缺失，以及 fleet dashboard 筛选状态被覆盖导致的空白页回归。其余改动整体风险可控，但请求层归一化逻辑存在一个容易漏测的契约问题。</p>
       <p class="risk-line">Risk Score: 7 / 10</p>
       <div class="chips">
         <span class="chip critical">Critical: 0</span>
         <span class="chip major">Major: 2</span>
-        <span class="chip minor">Minor: 0</span>
-        <span class="chip info">Info: 1</span>
+        <span class="chip minor">Minor: 1</span>
+        <span class="chip info">Info: 0</span>
         <span class="chip">Total: 3</span>
       </div>
     </section>
 
     <h2 class="section-title">审查发现</h2>
-    <div class="file-block"><h3>config/routes.ts</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip info">info</span></td><td>312-317</td><td>向后兼容</td><td>`/dms/route/dashboard` 路由已从 `dms/route` 下移除，并改挂到 `/bi/dashboard`。当前没有保留旧路由别名或重定向，已有书签、外链、系统内深链会直接失效。</td><td>保留旧路径做兼容跳转，或至少增加显式 redirect，把 `/dms/route/dashboard` 重定向到新的 `/bi/dashboard`。</td><td>直接访问历史路径 `/dms/route/dashboard`，确认会被无损跳转到新地址，而不是 404 或落到错误页面。</td></tr></tbody></table></div><div class="file-block"><h3>src/pages/dms/route/fleet-dashboard/index.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>17-22</td><td>安全风险</td><td>Aging Dashboard 的权限只在按钮渲染层做了隐藏，但页面实际展示逻辑直接信任 `tab` 查询参数。没有 `dms:fleetDashboard:displayAgingDashboard` 权限的用户，只要手动访问 `...?tab=agingDashboard`，仍然会渲染 Aging Dashboard 并触发对应数据请求。</td><td>在页面入口处也做权限校验：解析到 `agingDashboard` 时，先检查 `hasPermission(&#x27;dms:fleetDashboard:displayAgingDashboard&#x27;)`，无权限时强制回退到 `plannedTasks`，并避免渲染 `AgingDashboardCard` / 发送相关请求。</td><td>使用一个没有 `dms:fleetDashboard:displayAgingDashboard` 权限的账号，直接访问 `/bi/fleet-dashboard?tab=agingDashboard`，确认页面不会展示 Aging Dashboard，也不会发起 aging dashboard 的接口请求。</td></tr></tbody></table></div><div class="file-block"><h3>src/services/http.ts</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>132</td><td>API契约</td><td>响应拦截器将 `res.data` 改为 `res.payload || res.data`，会把合法的 falsy payload（如 `0`、`false`、空字符串）错误地替换成旧的 `res.data`。这会改变全局请求契约，导致依赖标量返回值的调用方拿到错误数据。</td><td>改为仅在 `payload === undefined` 时才回退，例如 `res.data = res.payload !== undefined ? res.payload : res.data`，保留 `0/false/&#x27;&#x27;` 这类合法返回值。</td><td>为一个返回 `payload: false` 或 `payload: 0` 的接口补充单测，验证调用方最终拿到的仍然是 `false/0`，而不是旧的 `res.data`。</td></tr></tbody></table></div>
+    <div class="file-block"><h3>src/pages/dms/route/fleet-dashboard/index.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>80-86</td><td>状态管理</td><td>`onUpdateHub` 在仅更新 HUB/SC 时调用 `setAgingDashboardTable`，但没有保留原来的 `planDeliveryDate`。该 setter 会整体替换 store 对象，导致在 `plannedTasks`/`dailyActivity` 页签修改 HUB/SC 后，aging dashboard 的日期筛选被清空；随后切到 Aging Dashboard 时，表格侧 `useEffect` 因 `planDeliveryDate` 为空而不再拉数，页面直接空白。</td><td>更新 aging dashboard 过滤条件时做合并而不是覆盖，例如读取当前 `agingDashboardSummaryFilter` 后保留 `planDeliveryDate` 再写回；或者把 store 的 setter 改成 partial merge。</td><td>补充集成场景：进入 Fleet Dashboard 后停留在 Planned Tasks，修改 HUB/SC，再切换到 Aging Dashboard，确认仍会沿用当前日期范围并正常请求/展示数据。</td></tr></tbody></table></div><div class="file-block"><h3>src/pages/user/sso/index.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>10-19</td><td>安全风险</td><td>SSO 回调页直接信任 URL 中的 `authToken` 并写入 `localStorage`，没有校验任何 `state`/nonce，也没有校验这次回调是否由当前登录流程发起。攻击者只要构造 `/user/sso?authToken=&lt;attacker-token&gt;` 链接，就可能让受害者浏览器写入攻击者会话，形成登录会话固定/账号串用风险。</td><td>在发起 Microsoft 登录前生成随机 `state` 并保存到 `sessionStorage`，由后端把该 `state` 带入 OAuth；回调页在写入 token 前必须校验返回的 `state` 与本地一致，不一致时拒绝登录并清理 URL。同时把账号类型等上下文也绑定到该 state，而不是仅依赖可变的 `localStorage`。</td><td>补充用例：1) 直接访问 `/user/sso?authToken=fake&amp;state=bad` 应显示错误且不得写入 token；2) `state` 缺失或不匹配时不得跳转首页；3) 只有合法 state 才能完成登录。</td></tr></tbody></table></div><div class="file-block"><h3>src/services/http.ts</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip minor">minor</span></td><td>132</td><td>API契约</td><td>这里把响应归一化从 `res.payload` 改成了 `res.payload || res.data`。如果后端合法返回的 `payload` 是 `0`、`false` 或空字符串，这些值会被当成 falsy 丢弃，调用方拿到旧的 `res.data`/`undefined`，产生隐蔽的契约回归。</td><td>改为使用空值合并：`res.data = res.payload ?? res.data;`，只在 `payload` 为 `null/undefined` 时才回退。</td><td>补充请求层单测，覆盖 `payload` 分别为 `0`、`false`、`&#x27;&#x27;`、`null`、`undefined` 时 `res.data` 的归一化结果。</td></tr></tbody></table></div>
   </div>
   <script>
     (function () {
