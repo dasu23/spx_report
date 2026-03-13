@@ -182,12 +182,12 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: tracking-api | 生成时间: 2026-03-13 03:33:06</p>
+      <p class="hero-meta">服务: tracking-api | 生成时间: 2026-03-13 03:45:56</p>
     </header>
 
     <section class="summary">
       <h2>总体结论</h2>
-      <p>对比基线为 LAST_TAG `20260313`。本次变更发现 2 个 Major 问题：一个会改变 Commercial 容器的目标值与容器号生成规则，另一个会把原本允许跳过的 `endNumber=0` 行升级为整批导入失败。</p>
+      <p>基线：LAST_TAG=20260313。相对该 tag 的变更发现 2 个 Major 问题，分别会导致路由匹配误判和 Excel 批量生成功能回归。</p>
       <div class="chips">
         <span class="chip critical">Critical: 0</span>
         <span class="chip major">Major: 2</span>
@@ -198,7 +198,7 @@
     </section>
 
     <h2 class="section-title">审查发现</h2>
-    <div class="file-block"><h3>pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerV2ServiceImpl.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>115-122</td><td>业务逻辑</td><td>`buildContainerFromSortProfile` 在 `commercial` 分支不再从 `sortType` 提取前缀作为 `destination`，导致 FC 容器继续使用默认的 `facilityCode`。`destination` 会被写入 `ContainerForm`，并参与容器号生成与标签内容输出；对于 `{cdaId}-Commercial` 这类已由 `WebSorterService` 约束的配置，这会把商业容器的目标值从 `cdaId` 改成当前站点，生成的容器号/标签与历史规则不兼容。</td><td>保持所有带 `-` 的 `sortType` 都先解析一次目标值，再根据后缀决定 `containerType/sortMode`，例如：`String[] parts = sortType.split(&quot;-&quot;, 2); containerDestination = parts[0]; String routeType = parts[1];`。补一个用例：`sortType=CDA123-Commercial` 时，`destination` 和生成的 `containerNum` 都应包含 `CDA123`。</td><td>构造 `SorterChuteMapping.sortType = &quot;CDA123-Commercial&quot;`，调用 `buildContainerFromSortProfile`，断言返回的 `ContainerForm.destination` 为 `CDA123`，且后续 `getContainerNum()` 生成的编号不包含当前 `facilityCode` 作为该段目标值。</td></tr><tr><td><span class="chip major">major</span></td><td>277-285</td><td>边界条件</td><td>这里新增了逐行 Bean Validation，但 `ContainerLabelRowBo.endNumber` 带有 `@Min(1)`，会把 `endNumber=0` 的行直接判为非法并抛出异常，导致整份 Excel 解析失败。现有逻辑在同一方法后半段以及批量打印路径中都明确把 `endNumber=0` 当作“跳过该行”处理，因此这是一个行为回归：以前允许混合导入（部分行跳过），现在会整批失败。</td><td>不要在文件解析阶段把 `endNumber=0` 当成硬错误。可选修复方式：1. 校验前先过滤 `endNumber == 0` 的行；2. 去掉 `endNumber` 的 `@Min(1)`，改为在真正生成标签前只校验 `endNumber &lt; 0` 或 `endNumber &lt; startNumber`；3. 为导入场景定义单独的校验组。</td><td>上传一份包含两行数据的 Excel：第一行 `endNumber=0`，第二行为合法值。预期结果应为接口成功返回，并仅为第二行生成 PDF，而不是整份文件报错。</td></tr></tbody></table></div>
+    <div class="file-block"><h3>pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerImplService.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>1184-1223</td><td>业务逻辑</td><td>新逻辑把 `label.getRouteCode()` 统一按 `split(&quot;-&quot;)[1]` 截断后用于 CROSS/EDSP/COMM 校验。这里有两个回归风险：1) 只取第 2 段会丢失首个 `-` 之后的其余内容，像 `A-B-0001` 会被截成 `B`，而现有代码库里提取 route suffix 的实现是 `substring(idx + 1)`，会保留 `B-0001`；2) EDSP/COMM 分支原本使用 `label.getFixRoute()` 比对，现在改成截断后的 `routeCode`，会把匹配语义从 fixRoute 切到 routeCode，容易把原本可扫描的包裹误判为 `WRONG_ROUTENAME`。</td><td>按场景分别处理字段，不要用同一个截断值覆盖所有 sortMode。若目的是去掉 routeCode 前缀，改为 `int idx = routeCode.indexOf(&#x27;-&#x27;); routeCode = idx &gt;= 0 ? routeCode.substring(idx + 1) : routeCode;`，避免多段 routeCode 被截断；同时保留 EDSP/COMM 原有的 `label.getFixRoute()` 比对，除非已确认上游数据模型保证 `fixRoute` 与 `routeCode` 完全等价。</td><td>1. 构造 `label.routeCode = &quot;A-B-0001&quot;`、container.routeCode 包含 `&quot;B-0001&quot;`，验证扫描不应被误判。2. 构造 EDSP/COMM 场景，其中 `fixRoute` 与 `routeCode` 不同但业务上应以 `fixRoute` 为准，验证变更前后扫描结果。</td></tr></tbody></table></div><div class="file-block"><h3>pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerV2ServiceImpl.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>277-285</td><td>业务逻辑</td><td>这里在读取 Excel 后立即对每一行做 Bean Validation，但同一方法在后面 `301-304` 明确支持 `endNumber == null || endNumber == 0` 时跳过该行。`ContainerLabelRowBo.endNumber` 上有 `@Min(1)`，因此用户只要用 0 表示“本行不生成标签”，现在就会在这里直接抛错，原有可用流程被破坏。</td><td>把“跳过空行/0 行”的判断放到校验之前，或者为导入场景拆分校验规则。例如先过滤：`if (row.getEndNumber() == null || row.getEndNumber() == 0) continue;`，再执行 `validator.validate(row)`。如果还需要限制真实生成行的最小值，再保留 `@Min(1)`。</td><td>上传一份 Excel，其中一行 `endNumber=0`（或空），其余行合法。预期：该行被跳过，其余行正常生成；当前实现会直接报 `Excel parse failed`。</td></tr></tbody></table></div>
   </div>
   <script>
     (function () {
