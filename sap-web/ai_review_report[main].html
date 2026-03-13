@@ -182,24 +182,23 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: sap-web | 生成时间: 2026-03-12 05:34:44</p>
+      <p class="hero-meta">服务: sap-web | 生成时间: 2026-03-13 06:28:29</p>
     </header>
 
     <section class="summary">
       <h2>总体结论</h2>
-      <p>基线为 ROOT_COMMIT `40411576a95bbc983a8eb7e2ab00e5a4b92d606d`（仓库未解析到 tag）。本次变更的主要风险集中在聊天内容渲染和新引入的外链打开能力，均存在高价值安全缺口。</p>
-      <p class="risk-line">Risk Score: 8 / 10</p>
+      <p>相对基线 LAST_TAG `40411576a95bbc983a8eb7e2ab00e5a4b92d606d` 的变更里，发现 2 个 Critical 和 2 个 Major 问题，主要集中在聊天内容渲染安全、前端签名密钥暴露，以及会话状态/异常处理逻辑。上述问题都出现在本次新增或修改的代码路径中，建议在合入前修复。</p>
       <div class="chips">
-        <span class="chip critical">Critical: 1</span>
-        <span class="chip major">Major: 1</span>
+        <span class="chip critical">Critical: 2</span>
+        <span class="chip major">Major: 2</span>
         <span class="chip minor">Minor: 0</span>
         <span class="chip info">Info: 0</span>
-        <span class="chip">Total: 2</span>
+        <span class="chip">Total: 4</span>
       </div>
     </section>
 
     <h2 class="section-title">审查发现</h2>
-    <div class="file-block"><h3>packages/bridge/src/index.ts</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>40-41</td><td>安全风险</td><td>新增的 `openWindow` 命令把外部传入的 `params.url` 直接交给 `window.open`，没有校验协议、域名或消息来源。当前 bridge 仍通过 `postMessage(&#x27;*&#x27;)` 收发消息且未校验 `event.origin`，这意味着一旦有页面能构造 connector 消息，就可以驱动宿主页面弹出任意站点，形成钓鱼跳转；部分浏览器下还可能接受 `javascript:` URL。</td><td>只接受来自受信 iframe/source 的消息，并在执行前校验 URL：限定为 `http/https`、按需要做域名白名单；调用 `window.open` 时显式使用 `noopener,noreferrer`，拒绝任何非法协议。</td><td>从非受信消息源向 bridge 发送 `openWindow` 命令，或让聊天消息包含 `javascript:` / 非白名单域名链接，确认命令被拒绝且不会打开新窗口。</td></tr></tbody></table></div><div class="file-block"><h3>packages/chatbot/src/components/chat-widget/chat-widget-content/index.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>129-133</td><td>安全风险</td><td>响应消息先通过 `marked()` 转成 HTML，再直接传给 `dangerouslySetInnerHTML` 渲染，但这里没有任何白名单清洗。`marked` 会保留原始 HTML，因此只要后端返回的消息里包含 `&lt;img onerror=...&gt;`、`&lt;script&gt;` 或带事件处理器的标签，聊天窗口就会执行任意脚本，导致会话信息泄露或宿主页被劫持。</td><td>在渲染前增加 HTML 清洗，至少对 `marked` 输出接入可靠的 sanitizer（如 DOMPurify）并显式禁止危险标签、事件属性和 `javascript:` URL；如果业务允许，优先关闭原始 HTML 支持，仅保留受控的 Markdown 子集。</td><td>让 `/api/chatbot/chat/:sessionId` 返回一条消息：`&lt;img src=x onerror=window.__xss=1&gt;`，确认渲染后不会执行脚本，且页面中危险属性已被移除。</td></tr></tbody></table></div>
+    <div class="file-block"><h3>packages/chatbot/src/components/chat-widget/chat-widget-content/index.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>87-140</td><td>前端安全</td><td>后端返回的文本被 `marked()` 直接转换为 HTML，再通过 `dangerouslySetInnerHTML` 注入页面。`marked` 默认不会清洗恶意 HTML，这意味着接口只要返回 `&lt;script&gt;`、事件处理属性或 `javascript:` 链接，就能在宿主页上下文执行任意脚本，形成直接 XSS。</td><td>不要把未经净化的富文本直接下发到 DOM。至少在渲染前引入白名单净化，例如 `const html = DOMPurify.sanitize(marked.parse(text))`；如果业务只需要 Markdown 文本，禁用原始 HTML 并把链接协议限制为 `http/https/mailto`。</td><td>让聊天接口返回 `Hello &lt;img src=x onerror=alert(1)&gt;` 或 `[x](javascript:alert(1))`，确认页面不会执行脚本且只渲染安全内容。</td></tr></tbody></table></div><div class="file-block"><h3>packages/chatbot/src/hooks/use-chat-session.ts</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>106-121</td><td>异常处理</td><td>发送消息时先把用户消息写入 `chatHistories`，随后直接 `await chatService.sendTextMessage(input)`，但没有任何失败分支。接口超时或 4xx/5xx 时，状态会停留在“已发送但无响应”的半完成状态，用户也看不到错误反馈，属于明显的异常处理缺失。</td><td>为该异步流程增加 `try/catch`，在失败时回滚这次乐观更新或追加明确的错误消息，并确保会话状态/过期计时也得到一致处理。例如：捕获异常后 `set` 一条 `response` 类型的错误提示，或删除刚插入的请求记录。</td><td>模拟 `/zendeskai-api/zendesk/chat` 返回 500 或断网，确认 UI 会展示失败提示且不会留下无法区分状态的孤立请求消息。</td></tr><tr><td><span class="chip major">major</span></td><td>49-76</td><td>状态管理</td><td>`startSession()` 里先调用 `refreshSessionExpireTimer()`，再写入新的 `sessionExpireTime`。首次建会时旧的过期时间仍为 `0`，因此不会创建任何超时器，导致 `closeSession()` 永远不会在 30 分钟后自动执行，前端过期提示和后端 `active=false` 也都不会按预期触发。</td><td>先成功写入新的过期时间，再启动定时器，例如在 `set({ sessionExpireTime: Date.now() + SESSION_EXPIRE_TIME })` 之后立即调用 `refreshSessionExpireTimer()`；同时建议把“更新时间”和“重置定时器”封装成一个原子方法，避免顺序回归。</td><td>新开会话后等待超过 30 分钟，或把常量临时改成 2 秒验证：应自动调用 `closeSession()` 并在历史中追加过期分隔线。</td></tr></tbody></table></div><div class="file-block"><h3>packages/chatbot/src/services/_common/index.ts</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>15-33</td><td>安全风险</td><td>签名用的 `secretKey` 被硬编码在前端代码里，打包后任何用户都能从浏览器源码或产物中提取该值，并自行计算 `X-Signature` / `X-Timestamp` 伪造请求。这样签名机制失去保密性，等同于把服务端凭据公开给所有客户端。</td><td>不要在浏览器侧保存长期密钥。应改为服务端签名，或由服务端下发短时效、可撤销的令牌；前端只携带令牌，不负责生成基于共享密钥的签名。</td><td>构建后在产物中搜索该 UUID，验证可直接提取；再用浏览器控制台按相同算法生成签名并调用接口，确认当前方案可被伪造。</td></tr></tbody></table></div>
   </div>
   <script>
     (function () {
