@@ -182,24 +182,23 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: cps-web | 生成时间: 2026-03-12 08:29:52</p>
+      <p class="hero-meta">服务: cps-web | 生成时间: 2026-03-13 02:19:43</p>
     </header>
 
     <section class="summary">
       <h2>总体结论</h2>
-      <p>本次变更存在 3 个高价值问题，均集中在新接入接口后的数据契约和异常处理上，其中两个会直接导致邀请接受流程或 Bulk Claim 表单失效。</p>
-      <p class="risk-line">Risk Score: 7 / 10</p>
+      <p>发现 1 个 Major 问题：本次变更把运单号字段替换成账号号选择，导致提交参数语义错误，会直接影响 Shipper Inquiry 工单的正确性。</p>
       <div class="chips">
         <span class="chip critical">Critical: 0</span>
-        <span class="chip major">Major: 3</span>
+        <span class="chip major">Major: 1</span>
         <span class="chip minor">Minor: 0</span>
         <span class="chip info">Info: 0</span>
-        <span class="chip">Total: 3</span>
+        <span class="chip">Total: 1</span>
       </div>
     </section>
 
     <h2 class="section-title">审查发现</h2>
-    <div class="file-block"><h3>src/pages/shippers/accept/index.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>16-33</td><td>业务逻辑</td><td>`useRequest` 返回值被包装成了 `{ data: result }`，但后续代码按 `InvitationInfo` 直接读取 `data.email`。结果是接受邀请页加载成功后 `data?.email` 一直为 `undefined`，点击 `Accept invite` 会直接命中“Missing invitation code or email”，邀请无法被接受，页面上的公司和账号信息也会为空。</td><td>让 `useRequest` 直接返回 `getInvitationInfo(invitationCode)` 的结果，或统一改为读取 `data?.data?.email / companyName / speedxAccountNumber`。同时补一个用有效邀请码进入 `/shippers/accept` 并完成接受邀请的页面测试。</td><td>使用一个有效的邀请码访问 `/shippers/accept?code=...`，确认页面能展示邀请邮箱/公司信息，点击 `Accept invite` 后成功调用 `/shippers/auth/accept` 并跳转到 `/shippers/login`。</td></tr></tbody></table></div><div class="file-block"><h3>src/pages/shippers/tickets/new.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>25-27</td><td>API契约</td><td>`getMyAccountNumbers()` 的结果同样被额外包装成 `{ data: result }`，而组件把 `accountOptions` 当作数组使用。这样 `accountOptions?.map(...)` 实际拿到的是对象而不是 `MyAccountItem[]`，Bulk Claim 场景下账号下拉框不会出现任何可选项。</td><td>将请求改为 `useRequest(() =&gt; getMyAccountNumbers())`，或在渲染时读取 `accountOptions.data`。同时为 Bulk Claim 表单补一个断言下拉选项能正确展示账号列表的测试。</td><td>登录 shipper 用户后进入 `/shippers/tickets/new`，选择 `BULK_CLAIM`，校验 `SpeedX Account Number` 下拉能展示 `/shippers/auth/my-accounts` 返回的账号。</td></tr><tr><td><span class="chip major">major</span></td><td>69-72</td><td>异常处理</td><td>提交工单主流程失败时这里只做了 `console.error`，不再向用户展示任何错误提示。接口异常、鉴权失败或网络错误时，用户只会看到按钮结束 loading，但不知道提交是否成功，也不知道是否需要重试。</td><td>在 `catch` 中补充明确的失败提示，例如 `messageApi.error(...)`，并根据失败类型决定是否保留 `createdTicketRef.current`。至少要覆盖创建工单失败和附件补传失败两类提示。</td><td>模拟 `createTicket` 返回 500 或网络超时，确认页面会展示失败消息，且不会把用户留在无反馈状态。</td></tr></tbody></table></div>
+    <div class="file-block"><h3>src/pages/shippers/tickets/new.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>136-146</td><td>业务逻辑</td><td>`SHIPPER_INQUIRY` 表单的 `trackingNumber` 字段被改成了账号下拉框，并且提交值来自 `option.speedxAccountNumber`。`createTicket` 的请求类型仍明确区分 `trackingNumber` 和 `speedxAccountNumber`，详情页也分别展示这两个字段；因此这里会把账号号误传到 `trackingNumber`，导致工单内容错误，且用户无法再输入真实运单号。</td><td>把该字段恢复为运单号输入，或至少改为真正绑定运单号数据源。若当前页面确实需要选择账号，应新增/使用 `speedxAccountNumber` 字段，而不是覆盖 `trackingNumber`。例如直接恢复为：`&lt;Input placeholder=&quot;e.g. SPX1234567890&quot; /&gt;`；如果要同时保留账号选择，应新增单独的 `Form.Item name=&quot;speedxAccountNumber&quot;`。</td><td>提交一个 `SHIPPER_INQUIRY`，输入/选择的账号号与真实运单号不同；检查 `/cps-api/shippers/ticket/create` 请求体应包含正确的 `trackingNumber`，且工单详情页的 `Tracking #` 不应显示账号号。</td></tr></tbody></table></div>
   </div>
   <script>
     (function () {
