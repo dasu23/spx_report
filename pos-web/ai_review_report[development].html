@@ -182,23 +182,23 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: pos-web | 生成时间: 2026-03-13 06:24:33</p>
+      <p class="hero-meta">服务: pos-web | 生成时间: 2026-03-13 06:29:18</p>
     </header>
 
     <section class="summary">
       <h2>总体结论</h2>
-      <p>发现 2 个 Major 问题和 1 个兼容性风险。主要集中在 SSO 安全校验缺失，以及 Fleet Dashboard 查询逻辑的闭包状态失效。</p>
+      <p>发现 1 个 Critical 和 1 个 Major 问题，主要集中在 Fleet Dashboard 的权限绕过和登录页的移动端边界处理，建议优先修复越权入口。</p>
       <div class="chips">
-        <span class="chip critical">Critical: 0</span>
-        <span class="chip major">Major: 2</span>
+        <span class="chip critical">Critical: 1</span>
+        <span class="chip major">Major: 1</span>
         <span class="chip minor">Minor: 0</span>
-        <span class="chip info">Info: 1</span>
-        <span class="chip">Total: 3</span>
+        <span class="chip info">Info: 0</span>
+        <span class="chip">Total: 2</span>
       </div>
     </section>
 
     <h2 class="section-title">审查发现</h2>
-    <div class="file-block"><h3>config/routes.ts</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip info">info</span></td><td>312-318</td><td>向后兼容</td><td>`/dms/route/dashboard` 路由在本次变更中被移除，同时仪表盘页面被迁移到 `/bi/dashboard`。这会让已有书签、外部跳转链接和历史分享链接失效。</td><td>保留旧路由并做 301/前端重定向，例如在原位置增加一个 redirect 到新路径，或至少在页面初始化时兼容旧 URL。</td><td>直接访问历史地址 `/dms/route/dashboard`；修复前会找不到页面或落到错误页面，修复后应自动跳转到新的 dashboard 地址。</td></tr></tbody></table></div><div class="file-block"><h3>src/pages/dms/route/fleet-dashboard/component/FleetDashboardQuery/index.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>77-136</td><td>状态管理</td><td>`updateData`、`updateHubData` 和 `handleHubScChange` 的 `useCallback` 依赖不完整，闭包会捕获首次渲染时的 `tabActive`、权限和筛选值。页面从 `plannedTasks`/`dailyActivity` 切到 `agingDashboard` 后，`handleHubScChange` 仍可能按旧 tab 逻辑只调用 `updateHubData()`，导致 Aging Dashboard 的表格/图表筛选条件不刷新，展示旧数据。</td><td>为这些回调补齐依赖，至少包含 `tabActive`、`scHubPermission`、`fleetDspPermission`、`previousFacilityCodes`、`facilityCodes`、`getRealHubList`、`getRealScList`、`updateHubData`；或者把分支逻辑收敛到一个普通函数中，避免在多个 callback 中保存过期状态。</td><td>以有 `displayFleetFilter` 权限的账号进入 Fleet Dashboard，先停留在 Planned Tasks，再切到 Aging Dashboard，修改 HUB/SC 后观察请求参数；修复前 Aging Dashboard 仍使用切换前的筛选条件，修复后应立即按新 HUB/SC 重新加载。</td></tr></tbody></table></div><div class="file-block"><h3>src/pages/user/sso/index.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>10-19</td><td>安全风险</td><td>SSO 回调直接信任 URL 中的 `authToken` 并写入 `localStorage`，没有校验 OAuth `state`/nonce，也没有校验这次回调是否由当前登录流程发起。攻击者可以构造 `/user/sso?authToken=&lt;attacker-token&gt;` 链接诱导用户访问，造成登录会话固定，用户后续操作会落到错误账号上。</td><td>发起 Microsoft 登录前生成一次性 `state`（建议 `crypto.randomUUID()`），存入 `sessionStorage`，并随登录请求一起传给后端；回调页读取并严格比对 `state`，不匹配时拒绝写入 token 并提示错误。例如：`sessionStorage.setItem(&#x27;sso_state&#x27;, state)`；回调时 `if (urlParams.get(&#x27;state&#x27;) !== sessionStorage.getItem(&#x27;sso_state&#x27;)) { setAuthError(&#x27;Invalid SSO state&#x27;); return; }`。校验通过后再落 token，并立即清理 `state`。</td><td>先正常打开登录页但不要发起 SSO，再手工访问 `/user/sso?authToken=fake-token&amp;state=fake`；修复前页面会直接登录，修复后应阻止登录并展示 state 校验失败。</td></tr></tbody></table></div>
+    <div class="file-block"><h3>src/components/LayoutLogin/index.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>53-57</td><td>边界条件</td><td>登录表单容器写死为 `w-[680px]`。在 680px 以下的视口（手机、窄窗口）中，这个固定宽度会直接溢出父容器，导致登录表单和 Microsoft 按钮横向超出屏幕，登录页在移动端可用性明显下降。</td><td>改为响应式宽度，例如 `className=&quot;w-full max-w-[680px] px-4 sm:px-8&quot;`，必要时再给外层补 `overflow-x-hidden` 或调整左右留白，确保窄屏下表单始终能完整显示。</td><td>在 375px 宽度视口打开 `/user/login`，检查用户名/密码框、`Continue with Microsoft` 按钮和语言切换器是否都能完整显示且无需横向滚动。</td></tr></tbody></table></div><div class="file-block"><h3>src/pages/dms/route/fleet-dashboard/index.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>14-22,140-142</td><td>安全风险</td><td>页面直接信任 `tab` 查询参数，只要 `tab=agingDashboard` 就会渲染 `AgingDashboardCard`。虽然 [TabDashboardType] 中把无权限用户的按钮隐藏了，但这里没有再次校验 `dms:fleetDashboard:displayAgingDashboard`，因此无该权限的用户仍可通过手工修改 URL 访问该看板，属于前端越权暴露。</td><td>在页面层做权限感知的白名单校验，并在发现非法 tab 时回退到允许的默认值。例如先通过 `hasPermission(&#x27;dms:fleetDashboard:displayAgingDashboard&#x27;)` 计算 `allowedTabs`，再用 `allowedTabs.includes(tabParam)` 决定 `tabActive`；若参数不合法，调用 `setSearchParams({ tab: TabDashboardType.plannedTasks }, { replace: true })` 清理 URL。</td><td>使用一个仅有 `dms:fleetDashboard:query`、没有 `dms:fleetDashboard:displayAgingDashboard` 的账号，直接访问 `/bi/fleet-dashboard?tab=agingDashboard`，应自动回退到 `plannedTasks`，且页面中不应出现 Aging Dashboard 的卡片或数据请求。</td></tr></tbody></table></div>
   </div>
   <script>
     (function () {
