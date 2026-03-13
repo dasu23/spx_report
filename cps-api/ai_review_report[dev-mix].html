@@ -182,23 +182,23 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: cps-api | 生成时间: 2026-03-13 06:44:02</p>
+      <p class="hero-meta">服务: cps-api | 生成时间: 2026-03-13 07:23:56</p>
     </header>
 
     <section class="summary">
       <h2>总体结论</h2>
-      <p>本次变更整体结构清晰，但发现 1 个严重越权问题和 1 个会直接阻断多账号邀请流程的数据约束问题，建议优先修复后再合并。</p>
+      <p>本次变更引入了 2 个 Critical 和 1 个 Major 问题，分别涉及密钥泄露、工单越权访问以及 shipper 多账号绑定被数据库约束破坏。建议优先处理安全问题，再修正迁移脚本与数据模型的一致性。</p>
       <div class="chips">
-        <span class="chip critical">Critical: 1</span>
+        <span class="chip critical">Critical: 2</span>
         <span class="chip major">Major: 1</span>
         <span class="chip minor">Minor: 0</span>
         <span class="chip info">Info: 0</span>
-        <span class="chip">Total: 2</span>
+        <span class="chip">Total: 3</span>
       </div>
     </section>
 
     <h2 class="section-title">审查发现</h2>
-    <div class="file-block"><h3>shippers-portal/src/main/java/com/speedx/shippers/service/ShipperTicketService.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>132-160</td><td>安全风险</td><td>`getTicketDetail`、`addComment`、`uploadAttachment` 直接按 `ticketNumber` 调用 SAP 接口，没有校验该工单是否属于当前登录用户或其有权访问的 shipper account。任意已登录用户只要知道/猜到工单号，就可以读取工单详情、追加评论或上传附件，属于典型越权访问，且会导致工单内容和附件泄露。</td><td>在进入这 3 个接口前先做资源级鉴权：查询工单后校验 `requesterEmail` 是否等于当前用户邮箱，或校验工单上的 `speedxAccountNumber` 是否落在当前用户可访问的 `ShipperUserProfile` 账号集合中；鉴权失败时返回 403。例如先复用 `ticketApiClient.getTicket(ticketNumber)`，再增加 `assertTicketAccessible(LoginUserBo user, TicketDetailDto detail)`。</td><td>使用用户A创建工单后，使用另一个已登录且无该账号权限的用户B分别调用 `/shippers/ticket/{ticketNumber}`、`/{ticketNumber}/comment`、`/{ticketNumber}/attachment`，期望全部返回 403，而不是成功读取/修改。</td></tr></tbody></table></div><div class="file-block"><h3>shippers-portal/src/main/resources/db/migration/V2__create_shipper_user_profile.sql</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>3</td><td>数据一致性</td><td>迁移脚本把 `cps_user_id` 设成了单列唯一，而本次业务代码明确支持“一个 CPS 用户加入多个 shipper account”（`acceptShipperInvitation` 会为同一 `cpsUserId` 新增不同 `shipper_account_id` 的 profile，`getMyShipperAccounts` 也按多条记录设计）。第二次接受邀请时会在这里触发唯一键冲突，导致功能不可用。</td><td>删除 `cps_user_id` 的单列唯一约束，改为与实体保持一致的联合唯一约束 `(cps_user_id, shipper_account_id)`。建议新增修复迁移，例如先 drop 原唯一索引，再 add unique index `uk_shipper_user_profile_user_account(cps_user_id, shipper_account_id)`。</td><td>准备一个已存在的 CPS 用户，先接受 A 账号邀请，再接受 B 账号邀请；修复前第二次写入会报 duplicate key，修复后应成功，并且 `/shippers/auth/my-accounts` 返回两个账号。</td></tr></tbody></table></div>
+    <div class="file-block"><h3>cps-test/src/test/java/com/speedx/shippers/integration/sap/SapApiClientIntegrationTest.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>29-31</td><td>安全风险</td><td>测试代码中直接提交了 SAP 环境地址、用户名和明文密码。该凭据一旦进入代码库、CI 日志或制品缓存，就等同于泄露真实外部系统访问权限，属于高风险密钥泄露。</td><td>删除仓库中的明文凭据，改为从受管配置读取，例如使用环境变量或测试专用密钥注入：`config.setSapUserName(System.getenv(&quot;SAP_TEST_USERNAME&quot;)); config.setSapPassword(System.getenv(&quot;SAP_TEST_PASSWORD&quot;));`。同时立即轮换当前已暴露的 SAP 账号密码。</td><td>在本地和 CI 中分别验证：未注入环境变量时测试默认跳过或失败并提示缺少配置；注入测试凭据后仍可正常连通 SAP 测试环境。</td></tr></tbody></table></div><div class="file-block"><h3>shippers-portal/src/main/java/com/speedx/shippers/service/ShipperTicketService.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>132-155</td><td>安全风险</td><td>`getTicketDetail`、`addComment`、`uploadAttachment` 仅凭 `ticketNumber` 直接访问 SAP，不再校验当前用户是否属于该工单的 requester/cc，或是否隶属于对应 shipper account。任何已登录用户只要猜到/拿到工单号，就能读取详情、追加评论、上传附件，形成典型越权访问。</td><td>在调用 `ticketApiClient` 前增加授权校验：先取工单详情，再校验 `requesterEmail`、`ccEmails` 或工单关联的 `speedxAccountNumber` 是否与当前用户及其 `ShipperUserProfile` 匹配；不匹配时返回 403。例如新增 `assertTicketAccessible(LoginUserBo user, TicketDetailDto detail)` 并在这三个入口统一调用。</td><td>构造两个不同 shipper 用户 A/B。A 创建工单后，使用 B 调用详情、评论、附件上传接口，预期全部被拒绝；A 自己和被抄送用户仍可正常访问。</td></tr></tbody></table></div><div class="file-block"><h3>shippers-portal/src/main/resources/db/migration/V2__create_shipper_user_profile.sql</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>1-4</td><td>数据一致性</td><td>DDL 将 `cps_user_id` 设为单列 `UNIQUE`，这会把一个 CPS 用户限制为只能绑定一个 shipper account。但当前实体定义是 `(cps_user_id, shipper_account_id)` 组合唯一，`acceptShipperInvitation` 也明确支持同一用户加入多个账号。上线后用户接受第二个账号邀请时会插入失败，直接破坏多账号业务流程。</td><td>移除 `cps_user_id` 的单列唯一约束，改为组合唯一约束：`UNIQUE KEY uk_user_account (cps_user_id, shipper_account_id)`。若数据库已落地，需要补充修复 migration，先删除旧唯一索引再创建组合唯一索引。</td><td>准备同一 `cps_user_id` 的两条不同 `shipper_account_id` 邀请，连续执行接受邀请流程；修复前第二次插入应报唯一键冲突，修复后应成功写入两条 profile。</td></tr></tbody></table></div>
   </div>
   <script>
     (function () {
