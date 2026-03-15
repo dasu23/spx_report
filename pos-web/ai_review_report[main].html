@@ -182,23 +182,23 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: pos-web | 生成时间: 2026-03-13 07:51:08</p>
+      <p class="hero-meta">服务: pos-web | 生成时间: 2026-03-15 13:00:07</p>
     </header>
 
     <section class="summary">
       <h2>总体结论</h2>
-      <p>基线为 LAST_TAG `v1.118.1-pos`。本次相对该 tag 的变更未发现 Critical 问题，但 `Scanner` 的并发扫描改动引入了两个 Major 风险：一是结果状态存在明显竞态覆盖，二是请求期间通过失焦会稳定丢失 PDA 扫描输入。</p>
+      <p>基线为 LAST_TAG `v1.118.2-pos`。本次变更整体较小，主要风险是 Route Dashboard 路径迁移时未保留旧路由兼容，可能导致历史入口失效。</p>
       <div class="chips">
         <span class="chip critical">Critical: 0</span>
-        <span class="chip major">Major: 2</span>
+        <span class="chip major">Major: 1</span>
         <span class="chip minor">Minor: 0</span>
-        <span class="chip info">Info: 1</span>
-        <span class="chip">Total: 3</span>
+        <span class="chip info">Info: 0</span>
+        <span class="chip">Total: 1</span>
       </div>
     </section>
 
     <h2 class="section-title">审查发现</h2>
-    <div class="file-block"><h3>mock/inbound.ts</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip info">info</span></td><td>306</td><td>配置变更</td><td>`parentScan` mock 中把 `await waitTime(11_1000)` 直接启用了，导致该接口在本地 mock 环境默认固定超时 11 秒。这样会让入库相关调试和测试长期处于超时路径，掩盖正常成功分支，也容易让其他人误判接口或页面逻辑异常。</td><td>把这类慢接口模拟改成显式开关控制，例如根据环境变量或 query 参数决定是否注入延迟；至少恢复为注释状态，避免默认污染日常开发流。</td><td>在 mock 环境下分别覆盖默认场景和开启慢请求开关的场景，确认默认请求能快速返回，只有显式启用时才进入超时/慢网分支。</td></tr></tbody></table></div><div class="file-block"><h3>src/components/Scanner/index.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>192-200</td><td>业务逻辑</td><td>当前实现通过 `blur()` 主动移除输入框焦点来“阻止”扫描中的再次输入，但 PDA/扫码枪通常就是键盘输入设备，没有焦点时字符会直接丢失。也就是说，请求未结束期间用户继续扫码时，数据既不会进入输入框，也没有任何队列或缓存承接，慢网或超时时会稳定丢单。这个行为与去掉 `disabled` 后希望支持连续扫描的目标相冲突。</td><td>不要在请求期间 `blur` 输入框。若要避免重复提交，应保持输入框可聚焦，并把扫描结果放入前端队列顺序消费；至少也要在 pending 期间缓存输入值，等当前请求结束后自动继续处理，而不是依赖失焦丢弃输入。</td><td>补充集成测试：第一次扫描请求保持 pending，期间再次触发一次扫码输入；断言第二次扫码内容不会丢失，而是进入队列或在首个请求结束后被自动处理。</td></tr><tr><td><span class="chip major">major</span></td><td>94-156,189-203</td><td>状态管理</td><td>移除了原来的互斥锁后，`lockSearch` 现在会允许多个 `onSearch` 并发执行，但组件仍然只用一组共享状态承载扫描结果（`scanResult`、`messageSound`、`messageColor`、`history`、`successCount`）。一旦先扫的请求比后扫的请求更晚返回，旧请求就会覆盖新请求的展示结果和音效，导致页面显示与最后一次扫描不一致。`index.test.tsx` 里新增的并发用例也明确把这种并发行为视为预期，因此这不是偶发问题而是当前实现路径。</td><td>恢复串行消费，或至少为每次扫描引入递增的 `requestId`/队列，只允许最新一次完成的请求更新主展示区。例如在发起请求前记录 `const requestId = ++latestRequestIdRef.current`，在 `setScanResult/setHistory/setMessageSound` 前判断 `requestId === latestRequestIdRef.current`；更稳妥的是保留输入聚焦并把扫描内容入队，按顺序 `await onSearch(...)` 消费。</td><td>补充一个竞态测试：第一次扫描返回延迟 Promise，第二次扫描立即成功；断言最终页面展示第二次扫描的 `history/scanResult/messageSound`，且第一次请求完成后不会把结果覆盖回去。</td></tr></tbody></table></div>
+    <div class="file-block"><h3>config/routes.ts</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>307-337,1235-1243</td><td>向后兼容</td><td>`Route Dashboard` 从 `dms/route/dashboard` 迁移到了 `/bi/dashboard`，但旧路由被直接删除，没有保留任何 redirect/alias。已有书签、外部链接或依赖旧路径的前端跳转会直接落到 404，导致页面无法访问。</td><td>保留旧地址并做无感跳转，例如在 `dms/route` 下补一个隐藏路由：`{ path: &#x27;dashboard&#x27;, redirect: &#x27;/bi/dashboard&#x27;, hideInMenu: true }`；或者在顶层单独增加 `/dms/route/dashboard` -&gt; `/bi/dashboard` 的 redirect。这样可以完成路径迁移而不破坏已有入口。</td><td>使用有 `dms:route:dashboard` 权限的账号，直接访问历史地址 `/dms/route/dashboard`，应自动跳转到 `/bi/dashboard` 且页面正常渲染，不出现 404。</td></tr></tbody></table></div>
   </div>
   <script>
     (function () {
