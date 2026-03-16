@@ -291,18 +291,18 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: pos-web | 生成时间: 2026-03-16 23:18:53</p>
+      <p class="hero-meta">服务: pos-web | 生成时间: 2026-03-17 01:01:51</p>
     </header>
 
     <section class="summary">
       <h2>总体结论</h2>
-      <p>本分片未发现 Critical/Major 问题。主要风险集中在 mock 行为变更：失败响应语义和随机化返回可能影响本地联调稳定性与失败场景覆盖。 本分片变更整体方向明确，但 `Scanner` 新增的 loading/并发控制引入了两个行为问题：空输入会误显示处理中状态，且并发锁会静默丢弃后续扫描请求。</p>
+      <p>本次变更的主要风险是扫码加锁逻辑把并发扫描直接丢弃，可能导致实际漏扫；另外新增的 Biome 忽略范围过大，建议收敛。</p>
       <div class="chips">
         <span class="chip critical">Critical: 0</span>
         <span class="chip major">Major: 1</span>
-        <span class="chip minor">Minor: 3</span>
-        <span class="chip info">Info: 0</span>
-        <span class="chip">Total: 4</span>
+        <span class="chip minor">Minor: 0</span>
+        <span class="chip info">Info: 1</span>
+        <span class="chip">Total: 2</span>
       </div>
     </section>
 
@@ -326,7 +326,7 @@
     </section>
 
     <h2 class="section-title">审查发现</h2>
-    <div class="file-block"><h3>mock/inbound.ts</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip minor">minor</span></td><td>307-341</td><td>配置变更</td><td>mock 扫描结果改为 `Math.random()` 随机成功/失败，会让本地调试和基于 mock 的测试结果不稳定，问题复现也不可重复。</td><td>改为通过请求参数、query 或固定开关控制成功/失败，例如读取 `req.body.forceFail` 或环境变量，而不是直接使用随机数。</td><td>分别构造固定成功和固定失败的 mock 请求，确认开发环境下每次都能稳定复现对应分支。</td></tr><tr><td><span class="chip minor">minor</span></td><td>334-341</td><td>API契约</td><td>失败分支现在返回 `code: 200`，但同时 `success: false`。如果前端现有扫描流程仍按 HTTP/业务码判断成功（而不是只看 `success`），这个 mock 会把失败场景伪装成成功响应，导致本地联调无法覆盖真实失败处理路径。</td><td>让失败分支保持与真实接口一致的失败码语义，例如返回 `code: 500` 或与后端约定的非成功业务码；如果协议已经改为 `200 + success=false`，需要同步更新对应页面/测试，确保失败分支显式基于 `success` 判断。</td><td>在依赖该 mock 的扫描页面中验证失败场景：接口返回 `success:false` 时，页面应进入失败 UI，而不是成功提示或成功计数。</td></tr></tbody></table></div><div class="file-block"><h3>src/components/Scanner/index.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>221-226</td><td>业务逻辑</td><td>并发锁分支直接 `return`，会把用户在前一次请求未完成时提交的第二次扫描结果静默丢弃。扫描枪/PDA 场景下用户通常不会感知这次提交被忽略，容易导致包裹漏扫，属于业务行为回退。</td><td>不要静默忽略后续扫描。至少应给出明确提示，或缓存最后一次输入并在当前请求完成后自动继续处理。例如维护一个 `pendingCodeRef`，在 `finally` 中补执行一次。</td><td>补充测试：第一次扫描 pending 时再次扫码，第一次完成后应能看到第二次扫描被提示/排队执行，而不是直接丢失。</td></tr><tr><td><span class="chip minor">minor</span></td><td>105</td><td>边界条件</td><td>`onSearch` 在校验 `code` 之前就把结果区状态设置成了 `loading`。当 `lockSearch` 被空输入触发时，不会发起扫描，但界面会一直显示 `Scan in progress…`，造成错误的处理中状态。</td><td>先判断 `code` 是否为空，再进入 loading 状态。例如：`if (!code) { setHistory(undefined); return; } setHistory({ message: &#x27;Scan in progress…&#x27;, status: &#x27;loading&#x27; });`。</td><td>补充一个空输入点击搜索的测试，断言不会显示 `Scan in progress…`，且 `onScan` 不会被调用。</td></tr></tbody></table></div>
+    <div class="file-block"><h3>biome.json</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip info">info</span></td><td>39</td><td>配置变更</td><td>新增了对 `src/components/Scanner/ScannerAudio.tsx` 的全文件 Biome 排除，但本次该文件实际只新增了一个空行。这个配置会让共享扫描组件后续失去 lint/format 约束，容易掩盖真实问题。</td><td>移除该全局忽略；如果确实有单条规则冲突，改成在目标代码处使用更小范围的忽略方式，并说明原因。</td><td>执行现有 lint 流程，确认移除该忽略后 `ScannerAudio.tsx` 没有必须通过全局排除才能通过的规则错误。</td></tr></tbody></table></div><div class="file-block"><h3>src/components/Scanner/index.tsx</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>199-205</td><td>业务逻辑</td><td>这里新增的锁判断会直接丢弃前一个请求未完成期间的后续扫描。原有组件支持连续扫码时两次请求都提交，现在第二次扫码只记录日志后 `return`，在网络慢或接口抖动时会造成包裹/单号漏扫，属于实际业务结果丢失。</td><td>不要直接丢弃后续扫描，至少应实现排队/缓存最近一次扫描后在前一个请求完成后继续处理，或明确给出失败提示并保留待处理值。例如将被阻塞的 `code` 放入队列，在 `finally` 中继续消费。</td><td>补充用例：首次 `onScan` 挂起时连续扫描两次，断言第二次扫描不会静默丢失，而是被排队处理或得到明确错误提示。</td></tr></tbody></table></div>
   </div>
   <script>
     (function () {
@@ -342,7 +342,7 @@
         trendsSection.classList.add('visible');
 
         // 渲染平均严重性分布
-        var avgSeverity = {&quot;critical&quot;: 0.0, &quot;major&quot;: 1.0, &quot;minor&quot;: 3.0, &quot;info&quot;: 0.0};
+        var avgSeverity = {&quot;critical&quot;: 0.0, &quot;major&quot;: 1.0, &quot;minor&quot;: 1.5, &quot;info&quot;: 0.5};
         var avgChart = document.getElementById('avg-severity-chart');
         if (avgSeverity && Object.keys(avgSeverity).length > 0) {
           var total = (avgSeverity.critical || 0) + (avgSeverity.major || 0) + (avgSeverity.minor || 0) + (avgSeverity.info || 0);
@@ -362,7 +362,7 @@
         }
 
         // 渲染时间趋势
-        var trendData = [{&quot;timestamp&quot;: &quot;2026-03-16&quot;, &quot;total&quot;: 4, &quot;critical&quot;: 0, &quot;major&quot;: 1, &quot;minor&quot;: 3, &quot;info&quot;: 0}];
+        var trendData = [{&quot;timestamp&quot;: &quot;2026-03-16&quot;, &quot;total&quot;: 4, &quot;critical&quot;: 0, &quot;major&quot;: 1, &quot;minor&quot;: 3, &quot;info&quot;: 0}, {&quot;timestamp&quot;: &quot;2026-03-16&quot;, &quot;total&quot;: 2, &quot;critical&quot;: 0, &quot;major&quot;: 1, &quot;minor&quot;: 0, &quot;info&quot;: 1}];
         var timelineChart = document.getElementById('trend-timeline-chart');
         if (trendData && trendData.length > 0) {
           var maxTotal = Math.max.apply(null, trendData.map(function(d) { return d.total; })) || 1;
