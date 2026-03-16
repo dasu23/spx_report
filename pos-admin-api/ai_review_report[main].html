@@ -291,18 +291,18 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: pos-admin-api | 生成时间: 2026-03-16 06:21:05</p>
+      <p class="hero-meta">服务: pos-admin-api | 生成时间: 2026-03-16 15:04:40</p>
     </header>
 
     <section class="summary">
       <h2>总体结论</h2>
-      <p>本次变更的主要风险是批量移除了 `receptacle_code` 的显式长度约束，但未看到配套的数据库迁移或新的输入校验声明，容易导致实体映射、接口约束与实际库表长度发生漂移。尤其 `ReceivingParcel` 还移除了 Bean Validation，超长值会更晚暴露为运行时写库错误。</p>
+      <p>本次变更的主要风险集中在 `receptacle_code` 约束被放宽：一处删除了 Bean Validation，另一处将列长度从显式定义退化为框架默认值，都会造成现有数据库/接口契约与实体层不一致。</p>
       <div class="chips">
         <span class="chip critical">Critical: 0</span>
-        <span class="chip major">Major: 5</span>
+        <span class="chip major">Major: 2</span>
         <span class="chip minor">Minor: 0</span>
         <span class="chip info">Info: 0</span>
-        <span class="chip">Total: 5</span>
+        <span class="chip">Total: 2</span>
       </div>
     </section>
 
@@ -326,7 +326,7 @@
     </section>
 
     <h2 class="section-title">审查发现</h2>
-    <div class="file-block"><h3>pos-service/src/main/java/com/miq/posservice/entity/DispatchReceptacle.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>35</td><td>配置变更</td><td>移除 `length = 128` 后，JPA 对该列的默认长度会退回到 `255`。如果当前环境依赖 Hibernate 的 schema validate/update，实体声明将与现有库表定义产生漂移；在未配套 DDL 变更的情况下，不同环境可能出现校验失败、自动改表不一致，或运行时仍受数据库旧长度限制。</td><td>保持实体长度与数据库 DDL 一致；若要扩大长度，请在同一变更中补充明确的数据库迁移，并保留 `@Column(name = &quot;receptacle_code&quot;, length = 128)` 直到所有环境完成升级。</td><td>在开启 schema 校验/更新的环境中启动应用，确认 `dispatch_receptacle.receptacle_code` 不会因实体长度从 128 变为默认 255 而触发校验失败或意外改表。</td></tr></tbody></table></div><div class="file-block"><h3>pos-service/src/main/java/com/miq/posservice/entity/InboundParcel.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>46</td><td>配置变更</td><td>这里去掉了 `receptacle_code` 的显式列长度，实体默认将按 255 处理，而原映射是 32。若数据库列未同步扩容，持久化超长值时仍会失败；若启用了自动建表/校验，又会引入实体和库表长度定义不一致的问题。</td><td>保留 `length = 32`，或者同步提交数据库列扩容脚本并在代码中显式写出新的长度，避免依赖 JPA 默认值。</td><td>用长度 33 的 `receptacleCode` 执行保存/更新，并分别在旧 schema 与自动校验环境下验证不会出现长度不一致导致的异常。</td></tr></tbody></table></div><div class="file-block"><h3>pos-service/src/main/java/com/miq/posservice/entity/InboundReceptacle.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>44</td><td>配置变更</td><td>该改动把 `receptacle_code` 的 ORM 长度约束从 32 改成了未声明状态，默认会变为 255。没有看到配套的库表迁移时，这会让实体定义和数据库实际约束脱节，带来启动校验失败或写库阶段的长度异常。</td><td>如果字段上限没有变更，恢复 `@Column(name = &quot;receptacle_code&quot;, length = 32)`；如果业务确实放宽了长度，需要同步提交表结构变更，并在实体中写明新的长度上限。</td><td>在现有数据库结构下启动并执行 `InboundReceptacle` 的新增/更新，覆盖 32 位和 33 位 `receptacleCode`，验证 ORM 映射与库表长度是否一致。</td></tr></tbody></table></div><div class="file-block"><h3>pos-service/src/main/java/com/miq/posservice/entity/ReceivingParcel.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>31</td><td>API契约</td><td>这里同时移除了 `@Size(max = 32)` 和列长度声明，`receptacleCode` 将不再在入参/持久化前被限制为 32 位。若数据库列仍沿用原来的 `varchar(32)`，调用方现在可以提交超长值，最终在写库时触发 SQL 异常或被数据库截断，造成接口契约与存储约束脱节。</td><td>如果业务上仍是 32 位编码，恢复校验与映射约束，例如：`@Size(max = 32)` 和 `@Column(name = &quot;receptacle_code&quot;, length = 32)`；如果确实要放宽长度，需要同步提交数据库扩容脚本，并在 DTO/实体上把新的最大长度显式声明出来。</td><td>构造 `receptacleCode` 长度为 33 的保存/更新请求，验证应用层能否提前拦截；同时在连接旧库结构时确认不会在持久化阶段报 Data too long / value too long 异常。</td></tr></tbody></table></div><div class="file-block"><h3>pos-service/src/main/java/com/miq/posservice/entity/Receptacle.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>31</td><td>配置变更</td><td>`Receptacle` 实体原先把 `receptacle_code` 限定为 40 位，这里改成未声明长度后会退回 JPA 默认值 255。对于已存在的表结构，这属于隐式 schema 变更；如果没有同步 DDL，代码允许的长度和数据库能接受的长度将不一致。</td><td>把实体注解与数据库实际列定义保持一致；若要扩大字段长度，请补充相应迁移脚本，并将新的长度继续显式写在 `@Column` 上，避免默认值掩盖真实约束。</td><td>在旧表结构中写入 41 位 `receptacleCode`，确认是否出现持久化异常；同时验证 schema 校验模式下应用启动不会因列长度漂移失败。</td></tr></tbody></table></div>
+    <div class="file-block"><h3>pos-service/src/main/java/com/miq/posservice/entity/ReceivingParcel.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>31</td><td>API契约</td><td>这里删除了 `@Size(max = 32)`，会直接放宽 `receptacleCode` 的入参校验范围。若数据库字段、下游接口或同领域其它实体仍按 32 位处理，超长值将不再在校验层被拦截，而是在持久化/对接阶段以 SQL 异常、截断或脏数据的形式暴露，属于接口契约回退。</td><td>保留显式校验约束，至少恢复为 `@Size(max = 32)`；如果业务上确实要放宽长度，应同步提供数据库字段扩容脚本并统一更新所有使用 `receptacle_code` 的实体约束，例如：`@Size(max = 32) @Column(name = &quot;receptacle_code&quot;, length = 32)`。</td><td>构造 `receptacleCode` 长度为 33 的 `ReceivingParcel` 保存或作为请求入参，验证当前代码是否还能在校验层拦截；同时确认数据库/下游是否会报长度超限。</td></tr></tbody></table></div><div class="file-block"><h3>pos-service/src/main/java/com/miq/posservice/entity/Receptacle.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>31</td><td>数据一致性</td><td>将 `@Column(length = 40, name = &quot;receptacle_code&quot;)` 改为不带 `length` 的映射后，字段长度将退化为 JPA 提供方默认值（Hibernate 通常为 255）。这会改变 ORM 与表结构的契约：在启用 schema 校验/更新的环境下可能触发非预期 DDL 漂移；在未扩容现网表结构时，又会让实体层接受的长度与真实列长度不一致，导致运行期写入失败。</td><td>不要依赖默认长度，恢复显式 `length` 并与真实表结构保持一致；如果是一次字段扩容，请在同一变更中补齐数据库 migration，并统一修改所有相关实体上的 `receptacle_code` 长度定义，避免不同实体对同一业务字段出现不同上限。</td><td>在开启 Hibernate `validate` 或 `update` 的环境启动应用，确认是否出现 `receptacle_code` 列长度不匹配/自动变更；再使用 41~255 长度的值写入，验证是否出现数据库长度异常。</td></tr></tbody></table></div>
   </div>
   <script>
     (function () {
