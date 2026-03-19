@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">dms-api &nbsp;|&nbsp; 2026-03-19 15:07:38</div>
+      <div class="meta">dms-api &nbsp;|&nbsp; 2026-03-19 17:28:28</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:0</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:45 &nbsp; 主要:162</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -82,10 +82,99 @@
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube quality gate status: ERROR</li></ul>
+            <ul><li>SonarQube quality gate status: ERROR</li>
+<li>AI Review: 45 Critical finding(s)</li>
+<li>AI Review: 162 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
+        <div class="findings-section">
+            <h3>AI 代码审查发现</h3>
+            
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/biz/RouteMgmtBizService.java:113-168</code>
+                </div>
+                <div class="finding-desc">新增 `routeDispatch(DeliverRouteDispatchReq req, Long uid)` 接口在整个方法体内完全未使用 `uid`，也未对 `req.getRouteIds()`、`req.getFleetId()`、`req.getDriverId()` 做任何基于当前登录用户的数据归属校验。当前实现会直接按请求中的 route/fleet/driver 执行派单与覆盖更新，存在明显越权风险：只要调用到该方法即可修改任意车队、司机和路线的派单关系。</div>
+                <div class="finding-suggestion">💡 修复建议：在进入业务逻辑前强制做身份与资源归属校验，至少校验：1) `uid` 对应用户是否具备 dispatch 权限；2) `routeIds` 全部属于当前用户可管理的 `fleet`/warehouse 范围；3) `driverId` 与 `fleetId` 的归属关系合法。示例：`LoginUserBo user = AuthUtil.requireLogin(uid); authService.checkCanDispatch(user, req.getFleetId(), req.getRouteIds(), req.getDriverId());`，并在查询 routes 时附加数据范围过滤，避免仅按 `id` 直取。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/config/SignInterceptor.java:38-40</code>
+                </div>
+                <div class="finding-desc">`bizConfig.getMockSign().equals(sign)` 命中后直接 `return true`，把一个固定签名当作万能通行证使用。只要该配置值泄露、复用到生产，或被误配开启，攻击者无需知道 `appSecret` 即可伪造任意受保护请求，属于认证绕过。</div>
+                <div class="finding-suggestion">💡 修复建议：删除该后门逻辑；如果确实只用于联调，必须限定为非生产环境且显式按 Spring Profile 控制，例如 `if (env.acceptsProfiles(&quot;dev&quot;,&quot;test&quot;) &amp;&amp; mockSignEnabled &amp;&amp; constantTimeEquals(mockSign, sign))`，并在生产配置中强制关闭。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/service/BadWeatherReportService.java:141-187</code>
+                </div>
+                <div class="finding-desc">`page` 方法直接按时间范围查询并返回全量 `OPERATOR` bad weather report，并附带 `evidenceUrl`、`evidenceImgs`、`zipCodeFileUrl`、`parcelReportUrl` 等敏感业务数据，但新增代码中没有任何当前用户角色校验，也没有按 `facility`/数据归属做范围过滤。只要上层接口误暴露给低权限用户，即会形成越权读取和数据泄露。</div>
+                <div class="finding-suggestion">💡 修复建议：在进入该查询前显式校验管理员/运营角色，并把当前登录人的数据范围（如 `facilityCode`、fleet、role）下推到查询条件中，而不是先查全量再在内存中过滤。示例：从 `AuthUtil` 取当前用户，校验其角色；repository 查询增加 `facility in currentUser.allowedFacilities` 等条件，非管理员直接拒绝访问。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/service/DspFleetService.java:64-255</code>
+                </div>
+                <div class="finding-desc">新服务直接基于调用方传入的 `dspId`/`id`/`driverLeaderId` 执行车队与 DSP 的查询、状态修改、删除以及角色变更，但新增代码中看不到任何当前用户身份、角色或资源归属校验。尤其 `addFleet`/`modifyFleet` 还会直接改写 `SysUserPo.roleIds`，一旦上层接口遗漏管理员鉴权，攻击者即可枚举任意 DSP/Fleet，甚至把任意用户提升为 `DRIVER_LEADER`，属于越权/权限提升风险。</div>
+                <div class="finding-suggestion">💡 修复建议：在服务入口强制校验当前登录用户的管理权限和数据范围，不要只信任请求里的 `id`。例如先通过 `AuthUtil` 获取当前用户，再校验其是否具备管理角色且目标 DSP/Fleet/Driver 属于其可管理范围；角色变更前还要校验目标用户与当前租户/车队归属一致。示例：`LoginUserBo user = AuthUtil.getLoginUser(); Assert.isTrue(user.hasRole(&quot;ADMIN&quot;), &quot;forbidden&quot;); Fleet fleet = fleetRepository.findByIdAndDspId(id, user.getDspId()).orElseThrow(() -&gt; new BizArgumentException(&quot;fleet not found&quot;));`</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/service/NoteService.java:66-68</code>
+                </div>
+                <div class="finding-desc">`addNote` 在处理非 `ACCESS_CODE` / `DRIVER_NOTE` 类型时，仅按 `req.getDeliverId()` 读取 `PickupRouteStop`，没有校验当前登录司机是否对该 stop 拥有操作权限。攻击者只要构造其他人的 stop ID，就能越权写入备注，属于资源归属校验缺失。</div>
+                <div class="finding-suggestion">💡 修复建议：在保存备注前补充 stop 归属校验，至少校验 `PickupRouteStop` 关联的 route/driver/fleet 与 `AuthUtil.getPrincipal()` 一致；校验失败直接拒绝。例如：先查询 stop 后校验 `routeStop.getDriverId()` 或其关联路线的 `driverId/fleetId`，不匹配则抛出权限异常。</div>
+            </div>
+            
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/biz/DeliveryBizService.java:106</code>
+                </div>
+                <div class="finding-desc">新增日志直接输出 `otherRouteTrackingNos` 全量运单号列表。运单号属于可识别业务对象的敏感运营数据，INFO 级别落盘后会扩大内部数据泄露面，一旦日志平台权限控制不足可被批量检索。</div>
+                <div class="finding-suggestion">💡 修复建议：不要记录完整运单号列表，改为只打印数量或脱敏后的前后缀，例如：`log.info(&quot;filterOutOtherLatestRouteTrackingNos routeId={}, count={}&quot;, route.getId(), otherRouteTrackingNos.size());`；如确需排障，使用脱敏函数仅保留末 4 位。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/biz/DeliveryBizService.java:174</code>
+                </div>
+                <div class="finding-desc">容器路线结束时用 `x.getDriverId() == driverId` 过滤配送记录。这里比较的是 `Long` 对象引用而不是数值，相同司机 ID 在非缓存区间时会匹配失败，进而误判为 `no deliver fond in route`，导致司机无法正常结束路线。</div>
+                <div class="finding-suggestion">💡 修复建议：改为值比较，避免包装类型引用比较：`filter(x -&gt; Objects.equals(x.getDriverId(), driverId))`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/biz/DeliveryBizService.java:190</code>
+                </div>
+                <div class="finding-desc">失败分支将整个 `deliver` 对象写入 INFO 日志。`Deliver` 实体通常包含 trackingNo、地址、司机/路线关联等敏感字段，直接序列化输出会造成敏感数据泄露。</div>
+                <div class="finding-suggestion">💡 修复建议：避免打印整个实体对象，只记录最小必要字段且做脱敏，例如：`log.info(&quot;endRoute fail, min deliver is not DELIVERED, deliverId={}, status={}&quot;, deliver.getId(), deliver.getStatus());`。如果必须关联运单，需先脱敏。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/biz/DeliveryBizService.java:221</code>
+                </div>
+                <div class="finding-desc">该新增日志再次输出 `otherRouteTrackingNos` 全量运单号列表，属于重复的敏感运营数据泄露点；结合路由 ID 可被用于重建运输关系。</div>
+                <div class="finding-suggestion">💡 修复建议：与前述日志一致，删除该明文列表输出，改为记录数量、采样后的脱敏值，或仅在受控调试日志下输出。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/biz/RouteMgmtBizService.java:151-154</code>
+                </div>
+                <div class="finding-desc">在检查司机当天是否已有待处理线路时，使用了 `req.getRouteIds().contains(dp.getId())` 排除当前待分配线路。这里比较的是 dispatch 记录主键而不是 `routeId`，会把当前请求中的同一条线路也误判为“其他 pending routes”，从而错误返回确认提示，影响重新指派/覆盖指派流程。</div>
+                <div class="finding-suggestion">💡 修复建议：将排除条件改为按线路 ID 比较，例如：`filter(dp -&gt; !req.getRouteIds().contains(dp.getRouteId()))`，确保只排除当前请求中的线路本身。</div>
+            </div>
+            <p class="more-note">... 还有 197 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+        </div>
+        
 
   <div class="footer">
     由质量门禁引擎生成 &nbsp;|&nbsp; SpeedX CI/CD
