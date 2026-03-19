@@ -382,20 +382,20 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: dms-api | 生成时间: 2026-03-19 20:49:05</p>
+      <p class="hero-meta">服务: dms-api | 生成时间: 2026-03-19 21:11:00</p>
     </header>
 
     <section class="summary">
       <h2>总体结论</h2>
-      <div id="summary-text" class="summary-body">本次变更存在多处高风险敏感信息硬编码，以及一个明确的登录接口响应契约破坏问题；另外会话迁移逻辑去掉异常兜底后，可能把可恢复场景放大为鉴权失败。</div>
+      <div id="summary-text" class="summary-body">本次变更存在 3 个敏感信息泄露问题和 1 个对外 API 契约破坏问题，风险较高。其余修改中未看到必须立即阻断的新增缺陷。</div>
       <div class="filter-row">
         <span class="filter-label">点击筛选:</span>
         <div class="chips">
-          <span class="chip critical filter-chip" data-filter="critical" onclick="filterBySeverity(this)">Critical: 4</span>
-          <span class="chip major filter-chip" data-filter="major" onclick="filterBySeverity(this)">Major: 2</span>
+          <span class="chip critical filter-chip" data-filter="critical" onclick="filterBySeverity(this)">Critical: 3</span>
+          <span class="chip major filter-chip" data-filter="major" onclick="filterBySeverity(this)">Major: 1</span>
           <span class="chip minor filter-chip" data-filter="minor" onclick="filterBySeverity(this)">Minor: 0</span>
           <span class="chip info filter-chip" data-filter="info" onclick="filterBySeverity(this)">Info: 0</span>
-          <span class="chip">Total: 6</span>
+          <span class="chip">Total: 4</span>
         </div>
       </div>
     </section>
@@ -425,7 +425,7 @@
     </section>
 
     <h2 class="section-title">审查发现</h2>
-    <div class="file-block"><h3>drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/util/AuthUtil.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>105-112</td><td>异常处理</td><td>会话迁移逻辑被内联到 `cache.get` 的加载函数后，`sessionRepository.save(...)` 不再受原先 `try/catch` 保护。数据库写入一旦失败，当前请求将直接抛异常，原本可以继续回退为 Redis 会话的场景会变成鉴权失败。</td><td>保留回退容错，不要让迁移写库影响登录态读取。例如在加载函数内包裹 `save`：`try { return sessionRepository.save(...); } catch (Exception e) { log.warn(&quot;migrate session failed&quot;, e); return new Session().setDriverId(redisUser.getId()).setToken(token).setExpireAt(Instant.now().plus(7, ChronoUnit.DAYS)).setData(JSONUtil.toStr(redisUser)); }`，或直接沿用原来的“读 Redis 成功即返回用户”路径。</td><td>构造 `sessionRepository.findByToken()` 返回空、`getByRedis()` 返回有效用户、`sessionRepository.save()` 抛异常的场景，验证 `getSession()` 不会抛错且仍能返回有效登录用户。</td></tr></tbody></table></div><div class="file-block"><h3>drivermgmt-facade/src/main/java/io/speedx/drivermgmt/facade/AccountFacade.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>21</td><td>API契约</td><td>`/login` 接口返回类型从原来的裸对象改为 `BaseResponse&lt;Object&gt;`，对应实现也改成了统一包裹响应。这会直接改变接口响应 JSON 结构，已有客户端如果按原先 `{&quot;token&quot;: ...}` 解析，将出现兼容性问题。</td><td>若需要引入统一响应包装，应保留原接口兼容层或新增版本化接口，例如新增 `/v2/login` 返回 `BaseResponse`，原 `/login` 继续返回原结构；至少补充变更公告并同步所有调用方。</td><td>使用现网客户端或基于旧响应结构的集成测试调用 `/login`，验证是否仍能正确解析 token；同时新增对新包装结构的接口测试。</td></tr></tbody></table></div><div class="file-block"><h3>drivermgmt-test/rest/rest.http</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>11-15</td><td>安全风险</td><td>新增的调试请求中包含明文账号密码，测试脚本进入版本库后会造成凭据泄露，符合 [SEC-001]。</td><td>移除明文凭据，改用占位变量，例如 `&quot;loginName&quot;: &quot;{{login_name}}&quot;`、`&quot;passwd&quot;: &quot;{{login_password}}&quot;`，并通过本地未提交的环境文件注入真实值；已暴露账号应立即改密。</td><td>在不提交真实账号密码的前提下，通过本地环境变量文件执行该 HTTP 请求，确认请求仍可正常发送。</td></tr><tr><td><span class="chip critical">critical</span></td><td>1226</td><td>安全风险</td><td>`Authorization` 头被替换为一个新的固定 token，属于硬编码认证令牌，符合 [SEC-002]。任何拿到仓库的人都可以直接复用该 token 访问受保护接口。</td><td>删除仓库中的真实 token，改为 `Authorization: {{auth_token}}` 之类的占位变量，并立即废弃当前已暴露的 token。</td><td>在本地环境文件中提供 `auth_token` 后执行该请求，确认接口鉴权仍然通过，同时仓库中不再包含真实 token。</td></tr><tr><td><span class="chip critical">critical</span></td><td>22-25</td><td>安全风险</td><td>修改后的 `/login-old` 示例继续提交了新的明文账号密码，这会把真实测试凭据长期暴露在仓库历史中，符合 [SEC-001]。</td><td>将账号密码替换为变量引用或示例假值，不要在仓库中保留真实凭据；同时轮换该账号的现有密码。</td><td>使用变量化后的 `rest.http` 配合本地环境文件执行 `/login-old` 请求，验证接口可正常登录。</td></tr></tbody></table></div><div class="file-block"><h3>drivermgmt-web/src/main/resources/application-local.yml</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>60-61</td><td>安全风险</td><td>`application-local.yml` 中新增了明文 Redis 地址和密码，属于硬编码敏感凭据。该配置一旦进入仓库或被复制到其他环境，会直接导致凭据泄露风险，符合 [SEC-001]。</td><td>将 Redis 凭据改为从环境变量或外部密钥中心注入，例如：`address: ${REDIS_ADDRESS}`、`password: ${REDIS_PASSWORD}`；同时立即轮换当前已暴露的 Redis 密码。</td><td>启动本地环境时仅通过环境变量提供 Redis 连接信息，验证应用仍可正常连接；同时确认仓库中不再出现明文密码。</td></tr></tbody></table></div>
+    <div class="file-block"><h3>drivermgmt-facade/src/main/java/io/speedx/drivermgmt/facade/AccountFacade.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>21</td><td>API契约</td><td>`/login` 接口返回类型从 `Object` 改为 `BaseResponse&lt;Object&gt;`，对应实现也改成了统一包装。这会把原先直接返回 `{token: ...}` 的响应变为包裹结构，属于对外 API 契约变更，现有客户端若按旧结构取值会直接登录失败。</td><td>如果需要保持兼容，保留旧响应结构，或新增版本化接口；至少在变更前同步更新所有调用方并补充契约测试，例如校验 `/login` 返回字段路径是否仍为客户端预期。</td><td>用现网客户端或基于旧契约的集成测试调用 `/login`，验证是否还能直接从根节点读取 `token`；同时补充新旧契约兼容性测试。</td></tr></tbody></table></div><div class="file-block"><h3>drivermgmt-test/rest/rest.http</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>10-14</td><td>安全风险</td><td>新增请求样例中提交了真实账号口令，属于敏感凭据硬编码并随代码入库，存在泄露风险。即使是测试文件，也会被代码仓库、日志或协作工具长期保留。</td><td>将示例中的账号和密码替换为占位符变量，例如 `{{loginName}}`、`{{password}}`，并通过本地私有环境文件注入；同时轮换已暴露的账号口令。</td><td>使用不入库的本地环境变量文件执行该 http 请求，确认占位符可正常替换，且仓库内不再出现真实口令。</td></tr><tr><td><span class="chip critical">critical</span></td><td>1226</td><td>安全风险</td><td>这里直接提交了可用的 `Authorization` token，满足 [SEC-002]。该 token 一旦仍然有效，会导致未授权访问或被他人复用。</td><td>将 `Authorization` 改为占位符变量，例如 `Authorization: {{mockToken}}`，并立即废弃/轮换当前 token。</td><td>在本地私有变量文件中提供 token 后执行该请求，确认接口仍可调用；再验证仓库文本中已不存在真实 token。</td></tr></tbody></table></div><div class="file-block"><h3>drivermgmt-web/src/main/resources/application-local.yml</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip critical">critical</span></td><td>62-63</td><td>安全风险</td><td>本地配置新增了可直接连接外部 Redis 的地址和明文密码。该信息一旦提交到仓库，就属于敏感凭据泄露，满足 [SEC-001]，并且会让任何拿到代码的人都能访问对应实例。</td><td>移除仓库中的明文凭据，改为从环境变量或本地未入库配置读取，例如 `address: ${REDIS_ADDRESS}`、`password: ${REDIS_PASSWORD}`；同时立即轮换当前 Redis 密码。</td><td>启动应用时仅通过环境变量注入 Redis 连接信息，确认本地环境仍可正常连接；再验证仓库内不再包含任何可用密码。</td></tr></tbody></table></div>
   </div>
   <script>
     (function () {
@@ -444,7 +444,7 @@
         var trendsSection = document.getElementById('trends-section');
         trendsSection.classList.add('visible');
 
-        var avgSeverity = {"critical": 4.0, "major": 2.0, "minor": 0.0, "info": 0.0};
+        var avgSeverity = {"critical": 1.5, "major": 0.5, "minor": 0.0, "info": 0.0};
         var avgChart = document.getElementById('avg-severity-chart');
         if (avgSeverity && Object.keys(avgSeverity).length > 0) {
           var total = (avgSeverity.critical || 0) + (avgSeverity.major || 0) + (avgSeverity.minor || 0) + (avgSeverity.info || 0);
@@ -463,7 +463,7 @@
           avgChart.innerHTML = html;
         }
 
-        var trendData = [{"timestamp": "2026-03-19", "total": 6, "critical": 4, "major": 2, "minor": 0, "info": 0}];
+        var trendData = [{"timestamp": "2026-03-19", "total": 0, "critical": 0, "major": 0, "minor": 0, "info": 0}, {"timestamp": "2026-03-19", "total": 4, "critical": 3, "major": 1, "minor": 0, "info": 0}];
         var timelineChart = document.getElementById('trend-timeline-chart');
         if (trendData && trendData.length > 0) {
           var maxTotal = Math.max.apply(null, trendData.map(function(d) { return d.total; })) || 1;
