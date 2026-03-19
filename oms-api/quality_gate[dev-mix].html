@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">oms-api &nbsp;|&nbsp; 2026-03-19 14:57:08</div>
+      <div class="meta">oms-api &nbsp;|&nbsp; 2026-03-19 21:22:07</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -56,13 +56,13 @@
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#f44336">36.4%</div>
+      <div class="metric-value" style="color:#f44336">36.3%</div>
       <div class="metric-threshold">阈值: 60%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#ff9800">59.0%</div>
+            <div class="metric-value" style="color:#ff9800">58.2%</div>
             <div class="metric-threshold">阈值: 60%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:5 &nbsp; 主要:81</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:7 &nbsp; 主要:69</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,8 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 5 Critical finding(s)</li>
-<li>AI Review: 81 Major finding(s) &gt;= threshold 5</li></ul>
+<li>AI Review: 7 Critical finding(s)</li>
+<li>AI Review: 69 Major finding(s) &gt;= threshold 5</li></ul>
         </div>
         
   
@@ -94,85 +94,85 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArSettlementSheinDetailService.java:147-154</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArSettlementInternationalDetailService.java:172-177</code>
                 </div>
-                <div class="finding-desc">这里将同一 settlement 下相同 `chargeCode` 的多条 adjustment 通过 `Collectors.toMap` 合并时直接覆盖旧值，只保留“最后一条”。adjustment 记录顺序对 JPA 查询结果并无稳定保证，因此相同费用代码存在多条调整时，导出的费用金额会丢失部分调整，属于资金计算错误。</div>
-                <div class="finding-suggestion">💡 修复建议：按业务含义显式聚合重复 charge code；若 adjustment 表示增量调整，应改为求和，例如将 merge 函数改为 `BigDecimal::add`，或先 `groupingBy` 后再汇总。至少需要保证结果与查询顺序无关。</div>
+                <div class="finding-desc">这里把同一 `settlementId + chargeCode` 的多条 adjustment 直接合并为一个值，并用 `(old, newVal) -&gt; newVal` 覆盖旧值，但查询结果没有任何排序约束，`newVal` 并不等于“latest”。一旦数据库返回顺序变化，导出的费项金额会不稳定，属于资金口径错误。</div>
+                <div class="finding-suggestion">💡 修复建议：在构建 `adjustmentMapBySettlement` 前先按可代表最新版本的字段显式排序（如 `updatedAt`/`id`），再取第一条或最后一条；或者在 repository 层提供“每个 settlementId+chargeCode 只取最新一条”的查询。示例：先 `sorted(Comparator.comparing(ArAdjustment::getUpdateTime))`，再在 merge 时保留排序后的最后一条。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/util/SettlementFeeAmountCalculator.java:25-26</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/batchtask/processor/ApLmBillRecalculationProcessor.java:103-114</code>
                 </div>
-                <div class="finding-desc">这里把费用和调整先收敛成 `Map&lt;chargeCode, amount&gt;` 再 `putAll`，同一 `chargeCode` 的多条费用/调整会被最后一条覆盖，导致总金额少算。该工具直接用于 settlement fee 汇总，属于资金计算错误。</div>
-                <div class="finding-suggestion">💡 修复建议：不要用 `Map` 覆盖同编码金额，改为按 `chargeCode` 聚合求和，再对存在调整的编码用“调整后总额”替换“原费用总额”。例如先 `feeTotals.merge(code, amount, BigDecimal::add)`、`adjustmentTotals.merge(code, adjustedAmount, BigDecimal::add)`，最后逐个 `chargeCode` 取 adjustmentTotals 或 feeTotals 求和。</div>
+                <div class="finding-desc">在分页重算过程中只要有任意页面失败，代码仍然先执行 `calculateTotalApLmBillAmount(apLmBill)`，随后才按失败结果返回。这样会把“部分 settlement 已重算、部分仍是旧值”的混合状态汇总到账单总金额，导致账单金额被错误落库，即使任务最终标记为失败。该路径属于资金计算错误/数据不一致。</div>
+                <div class="finding-suggestion">💡 修复建议：仅在 `failedCount == 0` 时更新账单总金额；若允许部分失败，则应把成功页回滚或将总金额更新放入全部成功后的事务分支。例如：`if (failedCount == 0) { apLmBillService.calculateTotalApLmBillAmount(apLmBill); }`，失败时保持原总金额不变。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/util/WeightCalculationUtil.java:115-116</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/lastmile/LmCostCalculator.java:221-228</code>
                 </div>
-                <div class="finding-desc">新增 `ratedWeight.compareTo(BigDecimal.ZERO) != 0` 后，`ratedWeight` 为 0 且 `billingWeight` 为正数时不会再走覆盖逻辑，而是直接返回 0。对计费重量场景，这会把本应按 billing weight 计费的包裹变成 0 重量，造成低计费。</div>
-                <div class="finding-suggestion">💡 修复建议：去掉这条 0 值拦截，或仅在明确约定“0 表示无效值”时先将 0 归一为 `null` 再处理。更安全的写法是保留原比较：`if (billingWeight != null &amp;&amp; ratedWeight != null &amp;&amp; billingWeight.compareTo(ratedWeight) &gt; 0)`。</div>
+                <div class="finding-desc">重量单位转换失败时，这里仅记录日志后直接返回原始重量，后续仍会继续参与费率计算。只要成本卡重量单位与包裹重量单位不同，任何非法/未覆盖的 UOM 或运行时转换异常都会把错误重量带入计费，直接产生错误金额。这个分支属于资金计算错误，不应静默降级。</div>
+                <div class="finding-suggestion">💡 修复建议：将转换失败改为显式终止计费并抛出带错误码的业务异常，避免用错误重量继续算钱。例如：`catch (RuntimeException e) { BizException ex = new BizException(&quot;Weight conversion failed for tracking &quot; + rateEntity.getTrackingNo()); ex.setCode(LmCostErrorCode.WEIGHT_UOM_INVALID.getCode()); throw ex; }`。如果必须兼容历史数据，也至少在进入计算前校验 `fromUom/toUom` 是否可转换。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-infrastructure/src/main/java/io/speedx/oms/config/ApLmBillConfig.java:64-65</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/util/SettlementFeeAmountCalculator.java:37-42</code>
                 </div>
-                <div class="finding-desc">`ap.lm.bill.download-link.secret` 提供了可用的默认 HMAC 密钥，配置缺失时服务会直接使用这段硬编码 secret 生成下载链接签名。该值一旦泄露或被多环境复用，外部即可伪造合法下载链接，属于典型硬编码密钥风险。</div>
-                <div class="finding-suggestion">💡 修复建议：移除默认密钥，改为启动时强制校验外部配置存在，例如：`@Value(&quot;${ap.lm.bill.download-link.secret}&quot;)`，并在 `@PostConstruct` 中校验 `StringUtils.hasText(dspBillDownloadLinkSecret)`，缺失时直接启动失败。</div>
+                <div class="finding-desc">`buildFeeMap` 以 `chargeCode` 为 key 直接 `put`，当同一结算中存在多条相同 `chargeCode` 的 fee 时，前面的金额会被后面的覆盖，`calculateTotalFeeAmount` 最终少算费用。该工具用于结算金额汇总，属于资金计算错误。</div>
+                <div class="finding-suggestion">💡 修复建议：对同一 `chargeCode` 的 fee 先累加，再让 adjustment 覆盖对应 charge code。例如：`feeMap.merge(fee.getChargeCode(), fee.getAmount(), BigDecimal::add);`。同时补充包含重复 `chargeCode` fee 的金额汇总测试。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-test/src/test/java/io/speedx/oms/domain/service/ParcelServiceTest.java:168</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/util/WeightCalculationUtil.java:115-118</code>
                 </div>
-                <div class="finding-desc">新增了硬编码加密口令 `ENCRYPTOR_PASSWORD`，命中 [SEC-001]。即使位于测试代码中，这类真实格式的敏感凭据也容易被复制到其他环境，造成密钥泄露和错误依赖。</div>
-                <div class="finding-suggestion">💡 修复建议：删除硬编码口令，改为复用现有测试常量或从测试配置注入，例如继续使用 `TestConstant.ENCRYPTOR_PASSWORD`，或通过 `@Value`/测试环境变量读取。避免在源码中直接出现明文或固定密文凭据。</div>
+                <div class="finding-desc">新增的 `ratedWeight.compareTo(BigDecimal.ZERO) != 0` 会在 `ratedWeight` 为 0、`billingWeight` 为正数时跳过覆盖逻辑，直接返回 0。该方法用于计费重量封顶，变更后会把本应按 `billingWeight` 计费的场景算成 0，存在直接的计费低估风险。</div>
+                <div class="finding-suggestion">💡 修复建议：移除对 `ratedWeight == 0` 的特殊拦截，恢复为只要 `billingWeight &gt; ratedWeight` 就按 `billingWeight.setScale(0, RoundingMode.CEILING)` 返回；如果确实要特殊处理 0，需明确业务规则并补充单测。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/api/SnsApi.java:82-85</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/api/SnsApi.java:149</code>
                 </div>
-                <div class="finding-desc">`billId` 在拼接审核链接前没有做非空校验，`String.format(..., billId)` 会对 `Long` 发生自动拆箱；一旦调用方传入 `null`，这里会在进入 `try/catch` 之前直接抛出空指针，导致提醒邮件完全不发送。相同问题在下面的确认提醒方法中也重复了一次。</div>
-                <div class="finding-suggestion">💡 修复建议：在构造 URL 前显式校验 `billId`，缺失时直接记录告警并返回，或改为安全拼接。例如：`if (billId == null) { log.warn(&quot;... billId is null&quot;); return; }`，然后再执行 `String.format`。</div>
+                <div class="finding-desc">确认提醒邮件同样直接对可空的 `billId` 使用 `%d` 格式化；当上游未传 billId 时，这里会在发送前抛异常，导致确认通知流程中断。</div>
+                <div class="finding-suggestion">💡 修复建议：与审核提醒方法保持一致，在生成 `detailUrl` 前增加 `billId` 非空校验，或提取公共 helper 统一处理 URL 构建和空值兜底。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillExecutionLogService.java:57-60</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/api/SnsApi.java:83</code>
                 </div>
-                <div class="finding-desc">这里直接对 `getCreatedBy()` 的结果执行 `userId &gt; 0`，如果库里存在 `createdBy = null` 的历史日志或系统生成日志，会在 stream 过滤阶段触发空指针。相同写法在 `getExportHistory` 中再次出现。</div>
-                <div class="finding-suggestion">💡 修复建议：先过滤空值再比较正数，例如：`filter(Objects::nonNull).filter(userId -&gt; userId &gt; 0)`。`getExportHistory` 里的同样逻辑也应同步修复。</div>
+                <div class="finding-desc">`billId` 在方法签名中允许为 `Long` 且未做非空校验，这里用 `String.format(...%d, billId)` 会在 `billId == null` 时直接抛出异常，且异常发生在 `try` 外，调用方会收到运行时错误而不是仅跳过通知。</div>
+                <div class="finding-suggestion">💡 修复建议：在组装 URL 前显式校验 `billId`，例如 `if (billId == null) { log.warn(...); return; }`；或改为先转换成安全字符串后再拼接。相同问题在后面的确认提醒方法中也需要一并修复。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillExecutionLogService.java:85-101</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillExecutionLogService.java:57</code>
                 </div>
-                <div class="finding-desc">`recordApLmBillOperations` 在事务方法内吞掉了 `save` 异常，并继续返回一个可能未持久化的 `operation` 对象。调用方如果依赖返回的 `operationId` 做后续更新，会得到 `null` 或脏状态，最终表现为执行日志静默丢失且问题难以追踪。</div>
-                <div class="finding-suggestion">💡 修复建议：不要在这里吞异常。至少应在保存失败时抛出异常让调用方感知，或明确返回 `null/Optional` 并要求调用方判空。例如删除 `catch` 后让事务回滚，或在 `catch` 中 `throw new BizException(&quot;record ap lm bill operation failed&quot;, e);`。</div>
+                <div class="finding-desc">`createdBy` 是 `Long`，这里的 `userId -&gt; userId &gt; 0` 会触发自动拆箱；只要存在一条操作日志的 `createdBy` 为 `null`，整个 `getApLmBillOperations` 查询就会因 `NullPointerException` 失败。</div>
+                <div class="finding-suggestion">💡 修复建议：先过滤空值再比较，例如 `filter(Objects::nonNull).filter(userId -&gt; userId &gt; 0)`，避免单条脏数据拖垮整页操作日志查询。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillOperationService.java:116-166</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillExportService.java:270-284</code>
                 </div>
-                <div class="finding-desc">`submitApLmBill` 先查询账单并基于当前状态做校验，再直接更新状态，但这里没有看到任何行锁或乐观锁控制。同一账单被并发提交时，两个请求都可能在 `GENERATED` 状态下通过校验，最终产生重复操作日志/重复提醒邮件，甚至覆盖彼此的状态流转。</div>
-                <div class="finding-suggestion">💡 修复建议：在状态流转前对账单加锁，例如复用 `apLmBillService.lockApLmBill(apLmBillId)` 或使用带版本号的乐观锁更新（`where id = ? and status = ? and version = ?`），确保同一账单同一时刻只允许一个提交成功。</div>
+                <div class="finding-desc">`loadDriverNamesByFleetIds` 对每个 `fleetId` 逐个调用 `dspService.getDriverList(country, fleetId)`。导出明细页通常会覆盖大量 fleet，这里会退化成明显的 N+1 远程/数据库查询，导出耗时会随 fleet 数线性放大，严重时会触发下游接口超时，导致导出失败。</div>
+                <div class="finding-suggestion">💡 修复建议：优先改成批量查询接口，一次性按 `country + fleetIds` 拉取司机列表后再按 `fleetId` 分组；如果当前下游暂不支持批量接口，至少增加本次导出级别的缓存并限制最大查询批次。示例：`Map&lt;Long, List&lt;DriverInfoResponse&gt;&gt; driversByFleet = dspService.getDriverListBatch(country, fleetIds);`</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillOperationService.java:164-165</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmDspCostAccrualDetailDataService.java:133-136</code>
                 </div>
-                <div class="finding-desc">在事务方法内直接发送提醒邮件，外部副作用发生在数据库事务提交之前。如果后续提交阶段失败或事务被回滚，邮件已经发出，但账单状态并未真正落库，通知内容会与实际状态不一致。相同模式在 `agreeApLmBill` 中也存在。</div>
-                <div class="finding-suggestion">💡 修复建议：把通知发送改为事务提交后触发，例如使用 `TransactionSynchronizationManager.registerSynchronization(...afterCommit...)`、领域事件 + 事务监听器，或 outbox 表异步投递，确保只有提交成功后才发送邮件。</div>
+                <div class="finding-desc">这里仅取 `settlements.get(0).getCustomerId()` 查询一次 `Customer`，后续在构建所有 tracking 的明细时都复用同一个 `customer`。如果本次导出的 tracking 列表跨多个客户，后续记录会被填入错误的客户信息，导致导出数据错误。</div>
+                <div class="finding-suggestion">💡 修复建议：改为按 `customerId` 批量查询并建立 `Map&lt;Long, Customer&gt;`，在遍历 `settlements` 时按当前 `settlement.getCustomerId()` 取对应客户后再传入 `buildDetailResponse`。例如先收集 `settlements` 中所有非空 `customerId`，批量加载后在循环内使用 `customerMap.get(settlement.getCustomerId())`。</div>
             </div>
-            <p class="more-note">... 还有 76 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 66 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
