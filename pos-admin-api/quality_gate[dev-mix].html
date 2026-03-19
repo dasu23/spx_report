@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-admin-api &nbsp;|&nbsp; 2026-03-19 12:26:27</div>
+      <div class="meta">pos-admin-api &nbsp;|&nbsp; 2026-03-19 15:05:53</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:12</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:2 &nbsp; 主要:10</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,8 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 1 Critical finding(s)</li>
-<li>AI Review: 12 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 2 Critical finding(s)</li>
+<li>AI Review: 10 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,53 +94,61 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">pos-admin-api/src/main/java/com/miq/posadminapi/controller/sys/SSOLoginController.java:63</code>
+                    <code class="finding-loc">pos-admin-api/src/main/java/com/miq/posadminapi/controller/sys/SSOLoginController.java:59</code>
                 </div>
-                <div class="finding-desc">这里把 `req.getSession().getId()` 直接当作 `authToken` 拼进 302 Location。Session ID 属于服务端会话凭据，放入 URL 后会暴露在浏览器历史、代理日志、Referer 和前端埋点中，攻击者拿到该值后可直接复用会话，造成登录态劫持。</div>
-                <div class="finding-suggestion">💡 修复建议：不要把 Session ID 透传到 URL。改为：1）登录成功后仅通过 `Set-Cookie` 下发会话；或 2）生成一次性短时授权码，再由前端调用后端接口换取登录态。例如将 `location` 改为不携带会话凭据的固定前端地址，登录态由 Cookie 维持。</div>
+                <div class="finding-desc">回调中读取了 `state` 但完全未校验，且 `/sso/ssoLogin/**` 在 Shiro 中被匿名放行。缺少 SSO/OAuth 回调 `state` 校验会导致登录 CSRF：攻击者可把自己的登录结果链接诱导给受害者，受害者会在当前浏览器会话中被登录为攻击者账号。</div>
+                <div class="finding-suggestion">💡 修复建议：在发起 SSO 登录时把随机 `state` 绑定到服务端会话/缓存；回调时从请求参数或 claims 中取回 `state`，与服务端保存值严格比对，不一致则拒绝登录。例如：`String expected = (String) req.getSession().getAttribute(&quot;SSO_STATE&quot;); if (!Objects.equals(expected, state)) { throw new IllegalArgumentException(&quot;invalid state&quot;); }`，校验通过后立即清除该值。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/sys/impl/UserServiceImpl.java:286-306</code>
+                </div>
+                <div class="finding-desc">`performLogin` 在当前 `Subject` 已认证时直接返回当前会话的登录信息，没有校验该会话是否属于本次 SSO 目标用户。这样只要浏览器里已有其他账号的有效会话，再发起新的 SSO 登录请求，就会拿到旧会话用户的信息，造成跨账号会话复用/越权。</div>
+                <div class="finding-suggestion">💡 修复建议：在 SSO 登录前强制校验当前 `Subject` 的 principal 是否与 `sysUser.getLoginName()` 一致；不一致时先 `logout()` 再重新登录，或直接创建新的会话。示例：`if (currentUser.isAuthenticated() &amp;&amp; !sysUser.getLoginName().equals(currentUser.getPrincipal())) { currentUser.logout(); }`，随后再执行 `login`。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-admin-api/src/main/java/com/miq/posadminapi/controller/sys/SSOLoginController.java:49,73</code>
+                    <code class="finding-loc">pos-admin-api/src/main/java/com/miq/posadminapi/config/ShiroConfig.java:118-120</code>
                 </div>
-                <div class="finding-desc">新增日志直接打印 `ssoLoginToken`。该 token 来自第三方 SSO 回调，属于敏感认证凭据；一旦进入应用日志、链路日志或错误日志，容易被运维平台、日志聚合系统或调试人员获取，形成凭据泄露风险。</div>
-                <div class="finding-suggestion">💡 修复建议：不要记录原始 token，改为只打印脱敏后的前后缀或请求唯一标识。例如：`log.debug(&quot;[SSOLogin] SSO login callback received, tokenHash={}&quot;, DigestUtils.sha256Hex(ssoLoginToken));`；异常日志同样去掉 token 原文。</div>
+                <div class="finding-desc">当激活 `dev` profile 时，直接把 `AuthorizationAttributeSourceAdvisor` 的 advice 替换为 `SkipPermissionsInterceptor`，会让 `@RequiresPermissions` 方法级权限校验整体失效。只要运行环境误带 `dev`（多 profile 并存也会命中），所有受注解保护的接口都会越权开放。</div>
+                <div class="finding-suggestion">💡 修复建议：不要在主配置中通过 profile 全局关闭权限校验。若确需本地调试，改为仅在测试专用配置类中生效，或增加显式开关并默认关闭，例如同时要求 `dev` + `shiro.skip-permission-check=false/true` 双条件，且禁止在生产部署配置中出现该开关。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-admin-api/src/main/java/com/miq/posadminapi/controller/sys/SSOLoginController.java:52-74</code>
+                </div>
+                <div class="finding-desc">SSO 回调把 `ssoLoginToken` 直接写入 debug/error 日志。该 token 属于认证凭证，日志一旦被收集或外泄，可被重放用于冒充登录，符合敏感信息泄露风险。</div>
+                <div class="finding-suggestion">💡 修复建议：不要记录原始 token；如需排障，只记录脱敏后的前后缀或哈希。例如：`log.debug(&quot;[SSOLogin] callback received, tokenHash={}&quot;, DigestUtils.sha256Hex(ssoLoginToken));`，异常日志也改为不输出原值。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/PartnerLocationService.java:3</code>
                 </div>
-                <div class="finding-desc">这里把公开服务接口的泛型类型从 `com.miq.posservice.entity.PartnerLocation` 切换成了 `com.miq.dspservice.entity.PartnerLocation`。即使简单类名相同，二者也是不同的二进制类型；任何仍按旧实体类型编译的调用方都会出现不兼容或编译失败。</div>
-                <div class="finding-suggestion">💡 修复建议：确认所有调用方已同步迁移后再修改公开接口；若需要兼容旧调用方，可在服务层保持原有类型契约，内部再做对象转换，或提供过渡适配接口。</div>
+                <div class="finding-desc">`PartnerLocationService` 的泛型和 `find` 方法返回类型从 `com.miq.posservice.entity.PartnerLocation` 切换成了 `com.miq.dspservice.entity.PartnerLocation`。这会直接改变接口签名；若现有实现类、注入点或调用方仍使用原实体类型，会产生编译错误或运行期类型不兼容。</div>
+                <div class="finding-suggestion">💡 修复建议：确认整条调用链已统一迁移到 `com.miq.dspservice.entity.PartnerLocation`。如果只是误改 import，应恢复为原实体类型；如果确实要切换，需同步修改实现类、DAO、测试以及所有依赖该接口的方法签名。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/UpdateAddressService.java:559-562</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/UpdateAddressService.java:561-562</code>
                 </div>
-                <div class="finding-desc">`form.getNotes().trim()` 在判空前就被调用；当 `notes` 为 `null` 时这里会直接抛出 `NullPointerException`，接口会从“返回 false”退化为 500 错误。`@Valid` 只能在经过 Spring 参数校验入口时生效，服务内部调用并不能保证这个字段一定非空。</div>
-                <div class="finding-suggestion">💡 修复建议：先对原始值判空，再做 `trim`。例如：`String notes = StringUtils.trimToEmpty(form.getNotes()); if (StringUtils.isBlank(notes)) { ... }`，后续统一使用 `notes` 变量。</div>
+                <div class="finding-desc">空白校验先执行了 `form.getNotes().trim()`，当 `notes` 为 `null` 时会直接触发 `NullPointerException`，导致接口返回 500，而不是按预期返回 `false`。</div>
+                <div class="finding-suggestion">💡 修复建议：先对原始值做空判断，再统一 `trim`，例如：`String notes = StringUtils.trimToEmpty(form.getNotes()); if (StringUtils.isBlank(notes)) { ... }`，后续拼接也复用该 `notes` 变量。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerImplService.java:1068-1069</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerImplService.java:1068-1069,1392-1394</code>
                 </div>
-                <div class="finding-desc">这里在失败分支中直接调用 `container.getStatus().toLowerCase()`；当容器存在但 `status` 为空时，会在组装错误消息时抛出 `NullPointerException`，导致原本应返回的业务失败响应变成接口异常。</div>
-                <div class="finding-suggestion">💡 修复建议：对状态值做空保护，例如 `String status = StringUtils.defaultIfBlank(container.getStatus(), &quot;UNKNOWN&quot;); String errorMsg = String.format(&quot;container [%s] is %s&quot;, containerNo, status.toLowerCase());`。</div>
+                <div class="finding-desc">新增错误信息中直接调用 `container.getStatus().toLowerCase()`。如果容器记录存在但 `status` 为空，会在构造失败响应时抛出 `NullPointerException`，掩盖原本应返回的业务错误。</div>
+                <div class="finding-suggestion">💡 修复建议：对状态值做空保护，例如：`String status = StringUtils.defaultIfBlank(container.getStatus(), &quot;unknown&quot;); String errorMsg = String.format(&quot;container [%s] is %s&quot;, containerNo, status.toLowerCase());`。</div>
             </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerImplService.java:1392-1394</code>
-                </div>
-                <div class="finding-desc">获取容器信息的新分支同样直接对 `container.getStatus()` 调用 `toLowerCase()`。只要数据库里存在状态为空的容器记录，这里就会抛出空指针，`GetContainerInfoResponse` 无法按约定返回。</div>
-                <div class="finding-suggestion">💡 修复建议：与前一个入口保持一致，先兜底状态值再格式化消息，避免在错误处理路径再次抛异常。</div>
-            </div>
-            <p class="more-note">... 还有 7 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 5 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
