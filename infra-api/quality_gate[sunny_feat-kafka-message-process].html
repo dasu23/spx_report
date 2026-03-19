@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">infra-api &nbsp;|&nbsp; 2026-03-18 23:17:59</div>
+      <div class="meta">infra-api &nbsp;|&nbsp; 2026-03-19 19:09:57</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:7</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:4</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,7 +83,7 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 7 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 4 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,44 +94,36 @@
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">infra-domain/src/main/java/com/speedx/infra/domain/service/KafkaConsumerFailureLogService.java:289-320</code>
+                    <code class="finding-loc">infra-domain/src/main/java/com/speedx/infra/domain/service/KafkaConsumerFailureLogService.java:323-331</code>
                 </div>
-                <div class="finding-desc">`search` 直接使用请求里的 `page`/`size` 构造 `PageRequest`，没有校验非负页码和正数分页大小。只要调用方传入负数页码或 `size &lt;= 0`，`PageRequest.of(...)` 就会抛出 `IllegalArgumentException`，接口返回 500。</div>
-                <div class="finding-suggestion">💡 修复建议：在构造分页参数前做边界校验，并对非法参数返回业务错误而不是让框架异常冒泡。例如：`if (page &lt; 0 || size &lt;= 0) { throw new IllegalArgumentException(&quot;page must &gt;= 0 and size must &gt; 0&quot;); }`，或在 facade 层统一校验请求。</div>
+                <div class="finding-desc">`search` 直接使用请求中的 `page` 和 `size` 构造 `PageRequest`，未校验负数页码或 `size &lt;= 0`。当调用方传入非法分页参数时，`PageRequest.of` 会抛 `IllegalArgumentException`，接口将直接失败。</div>
+                <div class="finding-suggestion">💡 修复建议：在构造 `PageRequest` 前校验分页参数，例如限制 `page &gt;= 0` 且 `size &gt; 0`，不合法时返回明确的参数错误。示例：`if (page &lt; 0 || size &lt;= 0) { throw new IllegalArgumentException(&quot;page must be &gt;= 0 and size must be &gt; 0&quot;); }`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">infra-domain/src/main/java/com/speedx/infra/domain/service/KafkaConsumerFailureLogService.java:330-339</code>
+                    <code class="finding-loc">infra-domain/src/main/java/com/speedx/infra/domain/service/KafkaProducerFailureLogService.java:257-265</code>
                 </div>
-                <div class="finding-desc">`delete` 对 `ids` 未做空值/空集合校验，直接调用 `findAllById(ids)`。当调用方传入 `null` 时，Spring Data 会抛出 `IllegalArgumentException`；传入空集合时当前实现会静默成功，导致删除接口对非法请求返回成功，行为不一致。</div>
-                <div class="finding-suggestion">💡 修复建议：在方法入口显式校验 `ids`：`if (ids == null || ids.isEmpty()) { throw new IllegalArgumentException(&quot;ids must not be empty&quot;); }`，并在 facade 层返回统一的参数错误码。</div>
+                <div class="finding-desc">`search` 同样未校验 `page`/`size` 的合法性，非法分页参数会在 `PageRequest.of` 处抛异常，导致查询接口对坏输入不稳定。</div>
+                <div class="finding-suggestion">💡 修复建议：与 consumer 查询保持一致，显式校验 `page &gt;= 0`、`size &gt; 0`，在参数非法时抛出受控的 `IllegalArgumentException` 或返回统一错误码。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">infra-domain/src/main/java/com/speedx/infra/domain/service/KafkaProducerFailureLogService.java:223-254</code>
+                    <code class="finding-loc">infra-domain/src/main/java/com/speedx/infra/domain/service/KafkaProducerFailureLogService.java:91-106</code>
                 </div>
-                <div class="finding-desc">`search` 同样直接将外部传入的 `page`/`size` 传给 `PageRequest.of(...)`，缺少范围校验。非法分页参数会在运行时抛异常，导致搜索生产失败日志接口返回 500。</div>
-                <div class="finding-suggestion">💡 修复建议：与消费失败日志搜索保持一致地增加分页参数校验，确保 `page &gt;= 0` 且 `size &gt; 0` 后再创建 `PageRequest`。</div>
+                <div class="finding-desc">`repushMessage` 先同步发送 Kafka 消息，再在 `finally` 中更新并保存日志状态；如果 `send(...).get()` 已成功但 `save(failureLog)` 失败，消息已经重发出去，而数据库仍保持未成功重推状态，后续重试会再次发送同一条消息，破坏重推幂等性。</div>
+                <div class="finding-suggestion">💡 修复建议：将“发送消息”和“更新重推状态”设计成可恢复的一致性流程，至少避免在发送成功后因持久化失败留下未标记状态。可执行方案包括：1. 先将日志状态更新为“重推中”并落库，再异步发送并回写最终结果；2. 引入事务外盒/outbox；3. 至少在发送成功后保存失败时抛出异常并记录专门补偿标记，避免该记录被当作可再次重推的数据。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">infra-domain/src/main/java/com/speedx/infra/domain/service/KafkaProducerFailureLogService.java:264-273</code>
+                    <code class="finding-loc">infra-facade/src/main/java/com/speedx/infra/facade/model/req/RepushKafkaProducerFailureLogReq.java:11-15</code>
                 </div>
-                <div class="finding-desc">`delete` 未校验 `ids` 是否为空，直接传给 `findAllById(ids)`。这会让 `null` 参数触发运行时异常，而空集合则被当成成功请求处理，删除接口对非法输入缺少稳定的契约。</div>
-                <div class="finding-suggestion">💡 修复建议：在删除前增加 `ids` 非空校验，并对非法请求返回统一错误码。例如：`if (ids == null || ids.isEmpty()) { throw new IllegalArgumentException(&quot;ids must not be empty&quot;); }`。</div>
+                <div class="finding-desc">该请求对象移除了原有 `id` 的 `@NotNull` 校验，同时新增 `ids` 也没有任何非空约束，导致 `id` 和 `ids` 同时为空的请求现在会通过参数校验。对于依赖历史契约“至少提供一个日志ID”的调用方，这是一次不兼容的放宽，后续服务层若直接遍历 `ids` 或使用 `id` 进行重推，容易出现空指针或无效请求被当成成功处理。</div>
+                <div class="finding-suggestion">💡 修复建议：恢复“至少一个ID必填”的校验。可保持兼容做法：保留 `id` 字段，同时为 `ids` 增加 `@Size(min = 1)`/`@NotEmpty`，并在类级别增加自定义校验，确保 `id` 与 `ids` 至少一个有值，例如：`@AssertTrue(message = &quot;id或ids至少传一个&quot;) public boolean isValid(){ return id != null || (ids != null &amp;&amp; !ids.isEmpty()); }`。</div>
             </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">infra-facade/src/main/java/com/speedx/infra/facade/model/req/DeleteKafkaConsumerFailureLogReq.java:13-14</code>
-                </div>
-                <div class="finding-desc">`ids` 仅使用 `@NotNull` 校验，空列表会通过参数校验。批量删除场景下，空集合很容易在后续仓储层拼出 `IN ()`、触发 SQL 异常，或产生“请求成功但未删除任何数据”的歧义行为。</div>
-                <div class="finding-suggestion">💡 修复建议：将约束改为非空集合校验，例如使用 `@NotEmpty(message = &quot;ID列表不能为空&quot;)`，并视需要增加元素级校验如 `List&lt;@NotNull Long&gt; ids`。如果框架版本不便直接支持元素校验，至少在 service/facade 层显式判断 `ids.isEmpty()`。</div>
-            </div>
-            <p class="more-note">... 还有 2 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            
         </div>
         
 
