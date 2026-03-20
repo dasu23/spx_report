@@ -83,40 +83,49 @@
 
     /* 总体结论正文区 */
     .summary-body {
-      margin: 0 0 14px;
+      margin: 0 0 16px;
       font-size: 14px;
       color: var(--text);
-      line-height: 1.7;
+      line-height: 1.75;
     }
 
     .summary-body p {
-      margin: 0 0 8px;
+      margin: 0 0 10px;
     }
 
     .summary-body p:last-child {
       margin-bottom: 0;
     }
 
-    .summary-body ol {
-      margin: 6px 0 10px;
+    .summary-body ol,
+    .summary-body ul {
+      margin: 4px 0 12px;
       padding-left: 22px;
     }
 
-    .summary-body ol li {
+    .summary-body ol li,
+    .summary-body ul li {
       margin-bottom: 6px;
+      line-height: 1.65;
     }
 
     .summary-body .summary-section-title {
       font-weight: 700;
       color: var(--heading);
-      margin: 12px 0 4px;
+      margin: 16px 0 6px;
       font-size: 13px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
+      letter-spacing: 0.3px;
+      padding-left: 8px;
+      border-left: 3px solid var(--accent);
     }
 
     .summary-body .summary-section-title:first-child {
       margin-top: 0;
+    }
+
+    .summary-body strong {
+      color: var(--heading);
+      font-weight: 700;
     }
 
     /* 严重级别筛选区 */
@@ -373,20 +382,20 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: pos-exchange-api | 生成时间: 2026-03-18 16:42:50</p>
+      <p class="hero-meta">服务: pos-exchange-api | 生成时间: 2026-03-20 17:32:14</p>
     </header>
 
     <section class="summary">
       <h2>总体结论</h2>
-      <div id="summary-text" class="summary-body">本次变更整体方向明确，但新增分布式锁的粒度选错了维度，仍然无法阻止同一运单在不同容器之间的并发扫描，存在实际的数据一致性风险。</div>
+      <div id="summary-text" class="summary-body">本分片变更整体较集中，但新增的备注更新接口存在明显的空值边界风险，可能直接触发 500。POD 文件格式校验也有 URL/大小写处理缺口，容易误伤合法上传请求。 本分片主要问题集中在“跳过优化”新增流程的数据一致性上，两个新路径都存在先写最终状态或先对外推送、后持久化的顺序风险。建议先修正状态流转与幂等策略，再合入。</div>
       <div class="filter-row">
         <span class="filter-label">点击筛选:</span>
         <div class="chips">
           <span class="chip critical filter-chip" data-filter="critical" onclick="filterBySeverity(this)">Critical: 0</span>
-          <span class="chip major filter-chip" data-filter="major" onclick="filterBySeverity(this)">Major: 1</span>
-          <span class="chip minor filter-chip" data-filter="minor" onclick="filterBySeverity(this)">Minor: 0</span>
+          <span class="chip major filter-chip" data-filter="major" onclick="filterBySeverity(this)">Major: 3</span>
+          <span class="chip minor filter-chip" data-filter="minor" onclick="filterBySeverity(this)">Minor: 1</span>
           <span class="chip info filter-chip" data-filter="info" onclick="filterBySeverity(this)">Info: 0</span>
-          <span class="chip">Total: 1</span>
+          <span class="chip">Total: 4</span>
         </div>
       </div>
     </section>
@@ -416,7 +425,7 @@
     </section>
 
     <h2 class="section-title">审查发现</h2>
-    <div class="file-block"><h3>pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerImplService.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>1046</td><td>并发安全</td><td>分布式锁 key 同时包含 `containerNo` 和 `trackingNumber`，只能拦住“同一容器 + 同一单号”的并发扫描；如果同一包裹被同时扫入两个不同容器，会生成两个不同锁并并发进入 `doScanParcelToContainer`，从而留下重复绑定/状态覆盖的竞态窗口。这个改动的目标是防重复扫描，但当前粒度不足以保证包裹维度的唯一性。</td><td>将锁粒度收敛到包裹唯一键上，至少对归一化后的 `trackingNumber` 加锁，例如：`RLock lock = redissonClient.getLock(&quot;scan-parcel-to-container:&quot; + trackingNumber);`。如果还需要保护容器维度，再额外按固定顺序获取第二把锁，避免死锁。</td><td>补充并发测试：两个线程分别调用 `scanParcelToContainer(&quot;TRACK123&quot;, &quot;CTN001&quot;)` 和 `scanParcelToContainer(&quot;TRACK123&quot;, &quot;CTN002&quot;)`，期望只能有一个线程进入业务逻辑，另一个被明确拒绝。</td></tr></tbody></table></div>
+    <div class="file-block"><h3>pos-service/src/main/java/com/miq/posservice/service/UpdateAddressService.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>562-563</td><td>边界条件</td><td>这里先执行 `form.getNotes().trim()`，当请求里的 `notes` 为 `null` 时会直接触发 `NullPointerException`，导致新增的 `/updateLabelNotes` 接口返回 500，而不是按预期给出可控失败结果。`@Valid` 只有在 `UpdateLabelNotesForm` 上确实声明了非空约束时才会拦截，这里代码本身仍然存在空值边界风险。</td><td>先对原始值做空判断，再进行 `trim()`；例如：`String notes = StringUtils.trimToEmpty(form.getNotes()); if (StringUtils.isBlank(notes)) { ... }`。如果该字段必填，再补充 `UpdateLabelNotesForm.notes` 的 `@NotBlank` 校验。</td><td>构造 `notes=null` 和 `notes=&quot;   &quot;` 的请求调用 `/updateLabelNotes`，验证接口不会抛出 500，并能返回明确的失败结果。</td></tr></tbody></table></div><div class="file-block"><h3>pos-service/src/main/java/com/miq/posservice/service/impl/PodManagementServiceImpl.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip minor">minor</span></td><td>51-53</td><td>业务逻辑</td><td>文件格式校验直接基于整条 URL 做 `substring(url.lastIndexOf(&quot;.&quot;) + 1)` 并与配置值精确匹配。带查询参数的 URL（如 `a.jpg?x=1`）或大写后缀（如 `JPG`）都会被识别成不支持格式，导致合法 POD 上传被误拒绝。</td><td>提取扩展名前先去掉 query/fragment，并统一转小写；例如先取 `String cleanUrl = StringUtils.substringBefore(StringUtils.substringBefore(url, &quot;?&quot;), &quot;#&quot;); String ext = StringUtils.lowerCase(StringUtils.substringAfterLast(cleanUrl, &quot;.&quot;));`，再与小写白名单比较。</td><td>分别使用 `https://xx/pod.JPG`、`https://xx/pod.jpg?sign=abc`、`https://xx/pod.jpeg#1` 提交 `insertPod`，验证合法格式不会被误判。</td></tr></tbody></table></div><div class="file-block"><h3>pos-service/src/main/java/com/miq/posservice/service/web/impl/FixRouteScanServiceImpl.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>437-438</td><td>数据一致性</td><td>第 10 次优化失败分支里先执行 `updateOptimizeSuccess(...)` 把路线标记为“已优化且跳过”，再调用 `updateRoutePriorityAfterOptimize(...)` 推送后续流程。若后者抛异常，数据库状态已经变成成功/跳过，但 DMS 同步实际上未完成，后续也可能因为状态已成功而不再重试，产生不可自动修复的脏数据。</td><td>不要在外部推送前直接落库为最终成功态。可改为：先完成 `updateRoutePriorityAfterOptimize(...)`，成功后再更新 `hasOptimize/optimizeSkipFlag`；或者引入中间状态/补偿任务，确保推送失败时仍保留可重试标记。</td><td>mock `updateRoutePriorityAfterOptimize(...)` 抛出异常，验证该 route 不会被持久化为 `hasOptimize=true`、`optimizeSkipFlag=true`，或至少会留下明确的可重试状态。</td></tr></tbody></table></div><div class="file-block"><h3>pos-service/src/main/java/com/miq/posservice/service/web/impl/InboundRouteServiceImpl.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>296-297</td><td>数据一致性</td><td>`skipOptimizeRoute` 先调用 `pushRouteToDms(inboundRoute)`，再执行 `inboundRouteDao.save(inboundRoute)`。如果保存失败或事务回滚，DMS 已经收到推送，但本地 route 仍是未跳过状态；用户再次操作时会重复推送，破坏幂等并造成两边状态不一致。</td><td>调整顺序为先持久化 skip 状态，再在事务提交后触发 DMS 推送；如果必须同步调用外部系统，至少增加状态幂等校验（例如 `hasOptimize/optimizeSkipFlag` 已为 true 时直接返回），并避免在保存失败后已对外产生副作用。</td><td>mock `inboundRouteDao.save(...)` 抛异常，验证不会调用 `fixRouteScanService.pushRouteToDms(...)`；再补充重复调用 `skipOptimizeRoute` 只会推送一次的测试。</td></tr></tbody></table></div>
   </div>
   <script>
     (function () {
@@ -435,7 +444,7 @@
         var trendsSection = document.getElementById('trends-section');
         trendsSection.classList.add('visible');
 
-        var avgSeverity = {"critical": 0.0, "major": 1.0, "minor": 0.0, "info": 0.0};
+        var avgSeverity = {"critical": 0.0, "major": 3.0, "minor": 1.0, "info": 0.0};
         var avgChart = document.getElementById('avg-severity-chart');
         if (avgSeverity && Object.keys(avgSeverity).length > 0) {
           var total = (avgSeverity.critical || 0) + (avgSeverity.major || 0) + (avgSeverity.minor || 0) + (avgSeverity.info || 0);
@@ -454,7 +463,7 @@
           avgChart.innerHTML = html;
         }
 
-        var trendData = [{"timestamp": "2026-03-18", "total": 1, "critical": 0, "major": 1, "minor": 0, "info": 0}];
+        var trendData = [{"timestamp": "2026-03-20", "total": 4, "critical": 0, "major": 3, "minor": 1, "info": 0}];
         var timelineChart = document.getElementById('trend-timeline-chart');
         if (trendData && trendData.length > 0) {
           var maxTotal = Math.max.apply(null, trendData.map(function(d) { return d.total; })) || 1;
@@ -478,32 +487,78 @@
       var raw = el.textContent || '';
       var lines = raw.split(/\r?\n/);
       var html = '';
-      var inList = false;
+      var listType = null; // 'ol' | 'ul' | null
+
+      function closeList() {
+        if (listType) { html += '</' + listType + '>'; listType = null; }
+      }
+
+      function renderInline(text) {
+        // 转义 HTML 特殊字符
+        var s = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        // **bold** → <strong>
+        s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        // *italic* → <em>
+        s = s.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+        return s;
+      }
 
       lines.forEach(function(line) {
         var trimmed = line.trim();
+
+        // 空行：关闭列表，段落间距由 CSS 控制
         if (!trimmed) {
-          if (inList) { html += '</ol>'; inList = false; }
+          closeList();
           return;
         }
-        // 编号列表项: "1. " / "1、" / "（1）"
-        if (/^[\(（]?\d+[\)）\.\、]\s*/.test(trimmed)) {
-          if (!inList) { html += '<ol>'; inList = true; }
-          var content = trimmed.replace(/^[\(（]?\d+[\)）\.\、]\s*/, '');
-          html += '<li>' + escHtml(content) + '</li>';
-        // 中文章节标题: 全是汉字/冒号结尾 或 "**xxx**" 格式
-        } else if (/^[【\[【「『]|[:：]$/.test(trimmed) || /^\*\*[^*]+\*\*$/.test(trimmed)) {
-          if (inList) { html += '</ol>'; inList = false; }
-          var title = trimmed.replace(/^\*\*|\*\*$/g, '').replace(/[【】\[\]「」『』]/g, '');
-          html += '<p class="summary-section-title">' + escHtml(title) + '</p>';
-        // 普通段落
-        } else {
-          if (inList) { html += '</ol>'; inList = false; }
-          html += '<p>' + escHtml(trimmed) + '</p>';
-        }
-      });
-      if (inList) html += '</ol>';
 
+        // Markdown 标题: ## xxx 或 ### xxx
+        if (/^#{1,3}\s+/.test(trimmed)) {
+          closeList();
+          var title = trimmed.replace(/^#{1,3}\s+/, '');
+          html += '<p class="summary-section-title">' + renderInline(title) + '</p>';
+          return;
+        }
+
+        // 独立 **标题行**: 整行是 **xxx** 格式（不含其他文字）
+        if (/^\*\*[^*]+\*\*[：:。]?$/.test(trimmed)) {
+          closeList();
+          var title = trimmed.replace(/^\*\*|\*\*[：:。]?$/g, '');
+          html += '<p class="summary-section-title">' + renderInline(title) + '</p>';
+          return;
+        }
+
+        // 中文章节标题: 以 【】「」 包围，或以 ：/: 结尾（短行）
+        if (/^[【「『].*[】」』]$/.test(trimmed) ||
+            (trimmed.length <= 30 && /[：:]$/.test(trimmed) && !/^\d/.test(trimmed))) {
+          closeList();
+          var title = trimmed.replace(/^[【「『]|[】」』]$/g, '').replace(/[：:]$/, '');
+          html += '<p class="summary-section-title">' + renderInline(title) + '</p>';
+          return;
+        }
+
+        // 无序列表: "- " 或 "* " 开头
+        if (/^[-*]\s+/.test(trimmed)) {
+          if (listType !== 'ul') { closeList(); html += '<ul>'; listType = 'ul'; }
+          var content = trimmed.replace(/^[-*]\s+/, '');
+          html += '<li>' + renderInline(content) + '</li>';
+          return;
+        }
+
+        // 有序列表: "1. " / "1、" / "（1）" 开头
+        if (/^[\(（]?\d+[\)）.\、]\s*/.test(trimmed)) {
+          if (listType !== 'ol') { closeList(); html += '<ol>'; listType = 'ol'; }
+          var content = trimmed.replace(/^[\(（]?\d+[\)）.\、]\s*/, '');
+          html += '<li>' + renderInline(content) + '</li>';
+          return;
+        }
+
+        // 普通段落
+        closeList();
+        html += '<p>' + renderInline(trimmed) + '</p>';
+      });
+
+      closeList();
       if (html) el.innerHTML = html;
     }
 
