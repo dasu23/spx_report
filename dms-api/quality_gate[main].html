@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">dms-api &nbsp;|&nbsp; 2026-03-20 14:22:05</div>
+      <div class="meta">dms-api &nbsp;|&nbsp; 2026-03-20 14:33:38</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:15 &nbsp; 主要:58</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:19 &nbsp; 主要:69</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,14 +83,22 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 15 Critical finding(s)</li>
-<li>AI Review: 58 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 19 Critical finding(s)</li>
+<li>AI Review: 69 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
         <div class="findings-section">
             <h3>AI 代码审查发现</h3>
             
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">drivermgmt-facade-impl/src/main/java/io/speedx/drivermgmt/facade/impl/Test2Controller.java:118-119</code>
+                </div>
+                <div class="finding-desc">新增的 `decode` 接口直接对外暴露 `CryptoUtil.decrypt`，任何能访问该路径的调用方都可以把系统密文拿来解密，形成通用解密 oracle，属于敏感数据泄露风险。</div>
+                <div class="finding-suggestion">💡 修复建议：删除该调试接口，或至少限制为仅本地/内网可用并加鉴权与审计。例如移到受限的运维工具中，不要在业务 Controller 上公开 `decrypt` 能力。</div>
+            </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
@@ -120,16 +128,8 @@
                     <span class="finding-badge">严重</span>
                     <code class="finding-loc">drivermgmt-infrastructure/src/main/java/io/speedx/drivermgmt/infrastructure/db/po/DriverPo.java:80</code>
                 </div>
-                <div class="finding-desc">新增 `password` 持久化字段，但未像手机号/邮箱那样做加密转换，也没有体现单向哈希语义。这会把司机密码以明文或可逆形式落库，一旦库表或日志泄露会直接造成账号泄露，属于敏感数据泄露风险。</div>
-                <div class="finding-suggestion">💡 修复建议：不要在实体中持久化明文密码。将字段改为如 `passwordHash`，在写入前使用 BCrypt/Argon2 等单向哈希后再保存，并禁止在 DTO/日志中回传该值。例如：`private String passwordHash;`，由服务层执行 `passwordEncoder.encode(rawPassword)` 后落库。</div>
-            </div>
-            <div class="finding-card finding-critical">
-                <div class="finding-header">
-                    <span class="finding-badge">严重</span>
-                    <code class="finding-loc">drivermgmt-infrastructure/src/main/java/io/speedx/drivermgmt/infrastructure/db/po/Session.java:20-22</code>
-                </div>
-                <div class="finding-desc">新建 `Session` 实体时将 `token` 以明文形式持久化。会话 token 属于可直接复用的认证凭证，明文落库后数据库只要被读到，就可直接伪造登录态，风险等同于凭证泄露。</div>
-                <div class="finding-suggestion">💡 修复建议：避免明文存储会话 token。建议仅存储 token 摘要值（如 `SHA-256(token)` 或更强方案）用于查找/校验；若业务必须可回读原值，也应至少使用加密转换器进行加密存储，并限制日志/序列化输出该字段。</div>
+                <div class="finding-desc">新增的 `password` 字段会被 JPA 直接持久化，但这里既没有做单向哈希，也没有像手机号/邮箱那样经过 `EncryptConverter` 处理。该改动会把账号密码以明文形式落库，并且在实体被序列化或误打日志时进一步扩大泄露面。</div>
+                <div class="finding-suggestion">💡 修复建议：不要在实体中持久化明文密码。若这是登录口令，应改为保存 BCrypt/SCrypt/Argon2 等哈希值，例如 `private String passwordHash;`，写入前通过 `PasswordEncoder.encode(rawPassword)` 生成；若只是临时入参，使用 `@Transient` 避免落库。</div>
             </div>
             
             <div class="finding-card finding-major">
@@ -151,28 +151,28 @@
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
+                    <code class="finding-loc">bruce-prepare.md:14-15</code>
+                </div>
+                <div class="finding-desc">新增的唯一索引是 `(route_id, deleted)`，但前面的脚本只把 `REJECTED` 记录更新为 `deleted = id`，其余有效记录大概率仍为 `NULL`。在 MySQL 中唯一索引允许多条 `NULL`，因此无法阻止同一 `route_id` 出现多条“未删除”有效 dispatch，约束目标落空。</div>
+                <div class="finding-suggestion">💡 修复建议：如果想保证同一路线只有一条有效 dispatch，需让未删除记录使用固定值参与唯一约束，例如把有效记录的 `deleted` 设为 `0` 并建立 `(route_id, deleted)` 唯一索引，或改为单独的状态列/函数索引方案。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/com/miq/posservice/bo/user/LoginUserBo.java:11-12</code>
+                </div>
+                <div class="finding-desc">将 Lombok 注解从 `@Builder/@NoArgsConstructor/@AllArgsConstructor` 切换为 `@Data/@Accessors(chain = true)` 后，`builder()`、全参构造和无参构造都会消失。这会直接破坏仍在使用这些生成方法的调用方，属于源码/二进制兼容性变更。</div>
+                <div class="finding-suggestion">💡 修复建议：如果该 BO 仍被跨模块复用，保留原有构造/Builder 能力，例如同时保留 `@Builder @NoArgsConstructor @AllArgsConstructor`，再按需补充 `@Data`；或先全量替换调用方后再移除旧 API。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
                     <code class="finding-loc">drivermgmt-domain/src/main/java/com/miq/posservice/bo/user/LoginUserBo.java:12-13</code>
                 </div>
                 <div class="finding-desc">将 `@Builder/@NoArgsConstructor/@AllArgsConstructor` 直接替换为 `@Data` 和链式 setter 后，这个 BO 不再生成 builder、无参/全参构造器。若仓内其他变更外的调用方仍使用 `LoginUserBo.builder()` 或构造器，当前改动会直接导致编译失败，属于已暴露的 API 契约破坏。</div>
                 <div class="finding-suggestion">💡 修复建议：保留原有构造与 builder 能力，例如同时使用 `@Data @Builder @NoArgsConstructor @AllArgsConstructor`，如确需链式调用可额外保留 `@Accessors(chain = true)`。</div>
             </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">drivermgmt-domain/src/main/java/com/miq/posservice/bo/user/LoginUserBo.java:13-14</code>
-                </div>
-                <div class="finding-desc">将 `@Builder/@AllArgsConstructor` 直接替换为 `@Data/@Accessors(chain = true)` 改变了该 BO 的公开构造方式，`builder()` 和全参构造器会消失。若其他模块仍按旧契约创建 `LoginUserBo`，这里会引入编译失败或运行期兼容性问题。</div>
-                <div class="finding-suggestion">💡 修复建议：保留原有构造契约，至少补回 `@Builder` 和 `@AllArgsConstructor`，或显式新增等价构造/工厂方法后再替换调用方。</div>
-            </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/biz/DashboardBizService.java:229-231</code>
-                </div>
-                <div class="finding-desc">接受路线时把 `route.setDriverId(uid)` 和 `route.setFleetId(...)` 注释掉，只保留了 `dispatchStatus=ACCEPTED`。这样 route 主记录上的司机/车队归属不会随着接单同步更新，后续任何依赖 `route.driverId/fleetId` 的查询或轨迹逻辑都会读到空值或旧值，产生错单/漏单。</div>
-                <div class="finding-suggestion">💡 修复建议：在接单成功时与 dispatch 一起原子更新 `route.driverId`、`route.fleetId`、`route.dispatchStatus`；对应拒单/改派时也要成对清理或重置这些字段。</div>
-            </div>
-            <p class="more-note">... 还有 63 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 78 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
