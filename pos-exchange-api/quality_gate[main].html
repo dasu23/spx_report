@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-exchange-api &nbsp;|&nbsp; 2026-03-21 18:08:44</div>
+      <div class="meta">pos-exchange-api &nbsp;|&nbsp; 2026-03-23 11:17:18</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:14</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:5</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,7 +83,7 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube analysis timed out after 5 minutes</li>
-<li>AI Review: 14 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 5 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,44 +94,44 @@
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/UpdateAddressService.java:553-569</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/UpdateAddressService.java:555-571</code>
                 </div>
-                <div class="finding-desc">这里先查询 `labelPo.getNotes()`，再在内存中拼接后执行 `updateNotes`，整个过程没有任何事务隔离或并发保护。两个请求同时追加备注时，后写入的请求会覆盖前一个请求的结果，导致备注丢失。</div>
-                <div class="finding-suggestion">💡 修复建议：把“读取旧 notes + 追加新 notes + 截断”收敛为单条原子更新，或在事务中对记录加锁。例如使用 `@Transactional` 配合 `select ... for update`，或改成数据库侧 `update ... set notes = right(concat(coalesce(notes,&#x27;&#x27;), case when notes is null or notes=&#x27;&#x27; then &#x27;&#x27; else &#x27;; &#x27; end, :newNotes), 255) where tracking_number = :trkNumber`。</div>
-            </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerImplService.java:1046-1055</code>
-                </div>
-                <div class="finding-desc">新增分布式锁的 key 同时包含 `containerNo` 和 `trackingNumber`，只能拦住“同一包裹扫入同一容器”的并发请求。若同一运单被同时扫入两个不同容器，会拿到两个不同的锁并并发执行，仍然可能产生重复装袋/状态覆盖，和当前提示文案“Multiple scans at the same time is not allowed”不一致。</div>
-                <div class="finding-suggestion">💡 修复建议：将锁粒度至少收敛到运单维度，例如 `scan-parcel-to-container:%s` 仅使用 `trackingNumber` 作为 key；如果还要防止同一容器并发修改，再叠加容器维度锁，并固定加锁顺序避免死锁。</div>
+                <div class="finding-desc">`updateLabelNotesForm` 先查询当前 `notes`，再在内存中拼接后执行 `update`，整个过程没有任何行锁或版本控制。两个并发请求更新同一 `trackingNumber` 时，会基于同一旧值分别计算 `newNotes`，后提交的请求会覆盖先提交的结果，导致其中一条备注丢失。</div>
+                <div class="finding-suggestion">💡 修复建议：将“读取旧备注 + 追加 + 更新”改成数据库侧的原子更新，或引入乐观锁/悲观锁。例如新增单条 JPQL/SQL 更新：`update Label set notes = case when notes is null or notes = &#x27;&#x27; then :notes else right(concat(notes, &#x27;; &#x27;, :notes), 255) end where trackingNumber = :trkNumber`；如果需要先读后写，则对该行加 `for update`/版本号校验。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/impl/PodManagementServiceImpl.java:41-42</code>
                 </div>
-                <div class="finding-desc">这里把允许的 POD 格式改成了可配置项，但默认值只有 `jpg`。如果部署环境没有同步新增 `pod.format` 配置，现有 `jpeg/png` 等历史可用格式会被直接拒绝，属于静默的功能回退。</div>
-                <div class="finding-suggestion">💡 修复建议：在同一变更中补齐配置，并把默认值设为兼容现网的格式集合，例如 `@Value(&quot;${pod.format:jpg,jpeg,png}&quot;)`；同时建议在启动时打印解析后的白名单，避免因配置缺失导致线上才暴露问题。</div>
+                <div class="finding-desc">`@Value(&quot;${pod.format:jpg}&quot;) private List&lt;String&gt; podFormats;` 在 Spring Boot 2.2 中不会把默认值 `jpg` 自动按集合类型安全转换为 `List&lt;String&gt;`；当配置项缺失时，应用启动时就可能出现类型转换失败，导致服务不可用。</div>
+                <div class="finding-suggestion">💡 修复建议：改为先注入字符串再自行拆分，或通过 `@ConfigurationProperties` 绑定列表。例如：`@Value(&quot;${pod.format:jpg}&quot;) private String podFormatsConfig;`，使用时 `Arrays.stream(podFormatsConfig.split(&quot;,&quot;)).map(String::trim).map(String::toLowerCase).collect(Collectors.toSet())`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/impl/PushLogServiceImpl.java:1032-1050</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/impl/PodManagementServiceImpl.java:54-59</code>
                 </div>
-                <div class="finding-desc">分组前新增了 `filter(p -&gt; p.getBusinessNo() != null)`，随后又把不在 `validIds` 中的任务全部标记为 `RESOLVED`。这会把 `businessNo` 为空的任务直接当成“被最新任务替换”而跳过执行，造成任务被静默丢弃。</div>
-                <div class="finding-suggestion">💡 修复建议：不要直接过滤掉 `businessNo == null` 的任务。可以把空值任务单独放入 `validPushLogs` 继续处理，或在分组前先显式校验并将其保留为 `PENDING` 供后续修复，例如先 `List&lt;PushLog&gt; nullBusinessNoLogs = ...`，再只对非空任务做去重。</div>
+                <div class="finding-desc">文件格式校验直接遍历 `form.getUrls()`，但新增代码没有对 `urls` 本身、空字符串 URL、以及无扩展名 URL 做保护。请求中只要出现 `null`/空串/不含 `.` 的值，就会在这里产生错误格式判断甚至空指针，接口返回 500 而不是受控业务错误。</div>
+                <div class="finding-suggestion">💡 修复建议：在遍历前显式校验 `urls` 非空，并对每个 URL 做 `isBlank`/是否包含扩展名判断，统一抛出业务异常。例如：`if (CollectionUtils.isEmpty(form.getUrls())) throw new RRException(&quot;POD url is required&quot;);`；循环内对 `cleanUrl` 和 `ext` 做非空校验后再比对允许格式。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/impl/PushLogServiceImpl.java:1057-1066</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/web/impl/FixRouteScanServiceImpl.java:512-513</code>
                 </div>
-                <div class="finding-desc">这里在 `parallelStream()` 的工作线程里直接调用 `labelRouteService.refreshRouteProfile(...)`、修改 `pushLog` 实体并执行 `pushLogDao.save(pushLog)`。JPA 的持久化上下文和实体对象都不是线程安全的，外层事务上下文也不会传播到并行流线程，容易出现状态覆盖、部分保存成功/失败不一致，甚至 `EntityManager` 相关并发异常。</div>
-                <div class="finding-suggestion">💡 修复建议：不要在并行流里直接操作 JPA 实体和 Repository。改为串行处理，或把每条任务提交到独立的异步/批处理任务中，并在子任务内重新按 id 查询 `PushLog` 后再更新，例如先收集 `validPushLogs` 的 id，再在独立事务方法中逐条处理。</div>
+                <div class="finding-desc">这里把 `beans api` 返回空数据降级为仅记录 `warn`，不再抛错；但新增调用方 `skipOptimizeRoute()` 和“第10次失败后直接推DMS”路径都会把该方法当作推送成功处理。结果是路由可能已经被标记为 `hasOptimize=true/optimizeSkipFlag=true`，实际却没有创建 DMS 同步任务，造成状态与下游实际处理结果不一致。</div>
+                <div class="finding-suggestion">💡 修复建议：当 `routeHeadDto == null`、`routeHeadDto.getData() == null` 或明细为空时，显式抛出业务异常，让上层回滚本次“跳过优化/推DMS”状态更新。例如：`throw new RRException(&quot;Beans route data is empty, cannot sync route to DMS&quot;)`；或者让 `updateRoutePriority(...)` 返回布尔值，由调用方在返回 `false` 时拒绝写入成功状态。</div>
             </div>
-            <p class="more-note">... 还有 9 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/web/impl/InboundRouteServiceImpl.java:291-298</code>
+                </div>
+                <div class="finding-desc">`skipOptimizeRoute` 在调用 `pushRouteToDms` 之前先把 `hasOptimize/optimizeSkipFlag/optimizeTimeCost/optimizeSkipOperator` 持久化。若下游同步逻辑“无异常但未真正入队/未真正推送”（例如 `updateRoutePriority` 内部遇到空数据仅记录日志），事务仍会提交，导致数据库状态显示已跳过并已处理，但 DMS 侧并未收到任务。</div>
+                <div class="finding-suggestion">💡 修复建议：把“写跳过状态”和“推送DMS成功确认”绑定起来：先调用可明确返回成功/失败的同步方法，再在成功后更新 `hasOptimize` 和 `optimizeSkipFlag`；或让 `pushRouteToDms` 在任何未实际创建同步任务的情况下抛出异常，确保事务回滚。</div>
+            </div>
+            
         </div>
         
 
