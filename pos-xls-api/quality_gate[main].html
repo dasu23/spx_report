@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-xls-api &nbsp;|&nbsp; 2026-03-20 17:53:37</div>
+      <div class="meta">pos-xls-api &nbsp;|&nbsp; 2026-03-23 11:40:09</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -62,7 +62,7 @@
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#f44336">36.0%</div>
+            <div class="metric-value" style="color:#f44336">34.8%</div>
             <div class="metric-threshold">阈值: 60%</div>
         </div>
         
@@ -94,42 +94,42 @@
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/UpdateAddressService.java:562</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/UpdateAddressService.java:553-566</code>
                 </div>
-                <div class="finding-desc">`form.getNotes().trim()` 在判空前直接调用；当请求未传 `notes` 时这里会先抛出 `NullPointerException`，接口会返回 500，而不是按当前分支预期返回 `false`。</div>
-                <div class="finding-suggestion">💡 修复建议：先对原始值做空判断，再执行 `trim()`。例如：`String notes = StringUtils.trimToEmpty(form.getNotes()); if (StringUtils.isBlank(notes)) { ... }`，后续统一使用 `notes` 变量。</div>
+                <div class="finding-desc">这里先 `findByTrackingNumber` 读取旧备注，再在内存中拼接后调用 `updateNotes` 更新，整个追加过程不是原子操作。两个请求并发追加备注时，会基于同一份旧值各自计算 `newNotes`，后提交的更新会覆盖先提交的结果，导致备注丢失。</div>
+                <div class="finding-suggestion">💡 修复建议：把“读取旧值并追加”改成单条原子 SQL，或使用乐观锁/悲观锁保护该记录。比如在 SQL 中直接基于当前列值拼接并截断，或者给 `Label` 增加 `@Version` 后在冲突时重试。若保留现有流程，至少给该方法加事务并对记录加行锁。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerImplService.java:1047-1052</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerImplService.java:1045-1056</code>
                 </div>
-                <div class="finding-desc">这里使用 Redisson `tryLock()` 但未设置租约时间，也没有在 `unlock()` 前校验当前线程是否仍持有锁。若 `doScanParcelToContainer` 执行时间超过看门狗续期能力、线程中断，或锁因异常场景被提前释放，`finally` 中的 `unlock()` 可能抛 `IllegalMonitorStateException`，导致扫码接口额外失败。</div>
-                <div class="finding-suggestion">💡 修复建议：使用带超时和租约的加锁方式，并在释放前校验持有状态，例如：`boolean locked = lock.tryLock(0, 30, TimeUnit.SECONDS); ... finally { if (lock.isHeldByCurrentThread()) { lock.unlock(); } }`。同时为获取锁失败和释放锁异常补充日志。</div>
+                <div class="finding-desc">新增的 Redisson 锁使用 `containerNo + trackingNumber` 作为粒度，只能拦住“同一包裹扫入同一容器”的完全相同请求。若同一 trackingNumber 被同时扫入不同容器，或同一容器被同时扫入不同包裹，这段代码会并发进入 `doScanParcelToContainer(...)`，原有查询/校验/落库流程仍可能产生重复装箱或容器状态不一致。</div>
+                <div class="finding-suggestion">💡 修复建议：按实际幂等对象加锁，不要用二元组合键掩盖并发窗口。至少应保证同一 `trackingNumber` 只能被一个线程处理；如果同一容器也要求串行，再额外对 `containerNo` 加锁，或使用固定顺序获取两把锁/`MultiLock`。示例：先锁 `scan-parcel:%s`，再锁 `scan-container:%s`，成功后再执行 `doScanParcelToContainer(...)`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/impl/PodManagementServiceImpl.java:41</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/impl/PodManagementServiceImpl.java:53-60</code>
                 </div>
-                <div class="finding-desc">`@Value(&quot;${pod.format:jpg}&quot;)` 注入目标是 `List&lt;String&gt;`，但 Spring Boot 2.2 对 `@Value` 的逗号分隔列表转换依赖具体配置写法；默认值 `jpg` 只会得到单元素列表，且若配置成大写或带空格（如 `JPG, PNG`），下面的 `contains` 判断会误判为不支持格式，直接拒绝合法上传。</div>
-                <div class="finding-suggestion">💡 修复建议：显式做标准化处理，或改为 `@ConfigurationProperties` 绑定列表。至少在注入后统一转小写并 `trim`，校验时也对扩展名做同样标准化。</div>
-            </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/impl/PodManagementServiceImpl.java:55-58</code>
-                </div>
-                <div class="finding-desc">文件格式通过 `url.substring(url.lastIndexOf(&quot;.&quot;) + 1)` 提取。若 URL 不包含 `.`，会把整个 URL 当成扩展名；若包含查询串（如 `a.jpg?x=1`），提取结果会变成 `jpg?x=1`。这会把合法地址误判为不支持格式，导致 POD 上传失败。</div>
-                <div class="finding-suggestion">💡 修复建议：先剥离查询参数，再校验最后一个 `.` 是否存在且不在末尾，例如使用 URI/文件名解析，或：`String path = StringUtils.substringBefore(url, &quot;?&quot;); int idx = path.lastIndexOf(&#x27;.&#x27;); if (idx &lt; 0 || idx == path.length() - 1) { ... } String ext = path.substring(idx + 1).toLowerCase(Locale.ROOT).trim();`。</div>
+                <div class="finding-desc">新增格式校验直接对 `form.getUrls()` 调用 `forEach`，没有判空或空集合校验。请求缺少 `urls` 时这里会直接抛出 `NullPointerException`，接口返回 500，而不是可控的参数错误。</div>
+                <div class="finding-suggestion">💡 修复建议：在遍历前显式校验 `urls` 非空且非空集合，或在 `InsertPodForm` 上增加 `@NotEmpty` 并在入口统一校验。例如：`if (CollectionUtils.isEmpty(form.getUrls())) { throw new RRException(&quot;urls is required&quot;); }`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/web/impl/FixRouteScanServiceImpl.java:432-437</code>
                 </div>
-                <div class="finding-desc">优化失败达到 10 次时，这里直接调用 `updateOptimizeSuccess(..., true, ...)` 将路线标记为“优化成功并跳过”，随后再执行 `updateRoutePriorityAfterOptimize(inboundRoute)`。但 `inboundRoute` 是在失败分支里重新查出的对象，代码没有校验该路线是否仍处于可推送状态；若期间路线已被人工取消、重置或被其他流程处理，这里仍会强行推进后续业务表更新和推 DMS，存在竞态下的错误下推。</div>
-                <div class="finding-suggestion">💡 修复建议：在将第 10 次失败视为 skip 成功之前，补充状态前置校验，并把 `updateOptimizeSuccess` 设计成带状态条件的原子更新（例如 `where id=? and has_optimize=0 and optimize_skip_flag=0 ...`）；更新成功后再继续 `updateRoutePriorityAfterOptimize`。</div>
+                <div class="finding-desc">第 10 次优化失败时，无论 `updateRoutePriorityAfterOptimize` 是否真正查询到 Beans 数据并创建 DMS 同步任务，代码都会立即执行 `updateOptimizeSuccess(..., true, ...)` 将路由标记为“优化成功且已跳过”。但本次变更在 `updateRoutePriority` 中新增了空结果分支，只记录 `warn` 而不抛错；这样当 Beans 返回空数据时，路由会被永久标记成功，后续也不会再补推 DMS。</div>
+                <div class="finding-suggestion">💡 修复建议：让 `updateRoutePriorityAfterOptimize` 返回是否成功生成 DMS 同步任务，只有成功时才调用 `updateOptimizeSuccess`；若 Beans 数据为空，应保留失败态或记录专门的可重试状态。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/web/impl/InboundRouteServiceImpl.java:283-295</code>
+                </div>
+                <div class="finding-desc">`skipOptimizeRoute` 没有校验当前路由是否已经完成优化/已经被跳过，重复调用会再次执行 `pushRouteToDms`。在前端重复点击或接口重试时，会对同一条 route 重复下发 DMS，同步任务缺乏幂等保护。</div>
+                <div class="finding-suggestion">💡 修复建议：在更新前校验状态并短路返回，例如当 `hasOptimize=true` 或 `optimizeSkipFlag=true` 时直接拒绝重复操作；同时可结合版本号/条件更新保证只有首次跳过成功。示例：`if (Boolean.TRUE.equals(inboundRoute.getHasOptimize()) || Boolean.TRUE.equals(inboundRoute.getOptimizeSkipFlag())) { throw new RRException(&quot;Route already processed&quot;); }`。</div>
             </div>
             <p class="more-note">... 还有 1 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
