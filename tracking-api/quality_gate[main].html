@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">tracking-api &nbsp;|&nbsp; 2026-03-23 12:06:31</div>
+      <div class="meta">tracking-api &nbsp;|&nbsp; 2026-03-23 14:20:55</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -62,7 +62,7 @@
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#f44336">31.5%</div>
+            <div class="metric-value" style="color:#f44336">31.6%</div>
             <div class="metric-threshold">阈值: 60%</div>
         </div>
         
@@ -94,42 +94,42 @@
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">tracking-api/src/main/java/com/miq/trackingapi/controller/external/SAPController.java:52</code>
+                    <code class="finding-loc">tracking-api/src/main/java/com/miq/trackingapi/controller/external/SAPController.java:49</code>
                 </div>
-                <div class="finding-desc">这里直接调用 `ro.getData().getCurrentImage()`，当请求体缺少 `data` 或 `currentImage` 时会在控制器层触发空指针，接口返回 500，无法给调用方明确的参数错误响应。`@Valid` 只在对象字段本身声明约束时才会生效，当前这行代码本身没有空值保护。</div>
-                <div class="finding-suggestion">💡 修复建议：在进入业务前显式校验嵌套字段，例如：`if (ro == null || ro.getData() == null || ro.getData().getCurrentImage() == null) { return ResponseEntity.badRequest().body(&quot;data.currentImage is required&quot;); }`。如果希望走 Bean Validation，也应在 `SAPRo`/`SAPRoData` 上补充 `@NotNull` 并对嵌套对象使用 `@Valid`。</div>
+                <div class="finding-desc">这里直接调用 `ro.getData().getCurrentImage()`，当请求体缺少 `data` 或 `currentImage` 时会抛出空指针，接口返回 500，而不是可预期的 4xx 参数错误。`@Valid` 只会在相关字段本身带校验注解时生效，当前 diff 中看不到这层保护。</div>
+                <div class="finding-suggestion">💡 修复建议：在调用前显式校验嵌套字段，缺失时返回 400。例如：`if (ro == null || ro.getData() == null || ro.getData().getCurrentImage() == null) { return ResponseEntity.badRequest().body(&quot;Missing data.currentImage&quot;); }`，或在 `SAPRo` / `SAPRoData` 上补充 `@NotNull` 并保留 `@Valid` 级联校验。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">tracking-api/src/main/java/com/miq/trackingapi/controller/external/SAPController.java:64</code>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/config/SapWebhookThreadPoolConfig.java:37-44</code>
                 </div>
-                <div class="finding-desc">异常分支直接将 `e.getMessage()` 返回给外部调用方，会把内部实现细节、数据库异常或下游错误信息暴露到公开接口，属于敏感错误信息泄露风险。</div>
-                <div class="finding-suggestion">💡 修复建议：对外返回固定错误文案，详细异常仅保留在日志中，例如：`log.error(&quot;sap save ticket error&quot;, e); return ResponseEntity.status(500).body(&quot;Internal Server Error&quot;);`。如果需要可观测性，可附带内部错误码而不是原始异常消息。</div>
+                <div class="finding-desc">线程池拒绝策略使用 `DiscardOldestPolicy`，在队列打满时会静默丢弃最早的 webhook 任务。对 SAP 回调这类外部事件处理来说，这会直接造成更新丢失，且调用方通常感知不到，属于明显的数据一致性风险。</div>
+                <div class="finding-suggestion">💡 修复建议：改为不会静默丢任务的策略，并显式记录/回退。更稳妥的做法是使用 `new ThreadPoolExecutor.CallerRunsPolicy()` 触发背压，或自定义 `RejectedExecutionHandler` 先 `log.error` 再落库/告警，例如：`new ThreadPoolExecutor(..., new ThreadPoolExecutor.CallerRunsPolicy())`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/api/SAPC4CApiClient.java:39-41</code>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/dao/SAPCaseDao.java:12-16</code>
                 </div>
-                <div class="finding-desc">`findCasesByTrkNo` 使用 Caffeine 缓存，而 loader `doFindCasesByTrkNo` 在下游请求异常时会吞掉异常并返回空列表；这样瞬时网络故障会被缓存 1 分钟，后续查询都得到“无 case”的错误结果，造成业务误判。</div>
-                <div class="finding-suggestion">💡 修复建议：不要缓存异常降级结果。可改为在 `doFindCasesByFilter` 发生异常时抛出异常，让本次请求失败而不是写入空结果；或者仅对成功结果入缓存，并对异常场景单独降级处理。</div>
+                <div class="finding-desc">DAO 新增了 `findByCaseId...` 单结果查询，但对应实体新增的 `case_id` 字段未体现唯一性约束。只要表里出现重复 `case_id`，Spring Data 单结果查询就可能抛出 `IncorrectResultSizeDataAccessException`，导致查询链路直接失败。</div>
+                <div class="finding-suggestion">💡 修复建议：如果业务上 `caseId` 应唯一，给实体和数据库都加唯一约束，例如在字段上增加 `@Column(name = &quot;case_id&quot;, unique = true)` 并同步DDL；如果允许重复，则将 DAO 方法改为返回 `List&lt;SAPCase&gt;` 或 `Optional&lt;SAPCase&gt;` 并在服务层显式处理多条记录。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/dao/ProviderDao.java:11</code>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/listener/SAPUpdateEventListener.java:18-25</code>
                 </div>
-                <div class="finding-desc">新增 `findFirstByUsername(String username)`，但本次变更里 `Provider.username` 仅增加了普通列映射，没有任何唯一性约束。若库中出现重复用户名，该方法会静默返回任意一条记录，基于用户名做认证或路由时会把请求落到错误的 provider，产生鉴权错配。</div>
-                <div class="finding-suggestion">💡 修复建议：如果 `username` 用于身份识别，应在实体和数据库层都加唯一约束，并将查询方法改为 `Optional&lt;Provider&gt; findByUsername(String username)`；如果业务上允许重复，则不能使用 `findFirst...`，应显式返回集合并在服务层处理冲突。</div>
+                <div class="finding-desc">这里使用 `@Async + @EventListener` 会在事件发布后立即异步执行，而不是等外层事务提交后再处理。若 `TrackingUpdateEvent` 是在更新运单事件的事务内发布，`sapService.updateFields(...)` 可能读取到未提交数据，甚至在事务最终回滚后仍然把错误状态推送到 SAP，造成系统间数据不一致。</div>
+                <div class="finding-suggestion">💡 修复建议：将监听器改为事务提交后再触发，例如改用 `@TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)`，再视需要叠加 `@Async(&quot;SAPWebhook&quot;)`。示例：`@Async(&quot;SAPWebhook&quot;) @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT) public void onTrackingUpdateEvent(TrackingUpdateEvent event) { ... }`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/service/EventService.java:89</code>
                 </div>
-                <div class="finding-desc">`queryEventRobot` 的方法签名从单参数改为双参数，直接修改服务接口会破坏现有调用方和实现类的兼容性。若同仓库外还有依赖该接口的模块，升级后会出现编译失败或运行期注入/代理不匹配问题。</div>
-                <div class="finding-suggestion">💡 修复建议：保留旧签名作为兼容入口，例如新增重载 `TrackingItemWebRo queryEventRobot(String trackingNo)`，内部委托到新方法 `queryEventRobot(trackingNo, null)`；或先引入新方法名并分阶段迁移调用方。</div>
+                <div class="finding-desc">`queryEventRobot` 的接口签名从单参数变为双参数，会直接破坏所有仍按旧签名编译或通过反射调用的调用方契约。该变更出现在服务接口层，兼容性风险高，且从当前 diff 看不到保留旧重载作为过渡。</div>
+                <div class="finding-suggestion">💡 修复建议：保留旧方法作为兼容入口，并在实现层委托到新方法，例如：`default TrackingItemWebRo queryEventRobot(String trackingNo) { return queryEventRobot(trackingNo, null); }`；如果必须强制升级，请同步更新所有调用方并在变更说明中明确这是 breaking change。</div>
             </div>
             <p class="more-note">... 还有 2 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
