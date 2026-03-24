@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">dms-api &nbsp;|&nbsp; 2026-03-23 23:45:20</div>
+      <div class="meta">dms-api &nbsp;|&nbsp; 2026-03-24 09:44:23</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -62,7 +62,7 @@
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#f44336">36.1%</div>
+            <div class="metric-value" style="color:#f44336">36.2%</div>
             <div class="metric-threshold">阈值: 60%</div>
         </div>
         
@@ -73,32 +73,140 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:1</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:13 &nbsp; 主要:39</div>
       <div class="metric-threshold">已抑制: 0</div>
-      <div class="metric-note">已检测到问题，但当前配置未阻断流水线</div>
+      
     </div>
   </div>
 
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube quality gate status: ERROR</li></ul>
+            <ul><li>SonarQube quality gate status: ERROR</li>
+<li>AI Review: 13 Critical finding(s)</li>
+<li>AI Review: 39 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
         <div class="findings-section">
             <h3>AI 代码审查发现</h3>
             
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/util/AuthUtil.java:108</code>
+                </div>
+                <div class="finding-desc">新增逻辑将活动会话 token 原文持久化到 `Session.token`，并把完整 `LoginUserBo` JSON 一并落库。数据库只要发生只读泄露、备份泄露或审计导出，即可直接重放这些 token 完成认证，属于新增的敏感凭证明文暴露面。</div>
+                <div class="finding-suggestion">💡 修复建议：不要持久化明文 token。改为仅存储 token 的单向摘要（如带服务端 pepper 的 SHA-256/HMAC），查询时对入参 token 做同样摘要后匹配；`data` 字段仅保留最小必要信息，敏感字段改为不落库或使用受控加密。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">drivermgmt-facade-impl/src/main/java/io/speedx/drivermgmt/facade/impl/Test2Controller.java:148-150</code>
+                </div>
+                <div class="finding-desc">新增的 `decode` 接口直接对外暴露 `CryptoUtil.decrypt`，允许调用方提交任意密文并获得明文结果，形成通用解密 oracle。一旦攻击者拿到库内密文字段或其他系统产出的加密串，可通过该接口批量还原敏感数据，属于高风险敏感信息泄露。</div>
+                <div class="finding-suggestion">💡 修复建议：删除该接口，或至少将其限定在非生产环境的受控调试 profile 中且不可通过 HTTP 直接返回明文。若确有排障需求，改为线下工具或仅输出脱敏后的诊断信息，并补充审计日志与环境开关。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">drivermgmt-facade-impl/src/main/java/io/speedx/drivermgmt/facade/impl/Test2Controller.java:89-151</code>
+                </div>
+                <div class="finding-desc">原因：新增的 `fresh-pickup`、`fresh-driver`、`fresh-dispatch`、`delivered-prepare` 4 个 `/test/*` HTTP 入口均未见 `AuthUtil`、权限注解或任何资源归属校验，且直接按调用方传入的 `min/max/id` 读取并批量更新 `PickupRouteStop`、`Route`、`Deliver` 相关数据。  
+影响：任意可访问该控制器的调用方都可跨 fleet / 跨用户范围触发批量刷新与状态推进，属于高危越权写入/越权操作。  
+
+**Java 入口方法：** `Test2Controller.freshPickup(long, long)` / `Test2Controller.freshData3(long, long)` / `Test2Controller.freshDispatch(long, long)` / `Test2Controller.deliveredPrepare(long)`  
+**权限期望：** 仅受信运维/管理角色可调用，且应按 `fleetId` / `userId` / `routeId` / `deliverId` 做资源归属校验；`driver-leader` 若允许操作，也应仅限本 fleet。  
+**实际实现：** 4 个 GET 入口直接使用请求参数驱动数据库查询和更新，未注入当前登录人，也未按 `fleetId`、`userId` 等数据范围收敛。  
+**证据：** `drivermgmt-facade-impl/src/main/java/io/speedx/drivermgmt/facade/impl/Test2Controller.java:89-109`，`drivermgmt-facade-impl/src/main/java/io/speedx/drivermgmt/facade/impl/Test2Controller.java:111-126`，`drivermgmt-facade-impl/src/main/java/io/speedx/drivermgmt/facade/impl/Test2Controller.java:127-144`，`drivermgmt-facade-impl/src/main/java/io/speedx/drivermgmt/facade/impl/Test2Controller.java:147-151`
+
+```java
+@GetMapping(&quot;fresh-dispatch&quot;)
+public void freshDispatch(long min, long max) {
+    entityManager.createQuery(&quot;from RouteDispatch where routeId &gt;= ?1 and routeId &lt; ?2&quot;, RouteDispatch.class)
+        ...
+        .setParameter(&quot;fleetId&quot;, d.getFleetId())
+        .setParameter(&quot;driverId&quot;, d.getDriverId())
+        .executeUpdate();
+}
+```</div>
+                <div class="finding-suggestion">💡 修复建议：移除这类测试/运维 HTTP 入口；如必须保留，至少补充显式权限注解与服务层归属校验，例如校验当前用户是否具备受控管理角色，并在执行前校验目标 `routeId/deliverId/fleetId` 均属于当前用户可见范围。禁止用 GET 暴露写操作。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">drivermgmt-infrastructure/src/main/java/io/speedx/drivermgmt/infrastructure/db/po/DriverPo.java:79</code>
+                </div>
+                <div class="finding-desc">新增 `password` 持久化字段且未使用现有 `EncryptConverter`、哈希器或其他凭证保护机制。该实体同文件中的手机号、邮箱字段均已显式加密，当前改动会把密码以明文形式落库；一旦数据库、备份或调试导出被访问，凭证将直接泄露，属于敏感数据泄露风险。</div>
+                <div class="finding-suggestion">💡 修复建议：禁止以明文形式持久化密码。若该字段用于认证，应仅保存强哈希值（如 bcrypt/argon2，带随机盐），并将字段重命名为 `passwordHash` 以避免误用；若只是承载临时口令，改为非持久化字段（如 `@Transient`）并在进入持久层前清除。同步补充测试，验证数据库中不会出现明文密码。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">drivermgmt-infrastructure/src/main/java/io/speedx/drivermgmt/infrastructure/db/po/Session.java:21</code>
+                </div>
+                <div class="finding-desc">新增的 `Session.token` 字段将认证令牌以明文形式持久化。该变更直接落入“敏感数据泄露：明文 Token”风险，一旦数据库、备份或调试导出被读取，攻击者可直接复用该 token 冒充已登录会话。</div>
+                <div class="finding-suggestion">💡 修复建议：不要明文存储会话 token。改为仅存储不可逆摘要（如带随机前缀/盐的 SHA-256/HMAC 指纹）并以摘要做检索；如果业务必须可恢复，至少复用现有加密转换器对该字段加密，并确保日志/导出链路不会暴露明文 token。</div>
+            </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">drivermgmt-facade-impl/src/main/java/io/speedx/drivermgmt/facade/impl/AccountFacadeImpl.java:43</code>
+                    <code class="finding-loc">bruce-prepare.md:7</code>
                 </div>
-                <div class="finding-desc">`login(LoginReq req)` 的返回字段由 `token` 变更为 `authToken`，属于破坏性 API 契约变更。若现网客户端或网关仍按旧字段 `token` 取值，将无法保存登录态，表现为登录后后续请求认证失效。该风险属于安全相关的认证链路中断，而非越权问题。</div>
-                <div class="finding-suggestion">💡 修复建议：保持向后兼容，至少在过渡期同时返回 `token` 和 `authToken` 两个字段；或同步升级所有调用方并显式发布接口变更说明，再配套回归认证链路测试。</div>
+                <div class="finding-desc">删除 `operation_record.uniq_biz_no` 唯一索引并改为普通组合索引后，`biz_no + biz_type` 将不再被数据库层强制唯一。结合本次新增的 `operationRecordRepository.save(operationRecord)` 写入逻辑，重复请求或并发重试时可插入多条相同业务记录，导致审计日志可被重复污染，削弱安全审计与追责的完整性。</div>
+                <div class="finding-suggestion">💡 修复建议：将新索引改为唯一索引，或在写入处增加幂等约束并校验数据库受影响行数，确保同一 `biz_no + biz_type` 只能落一条有效记录。</div>
             </div>
-            
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/biz/DashboardBizService.java:229-231</code>
+                </div>
+                <div class="finding-desc">原因：司机接受指派后，新增代码仅更新 `dispatchStatus`，同时把原本用于绑定资源归属的 `route.setDriverId(uid)`、`route.setFleetId(driverPo.getFleetId())` 改成了注释，导致路线主表不再随着接受动作收敛到当前司机/车队。若后续列表、详情或操作权限依赖 `route.driverId` / `route.fleetId` 做数据范围过滤，这里会留下未绑定或陈旧归属数据。
+
+影响：会造成路线在后续查询或操作链路中出现跨司机/跨 fleet 可见、可操作的风险，属于典型的数据范围收敛缺失。
+
+**Java 入口方法：** `DashboardBizService.acceptRoute(long dispatchId, String version)`
+
+**权限期望：** 司机仅可接受并后续仅可访问指派给自己的路线，且路线数据范围应同步收敛到当前 `userId` 与所属 `fleetId`。
+
+**实际实现：** 新增实现查询了当前司机 `driverPo`，但未将 `userId/fleetId` 回写到 `Route`，只设置了 `dispatchStatus=ACCEPTED`，资源归属未完成同步。
+
+**证据：** `drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/biz/DashboardBizService.java:206`、`drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/biz/DashboardBizService.java:229-231`
+
+```java
+DriverPo driverPo = driverRepository.findById(uid).orElseThrow(() -&gt; new BizException(&quot;driver not found&quot;));
+//        route.setDriverId(uid);
+//        route.setFleetId(driverPo.getFleetId());
+route.setDispatchStatus(DispatchStatus.ACCEPTED);
+```</div>
+                <div class="finding-suggestion">💡 修复建议：恢复并强制执行接受路线时的归属绑定：在保存 `Route` 前回写 `route.setDriverId(uid)` 与 `route.setFleetId(driverPo.getFleetId())`。若系统允许多次转派，还应在后续所有基于 `Route` 的查询/更新入口统一以 `dispatch.driverId` 与 `route.fleetId` 双重校验，避免仅靠 `dispatchStatus` 判断。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/biz/DashboardBizService.java:384</code>
+                </div>
+                <div class="finding-desc">新增加的 `rejectRoute` 先读取并校验 `route`/`routeDispatch` 状态，再在后续事务中分别保存，两次操作之间没有行锁或乐观锁保护。并发下若同时触发接受/拒绝或重复拒绝，请求可能都通过前置校验，最终把路线和指派记录写成互相冲突的状态，造成调度状态错乱。</div>
+                <div class="finding-suggestion">💡 修复建议：将读取、状态校验和更新放入同一个事务，并使用乐观锁版本字段或 `select ... for update`/条件更新语句，确保只有一个状态迁移能成功。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/biz/MgmtDashboardBizService.java:141</code>
+                </div>
+                <div class="finding-desc">这里将 `dspStatusInfos` 整段计算与 `resp.setDspStatusInfos(...)` 一并注释掉后，返回对象中的该字段会变成 `null`（或沿用默认值），管理端仪表盘对应的 dispatch 状态区块会直接丢失数据，而不是返回空列表。该变更属于明确的功能回退。</div>
+                <div class="finding-suggestion">💡 修复建议：保留赋值逻辑；如果当前暂时不需要统计，也应显式返回空集合，例如 `resp.setDspStatusInfos(Collections.emptyList());`，避免前端按非空列表消费时出现展示异常。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/biz/MgmtDashboardBizService.java:190</code>
+                </div>
+                <div class="finding-desc">这里同样把 `zoneStatusInfos` 的构建和 `resp.setZoneStatusInfos(...)` 注释掉了，导致管理端 dashboard 丢失 zone 维度状态统计。若前端未做空值兜底，还可能出现渲染异常。</div>
+                <div class="finding-suggestion">💡 修复建议：恢复 `zoneStatusInfos` 的组装；若该统计确实要下线，也应显式设置为空列表 `resp.setZoneStatusInfos(Collections.emptyList())`，并同步确认前端契约。</div>
+            </div>
+            <p class="more-note">... 还有 42 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
