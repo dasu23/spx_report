@@ -382,20 +382,20 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: cps-api | 生成时间: 2026-03-24 10:08:29</p>
+      <p class="hero-meta">服务: cps-api | 生成时间: 2026-03-24 14:39:36</p>
     </header>
 
     <section class="summary">
       <h2>总体结论</h2>
-      <div id="summary-text" class="summary-body">本次变更整体较小，主要风险集中在 claim 币种字段的兼容性处理。除该问题外，diff 中未发现其它必须报告的新增/修改行缺陷。</div>
+      <div id="summary-text" class="summary-body">本次改动整体较小，但 `TicketApiClient` 引入了一个明确的兼容性回归点，并且索赔币种从固定值改为透传后缺少兜底，容易影响现有创建工单流程。</div>
       <div class="filter-row">
         <span class="filter-label">点击筛选:</span>
         <div class="chips">
           <span class="chip critical filter-chip" data-filter="critical" onclick="filterBySeverity(this)">Critical: 0</span>
-          <span class="chip major filter-chip" data-filter="major" onclick="filterBySeverity(this)">Major: 1</span>
+          <span class="chip major filter-chip" data-filter="major" onclick="filterBySeverity(this)">Major: 2</span>
           <span class="chip minor filter-chip" data-filter="minor" onclick="filterBySeverity(this)">Minor: 0</span>
           <span class="chip info filter-chip" data-filter="info" onclick="filterBySeverity(this)">Info: 0</span>
-          <span class="chip">Total: 1</span>
+          <span class="chip">Total: 2</span>
         </div>
       </div>
     </section>
@@ -425,7 +425,7 @@
     </section>
 
     <h2 class="section-title">审查发现</h2>
-    <div class="file-block"><h3>shippers-portal/src/main/java/com/speedx/shippers/integration/TicketApiClient.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>468-469</td><td>API契约</td><td>`amountClaimed` 的币种从固定 `USD` 改为直接透传 `currencyCode`，但当前变更没有提供默认值或必填校验。对未传 `currency` 的现有调用方，`claimAmount != null` 时这里会把 `currencyCode` 置为 `null` 发送给 SAP，导致创建 claim ticket 失败，形成向后不兼容的接口行为变更。</td><td>在这里保留兼容兜底，或在入口处做条件校验。例如：`String resolvedCurrency = StringUtils.hasText(currencyCode) ? currencyCode : &quot;USD&quot;;`，然后使用 `.currencyCode(resolvedCurrency)`；如果业务要求必填，则在请求校验中增加“`claimAmount` 非空时 `currency` 必填”。</td><td>构造一个旧请求：仅传 `claimAmount`、不传 `currency`，验证创建工单仍能成功且发送给 SAP 的币种为 `USD`；再补充传 `currency=HKD` 的用例，验证透传生效。</td></tr></tbody></table></div>
+    <div class="file-block"><h3>shippers-portal/src/main/java/com/speedx/shippers/integration/TicketApiClient.java</h3><table><thead><tr><th>Severity</th><th>Line</th><th>Category</th><th>Description</th><th>Suggestion</th><th>Test Scenario</th></tr></thead><tbody><tr><td><span class="chip major">major</span></td><td>427</td><td>API契约</td><td>`public createCase(...)` 方法签名新增了 `String currencyCode` 参数，这是公开方法的源码级不兼容变更。当前 diff 只更新了部分调用点，任何未同步修改的现有调用方都会直接编译失败或无法平滑升级。</td><td>保留旧签名作为兼容重载，并在内部委托到新方法，例如新增旧方法：`createCase(..., BigDecimal claimAmount, Integer packagesCount) { return createCase(..., claimAmount, packagesCount, &quot;USD&quot;); }`。若必须强制新参数，也应同步全量调用点并在发布说明中标明破坏性变更。</td><td>补充兼容性测试：使用旧签名调用 `createCase` 仍可成功创建工单，并验证默认币种与历史行为一致。</td></tr><tr><td><span class="chip major">major</span></td><td>467</td><td>业务逻辑</td><td>这里将 `AmountClaimed.currencyCode` 从固定 `USD` 改为直接透传 `currencyCode`，但本次变更没有看到任何非空校验或默认值兜底。对仍未传 `currency` 的既有创建工单请求，`claimAmount` 有值时会把 `currencyCode=null` 发给 SAP，容易导致索赔工单创建失败，属于回归风险。</td><td>在组装 SAP 请求前补充校验或兼容默认值，至少保持旧行为不退化，例如：`String resolvedCurrency = StringUtils.hasText(currencyCode) ? currencyCode : &quot;USD&quot;;`，然后 `currencyCode(resolvedCurrency)`；或者在入口处对 `claimAmount != null &amp;&amp; currencyCode` 为空直接返回明确的参数错误。</td><td>补充创建索赔工单测试：1) `claimAmount` 有值但不传 `currency`，应仍能成功创建或返回明确 4xx 错误；2) `claimAmount` 和 `currency` 同时传入时，应正确落到 SAP 请求体。</td></tr></tbody></table></div>
   </div>
   <script>
     (function () {
@@ -444,7 +444,7 @@
         var trendsSection = document.getElementById('trends-section');
         trendsSection.classList.add('visible');
 
-        var avgSeverity = {"critical": 0.0, "major": 1.0, "minor": 0.0, "info": 0.0};
+        var avgSeverity = {"critical": 0.0, "major": 1.5, "minor": 0.0, "info": 0.0};
         var avgChart = document.getElementById('avg-severity-chart');
         if (avgSeverity && Object.keys(avgSeverity).length > 0) {
           var total = (avgSeverity.critical || 0) + (avgSeverity.major || 0) + (avgSeverity.minor || 0) + (avgSeverity.info || 0);
@@ -463,7 +463,7 @@
           avgChart.innerHTML = html;
         }
 
-        var trendData = [{"timestamp": "2026-03-24", "total": 1, "critical": 0, "major": 1, "minor": 0, "info": 0}];
+        var trendData = [{"timestamp": "2026-03-24", "total": 1, "critical": 0, "major": 1, "minor": 0, "info": 0}, {"timestamp": "2026-03-24", "total": 2, "critical": 0, "major": 2, "minor": 0, "info": 0}];
         var timelineChart = document.getElementById('trend-timeline-chart');
         if (trendData && trendData.length > 0) {
           var maxTotal = Math.max.apply(null, trendData.map(function(d) { return d.total; })) || 1;
