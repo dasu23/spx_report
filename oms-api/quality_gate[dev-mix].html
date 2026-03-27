@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">oms-api &nbsp;|&nbsp; 2026-03-27 11:25:33</div>
+      <div class="meta">oms-api &nbsp;|&nbsp; 2026-03-27 12:22:04</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -56,13 +56,13 @@
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#4caf50">36.4%</div>
+      <div class="metric-value" style="color:#4caf50">37.1%</div>
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#4caf50">60.2%</div>
+            <div class="metric-value" style="color:#4caf50">59.7%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:18</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:2 &nbsp; 主要:28</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,8 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 1 Critical finding(s)</li>
-<li>AI Review: 18 Major finding(s) &gt;= threshold 5</li></ul>
+<li>AI Review: 2 Critical finding(s)</li>
+<li>AI Review: 28 Major finding(s) &gt;= threshold 5</li></ul>
         </div>
         
   
@@ -94,53 +94,61 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmRateCalcService.java:368</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/datasource/RateCardDataSource.java:51-779</code>
                 </div>
-                <div class="finding-desc">`recalculateBillSettlement(...)` 在成本卡/明细缺失时直接回退为 `BigDecimal.ZERO` 并继续后续更新。该分支会把“配置缺失/数据异常”静默落账为 0 金额，属于新增的资金计算错误：一旦批量重算命中该路径，会把应付金额错误覆盖为 0，导致实际资金损失且难以及时发现。</div>
-                <div class="finding-suggestion">💡 修复建议：不要在费率缺失时回退为 0 金额。应改为显式失败并中止当前重算任务，或至少保留原金额并写入可恢复的失败状态/告警字段，避免把异常数据持久化为有效账单金额。</div>
+                <div class="finding-desc">将费率卡相关缓存的 `expireAfterWrite` 从 10 分钟统一放宽到 1 小时（同类变更还出现在本文件 141、300、315、377 行）会显著拉长旧费率继续生效的时间窗口。`RateCard` 直接参与计费/结算，若费率发布、纠错或紧急下线后未做显式失效，系统可能在最长 1 小时内继续返回旧报价，形成持续性的误计费风险。`refreshAfterWrite(5, TimeUnit.MINUTES)` 不能兜底该问题，因为刷新通常依赖访问触发，且刷新失败时会继续返回旧值。</div>
+                <div class="finding-suggestion">💡 修复建议：不要仅通过延长 TTL 管理费率缓存。对费率/版本变更增加显式缓存失效或事件驱动刷新；若必须保留被动过期，维持较短 TTL，并在读取链路上对关键计费场景增加版本/生效时间校验，避免继续使用过期费率。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/batchtask/processor/ApLmBillRecalculationProcessor.java:102</code>
+                </div>
+                <div class="finding-desc">在分页重算过程中即使已有页面失败，仍会无条件执行 `apLmBillService.calculateTotalApLmBillAmount(apLmBill)`。这会基于“部分成功、部分失败”的中间态重新汇总账单金额，导致账单总金额被更新为不一致值；若失败任务未立即重试或期间有下游读取，该金额错误会直接影响资金类结果。</div>
+                <div class="finding-suggestion">💡 修复建议：仅在所有分页都成功时再更新总金额；或者将“分页重算 + 总金额汇总”放入同一事务/一致性控制流程，失败时回滚或保留旧总金额，避免部分成功状态落库。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmRateCalcService.java:426-437</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/batchtask/processor/ApLmBillRecalculationProcessor.java:105-117</code>
                 </div>
-                <div class="finding-desc">这里新增了 `localDeliveryTime == null` 时直接抛出 `IllegalStateException`。但同文件新增的 `recalculateBillSettlement(...)` 只兜底 `BizException` 中的缺少费卡场景，`IllegalStateException` 不会被降级处理，导致单条异常数据即可中断整批 AP LM bill 重算。</div>
-                <div class="finding-suggestion">💡 修复建议：将该分支改为抛出统一的 `BizException` 并在重算入口按可恢复异常降级，或在 `recalculateBillSettlement(...)` 中显式捕获 `IllegalStateException` 后返回零费率/备注信息，保证坏数据不会拖垮整批任务。</div>
+                <div class="finding-desc">这里在分页处理中只要跳出循环就会先执行 `calculateTotalApLmBillAmount(apLmBill)`，即使前面已经有页失败并准备返回失败结果。这样会基于“部分重算成功、部分仍是旧数据”的中间态重算整单金额，导致账单总金额被持久化为不一致状态，而任务最终又被标记为失败。</div>
+                <div class="finding-suggestion">💡 修复建议：仅在 `failedCount == 0` 时再执行总金额重算；如果允许部分失败，需显式定义补偿/回滚策略，避免在失败路径落库中间态。例如将 `apLmBillService.calculateTotalApLmBillAmount(apLmBill);` 移到成功分支内。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/datasource/RateCardDataSource.java:741-745</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/batchtask/processor/ApLmBillRecalculationProcessor.java:113</code>
                 </div>
-                <div class="finding-desc">`getRateCardVersionInfoCache(...)` 直接把 `cacheResult` 中的 `versionZipCodes`/`versionZones` 引用塞进返回 DTO。缓存对象是进程内共享状态，如果调用方对返回 DTO 内的集合做增删改，会反向污染缓存，后续请求读到被篡改的数据。</div>
-                <div class="finding-suggestion">💡 修复建议：返回前做防御性拷贝，避免暴露缓存内部可变集合，例如：`dto.setVersionZipCodes(new HashMap&lt;&gt;(cacheResult.getVersionZipCodes()))`；`versionZones` 中如果 value 也是集合，也要继续拷贝内部集合，或统一返回不可变视图。</div>
+                <div class="finding-desc">失败通知直接下发 `finalErrorSummary`，而该摘要由 `buildFailedPageSummary` 组装，包含批量 `trackingNos` 和原始异常 `e.getMessage()`。这会把运单号等业务敏感标识以及内部异常细节暴露给终端用户通知与任务错误信息，增加敏感信息泄露和内部实现暴露风险。</div>
+                <div class="finding-suggestion">💡 修复建议：对用户可见的错误通知使用通用失败文案和任务编号，仅在受控内部日志中记录脱敏后的失败明细；不要在通知或持久化错误摘要中直接拼接运单号列表和原始异常消息。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/datasource/RateCardDataSource.java:759-779</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/batchtask/processor/ApLmBillRecalculationProcessor.java:147-160</code>
                 </div>
-                <div class="finding-desc">`getZoneRateCardVersionCache(...)` 和 `getZipCodeRateCardVersionCache(...)` 直接返回缓存中的 `List&lt;RateCardDto&gt;` 实例。该列表一旦被上层排序、清空或追加元素，会直接修改共享缓存内容，导致跨请求数据串扰，属于典型的共享可变状态暴露问题。</div>
-                <div class="finding-suggestion">💡 修复建议：不要直接暴露缓存值，至少返回副本：`return new ArrayList&lt;&gt;(rateCardDtos);`；如果希望彻底防止调用方修改，可返回 `Collections.unmodifiableList(new ArrayList&lt;&gt;(rateCardDtos))`。</div>
+                <div class="finding-desc">失败摘要把整页所有 `trackingNo` 全量拼进 `failedPageSummary`，最终又在 `buildFinalErrorSummary` 中把所有失败页详情继续串接。单页上限 500 条、失败页较多时，这个错误字符串会非常长，后续被写入 `updateTaskProgress(..., errorMessage)`、执行日志和系统通知，容易触发字段长度超限或二次异常，反而掩盖原始失败原因。</div>
+                <div class="finding-suggestion">💡 修复建议：限制错误摘要长度，只保留页号、失败数量和前几个 trackingNo；详细明细单独落日志。例如最多保留前 10 个 trackingNo，并在末尾追加 `...(+N more)`。同时对最终 summary 做长度截断后再写库/发通知。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillRecalculationService.java:30-44</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/api/SnsApi.java:470</code>
                 </div>
-                <div class="finding-desc">在逐条遍历 `settlements` 时，每条记录都会执行一次 `findByTrackingNoAndBillingType(...)`，形成典型 N+1 查询。账单明细量大时，这里会放大为大量单条 SQL，并且整个方法还包在事务里，容易导致重算任务显著变慢甚至超时。</div>
-                <div class="finding-suggestion">💡 修复建议：按批次预加载所需 `trackingNo` 对应的 `ApLmSettlement`，先构建 `Map&lt;trackingNo, ApLmSettlement&gt;` 再在循环内复用；更新也可考虑批量提交，避免逐条查改。</div>
+                <div class="finding-desc">`sendCustomerMappingReminder` 的入参从 `List&lt;Map&lt;String, Long&gt;&gt;` 放宽为 `List&lt;Map&lt;String, String&gt;&gt;`，而下方邮件 HTML 仍直接将 `customerId`、`pickupAccountId` 拼接进 `&lt;td&gt;`。这会把原本仅限数值的内容扩展为任意字符串，新增 HTML 注入风险，攻击者可通过构造标签或样式污染提醒邮件内容，影响收件人判断，部分邮件客户端下还可能触发主动内容渲染。</div>
+                <div class="finding-suggestion">💡 修复建议：在拼接邮件 HTML 前，对 `customerId` 和 `pickupAccountId` 做严格格式校验（如仅允许数字/字母及有限分隔符），并执行 HTML escaping；如果业务上只应为数字，保持 `Long` 类型或在进入该方法前完成类型转换与校验。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmSettlementService.java:261-266</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/job/ArReceivableCustomerNoMappingJob.java:77-82</code>
                 </div>
-                <div class="finding-desc">这里在 `localDeliveryTime` 或 `billingDate` 为空时仅记录日志后直接 `return`，会跳过分表候选数据插入。该分支没有补偿或失败标记，首账单候选会被静默丢弃，后续对账/生成账单可能缺数。</div>
-                <div class="finding-suggestion">💡 修复建议：不要静默返回。应改为抛出明确异常触发上层重试/告警，或落库到待补偿队列并记录状态，确保缺失分片字段的数据可追踪、可补偿。</div>
+                <div class="finding-desc">在 `unmappedMappings.stream().map(...)` 的每次迭代中新增调用 `customerCache.getCustomerName(customerId)` 和 `customerAccountCache.getById(pickupAccountId)`。如果底层缓存未命中会回源数据库/远程存储，这里会把单次任务放大为按条查询，形成 N+1 访问模式；当未映射数据量较大时，定时任务容易被放大成高负载，带来可用性风险。</div>
+                <div class="finding-suggestion">💡 修复建议：在进入 `stream()` 前先收集唯一的 `customerId` 和 `pickupAccountId`，通过批量接口一次性加载名称映射，再在内存中组装邮件内容；如果当前缓存组件不支持批量查询，应补充批量读取方法并限制单次任务处理量。</div>
             </div>
-            <p class="more-note">... 还有 13 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 23 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
