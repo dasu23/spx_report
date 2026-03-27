@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">oms-api &nbsp;|&nbsp; 2026-03-27 12:22:04</div>
+      <div class="meta">oms-api &nbsp;|&nbsp; 2026-03-27 13:53:11</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:2 &nbsp; 主要:28</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:4 &nbsp; 主要:79</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,8 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 2 Critical finding(s)</li>
-<li>AI Review: 28 Major finding(s) &gt;= threshold 5</li></ul>
+<li>AI Review: 4 Critical finding(s)</li>
+<li>AI Review: 79 Major finding(s) &gt;= threshold 5</li></ul>
         </div>
         
   
@@ -94,61 +94,77 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/datasource/RateCardDataSource.java:51-779</code>
+                    <code class="finding-loc">oms-infrastructure/src/main/java/io/speedx/oms/config/ApLmBillConfig.java:90-92</code>
                 </div>
-                <div class="finding-desc">将费率卡相关缓存的 `expireAfterWrite` 从 10 分钟统一放宽到 1 小时（同类变更还出现在本文件 141、300、315、377 行）会显著拉长旧费率继续生效的时间窗口。`RateCard` 直接参与计费/结算，若费率发布、纠错或紧急下线后未做显式失效，系统可能在最长 1 小时内继续返回旧报价，形成持续性的误计费风险。`refreshAfterWrite(5, TimeUnit.MINUTES)` 不能兜底该问题，因为刷新通常依赖访问触发，且刷新失败时会继续返回旧值。</div>
-                <div class="finding-suggestion">💡 修复建议：不要仅通过延长 TTL 管理费率缓存。对费率/版本变更增加显式缓存失效或事件驱动刷新；若必须保留被动过期，维持较短 TTL，并在读取链路上对关键计费场景增加版本/生效时间校验，避免继续使用过期费率。</div>
+                <div class="finding-desc">下载链接 HMAC 密钥通过 `@Value` 提供了可用的默认明文值。只要 Nacos 未配置覆盖，所有环境都会退回到同一把固定密钥，下载链接签名可被跨环境复用或伪造。</div>
+                <div class="finding-suggestion">💡 修复建议：移除默认密钥，改为强制外部注入并在启动时校验非空，例如：`@Value(&quot;${ap.lm.bill.download-link.secret}&quot;)`，并在 `@PostConstruct` 中对空值直接抛出异常；测试环境如需默认值，应放到独立的测试配置文件中而不是代码常量。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/batchtask/processor/ApLmBillRecalculationProcessor.java:102</code>
+                    <code class="finding-loc">oms-infrastructure/src/main/java/io/speedx/oms/infrastructure/db/finance/repository/ApLmSettlementRepository.java:83-85</code>
                 </div>
-                <div class="finding-desc">在分页重算过程中即使已有页面失败，仍会无条件执行 `apLmBillService.calculateTotalApLmBillAmount(apLmBill)`。这会基于“部分成功、部分失败”的中间态重新汇总账单金额，导致账单总金额被更新为不一致值；若失败任务未立即重试或期间有下游读取，该金额错误会直接影响资金类结果。</div>
-                <div class="finding-suggestion">💡 修复建议：仅在所有分页都成功时再更新总金额；或者将“分页重算 + 总金额汇总”放入同一事务/一致性控制流程，失败时回滚或保留旧总金额，避免部分成功状态落库。</div>
+                <div class="finding-desc">`associateApLmBillIdById` 定义在 `ApLmSettlementRepository` 中，但新增 JPQL 实际更新的是 `ApLmBillSettlement`。这会把“关联 AP LM Bill 并回填 correctedRate”的写操作打到错误实体上，导致源 settlement 记录未被正确关联，且可能误改 bill settlement 数据，直接造成账单金额和后续审计基线错误。</div>
+                <div class="finding-suggestion">💡 修复建议：将 JPQL 目标实体改为正确的 `ApLmSettlement`，或将该方法移动到真正负责 `ApLmBillSettlement` 的 repository；同时补充集成测试，校验按 `id` 关联 bill 时只会修改预期表中的单条记录，并正确回填 `billingDate/correctedRate`。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">oms-test/src/test/java/io/speedx/oms/domain/service/ArSettlementGenerateServiceTest.java:106-110</code>
+                </div>
+                <div class="finding-desc">新增了硬编码加密口令 `ENCRYPTOR_PASSWORD`。即使位于测试代码中，明文密钥进入仓库后仍会造成凭证泄露风险，并且容易被复制到非测试环境使用，违反 [SEC-001]。</div>
+                <div class="finding-suggestion">💡 修复建议：移除代码中的明文口令，改为从受控测试配置或环境变量注入；若仅用于单测，可在测试初始化时动态生成临时值，或继续复用不落库的测试常量来源，避免在源码中出现真实/固定密钥字面量。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">oms-test/src/test/java/io/speedx/oms/domain/service/ParcelServiceTest.java:168</code>
+                </div>
+                <div class="finding-desc">新增了硬编码的加密口令 `ENCRYPTOR_PASSWORD`，并在测试初始化中直接用于 `SpxEncryptorInit.init(...)`。这会把敏感凭证固化到代码库中，违反 [SEC-001]，一旦测试代码或构建产物外泄，相关加密能力可能被复用或被误带入其他环境。</div>
+                <div class="finding-suggestion">💡 修复建议：移除硬编码口令，改为从测试专用配置或环境变量读取；若必须在测试中使用固定值，应使用仅限测试环境的假密钥并集中放在受控测试配置中，避免以 `PASSWORD` 形式直接写入源码。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/batchtask/processor/ApLmBillRecalculationProcessor.java:105-117</code>
+                    <code class="finding-loc">oms-infrastructure/src/main/java/io/speedx/oms/infrastructure/db/finance/repository/ApLmSettlementRepository.java:86-102</code>
                 </div>
-                <div class="finding-desc">这里在分页处理中只要跳出循环就会先执行 `calculateTotalApLmBillAmount(apLmBill)`，即使前面已经有页失败并准备返回失败结果。这样会基于“部分重算成功、部分仍是旧数据”的中间态重算整单金额，导致账单总金额被持久化为不一致状态，而任务最终又被标记为失败。</div>
-                <div class="finding-suggestion">💡 修复建议：仅在 `failedCount == 0` 时再执行总金额重算；如果允许部分失败，需显式定义补偿/回滚策略，避免在失败路径落库中间态。例如将 `apLmBillService.calculateTotalApLmBillAmount(apLmBill);` 移到成功分支内。</div>
+                <div class="finding-desc">`clearApLmBillAssociationByTrackingNoList` 的注释声明会同时清空 `ap_lm_bill_id`、`corrected_rate`、`audited_rate`，但实际新增查询只把 `apLmBillId` 置空。已脱离账单的 settlement 将继续保留历史修正/审核金额，后续重新生成或重挂账单时可能复用脏金额，造成资金计算偏差。</div>
+                <div class="finding-suggestion">💡 修复建议：按注释和业务语义同步清空 `correctedRate`、`auditedRate` 以及相关 revise 字段（如业务需要），并为“drop bill 后重新生成 bill”场景增加回归测试。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/batchtask/processor/ApLmBillRecalculationProcessor.java:113</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/api/SnsApi.java:86-470</code>
                 </div>
-                <div class="finding-desc">失败通知直接下发 `finalErrorSummary`，而该摘要由 `buildFailedPageSummary` 组装，包含批量 `trackingNos` 和原始异常 `e.getMessage()`。这会把运单号等业务敏感标识以及内部异常细节暴露给终端用户通知与任务错误信息，增加敏感信息泄露和内部实现暴露风险。</div>
-                <div class="finding-suggestion">💡 修复建议：对用户可见的错误通知使用通用失败文案和任务编号，仅在受控内部日志中记录脱敏后的失败明细；不要在通知或持久化错误摘要中直接拼接运单号列表和原始异常消息。</div>
+                <div class="finding-desc">第二个提醒方法同样将 `billCode` 直接拼入 HTML 邮件正文，重复引入 HTML 注入风险。该问题会影响审核结果确认邮件链路，攻击面与上一处一致。</div>
+                <div class="finding-suggestion">💡 修复建议：复用统一的 HTML 转义/模板渲染逻辑处理 `billCode`，不要在邮件正文中直接拼接原始业务字段。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/batchtask/processor/ApLmBillRecalculationProcessor.java:147-160</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/api/SnsApi.java:79-82,146-149</code>
                 </div>
-                <div class="finding-desc">失败摘要把整页所有 `trackingNo` 全量拼进 `failedPageSummary`，最终又在 `buildFinalErrorSummary` 中把所有失败页详情继续串接。单页上限 500 条、失败页较多时，这个错误字符串会非常长，后续被写入 `updateTaskProgress(..., errorMessage)`、执行日志和系统通知，容易触发字段长度超限或二次异常，反而掩盖原始失败原因。</div>
-                <div class="finding-suggestion">💡 修复建议：限制错误摘要长度，只保留页号、失败数量和前几个 trackingNo；详细明细单独落日志。例如最多保留前 10 个 trackingNo，并在末尾追加 `...(+N more)`。同时对最终 summary 做长度截断后再写库/发通知。</div>
+                <div class="finding-desc">两个新增邮件方法在生成前端详情链接时直接将 `billId` 传给 `String.format(...%d...)`，但前面没有做空值校验。若上游传入 `null`，这里会在进入 `try/catch` 之前抛出格式化异常，导致提醒流程直接中断，邮件也不会发送。</div>
+                <div class="finding-suggestion">💡 修复建议：在拼接链接前显式校验 `billId`，为空时记录日志并返回，或改为安全的字符串拼接。示例：`if (billId == null) { log.warn(&quot;... billId is null&quot;); return; }` 然后再构造 `auditUrl/detailUrl`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/api/SnsApi.java:470</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/datasource/RateCardDataSource.java:740-778</code>
                 </div>
-                <div class="finding-desc">`sendCustomerMappingReminder` 的入参从 `List&lt;Map&lt;String, Long&gt;&gt;` 放宽为 `List&lt;Map&lt;String, String&gt;&gt;`，而下方邮件 HTML 仍直接将 `customerId`、`pickupAccountId` 拼接进 `&lt;td&gt;`。这会把原本仅限数值的内容扩展为任意字符串，新增 HTML 注入风险，攻击者可通过构造标签或样式污染提醒邮件内容，影响收件人判断，部分邮件客户端下还可能触发主动内容渲染。</div>
-                <div class="finding-suggestion">💡 修复建议：在拼接邮件 HTML 前，对 `customerId` 和 `pickupAccountId` 做严格格式校验（如仅允许数字/字母及有限分隔符），并执行 HTML escaping；如果业务上只应为数字，保持 `Long` 类型或在进入该方法前完成类型转换与校验。</div>
+                <div class="finding-desc">`getRateCardVersionInfoCache` 直接把缓存对象中的 `versionZipCodes` 和 `versionZones` 引用挂到返回 DTO 上。调用方如果对这些 Map 做增删改，会反向污染共享缓存，后续请求可能读到被篡改的费卡版本数据。</div>
+                <div class="finding-suggestion">💡 修复建议：返回前做防御性拷贝，避免暴露缓存内部可变对象，例如：`dto.setVersionZipCodes(new HashMap&lt;&gt;(cacheResult.getVersionZipCodes()));`；如果 value 仍是可变集合，还需要继续对内层集合做拷贝，或返回不可变视图。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/job/ArReceivableCustomerNoMappingJob.java:77-82</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/datasource/RateCardDataSource.java:741-779</code>
                 </div>
-                <div class="finding-desc">在 `unmappedMappings.stream().map(...)` 的每次迭代中新增调用 `customerCache.getCustomerName(customerId)` 和 `customerAccountCache.getById(pickupAccountId)`。如果底层缓存未命中会回源数据库/远程存储，这里会把单次任务放大为按条查询，形成 N+1 访问模式；当未映射数据量较大时，定时任务容易被放大成高负载，带来可用性风险。</div>
-                <div class="finding-suggestion">💡 修复建议：在进入 `stream()` 前先收集唯一的 `customerId` 和 `pickupAccountId`，通过批量接口一次性加载名称映射，再在内存中组装邮件内容；如果当前缓存组件不支持批量查询，应补充批量读取方法并限制单次任务处理量。</div>
+                <div class="finding-desc">`getRateCardVersionInfoCache` 直接把 `cacheResult` 中的 `versionZipCodes`/`versionZones` 可变集合挂到返回 DTO 上。该对象来自共享的 Caffeine 缓存，若调用方后续修改这些 Map/List，会直接污染缓存中的共享状态，导致其他线程读到被篡改的版本范围数据。</div>
+                <div class="finding-suggestion">💡 修复建议：在写入 DTO 前做防御性拷贝，并优先返回不可变集合；如果集合元素本身可变，还需要继续深拷贝元素，避免通过返回值反向修改缓存。</div>
             </div>
-            <p class="more-note">... 还有 23 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 74 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
