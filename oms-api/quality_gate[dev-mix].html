@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">oms-api &nbsp;|&nbsp; 2026-03-30 16:10:59</div>
+      <div class="meta">oms-api &nbsp;|&nbsp; 2026-04-01 11:38:59</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -62,7 +62,7 @@
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#4caf50">60.0%</div>
+            <div class="metric-value" style="color:#4caf50">59.9%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:6 &nbsp; 主要:32</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:4 &nbsp; 主要:27</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,8 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 6 Critical finding(s)</li>
-<li>AI Review: 32 Major finding(s) &gt;= threshold 5</li></ul>
+<li>AI Review: 4 Critical finding(s)</li>
+<li>AI Review: 27 Major finding(s) &gt;= threshold 5</li></ul>
         </div>
         
   
@@ -94,85 +94,77 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArRecalculationService.java:203-456</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArReceivableService.java:674-986</code>
                 </div>
-                <div class="finding-desc">这里将 `unpaidAmount` 从基于本次重算得到的 `totalAmount` 改为基于历史 `confirmedAmount` 计算；当 `confirmedAmount` 为空时还会被强制置为 0。对未确认或部分确认的应收单，重算后 `totalAmount` 已更新，但 `unpaidAmount` 可能变为 0 或负数，导致应收未收金额被低估，属于直接的资金计算错误。相同问题在后面的另一处重算分支也重复引入。</div>
-                <div class="finding-suggestion">💡 修复建议：重算后的 `unpaidAmount` 应以一致的财务口径重新计算，至少保证与新的 `totalAmount` 联动；如果业务定义为 `totalAmount - paid - deduct`，应显式使用本次重算后的 `totalAmount`，不要在重算路径中把空的 `confirmedAmount` 置 0 后直接参与金额计算。</div>
+                <div class="finding-desc">`updateArReceivablePayment` 直接写入 `request.getPayAmount()`，但新增代码未复用确认金额中的金额校验逻辑，也未限制非负值/小数位数。攻击者或异常调用可提交负数或超过两位小数的付款金额，随后 `recalculateUnpaidAmountAndUpdateStatus` 会按该值重算未付金额，造成应收余额被放大或精度异常，属于资金计算错误。</div>
+                <div class="finding-suggestion">💡 修复建议：在保存前对 `payAmount` 执行与 `confirmedAmount` 同等级别的校验：要求非空、`&gt;= 0`、金额 scale 不超过 2，并拒绝超出业务允许范围的值；最好抽取统一的金额校验方法供新增/修改付款、扣减、确认金额共用。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArReceivableService.java:645-952</code>
+                    <code class="finding-loc">oms-facade/src/main/java/io/speedx/oms/facade/model/req/ConfirmArReceivableRequest.java:21-23</code>
                 </div>
-                <div class="finding-desc">`confirmArReceivable` 直接接受并持久化外部传入的 `confirmedAmount`，新增校验只限制其非空、非负和小数位数，但没有约束其不得超过当前应收 `totalAmount`。一旦传入超额确认金额，后续 `recalculateUnpaidAmountAndUpdateStatus` 很可能生成负的 `unpaidAmount` 或错误推进到已支付类状态，属于资金口径错误。</div>
-                <div class="finding-suggestion">💡 修复建议：在确认前增加金额上界校验，要求 `0 &lt;= confirmedAmount &lt;= arReceivable.getTotalAmount()`；同时在 `recalculateUnpaidAmountAndUpdateStatus` 中增加防御性校验，拒绝生成负的 `unpaidAmount`。</div>
+                <div class="finding-desc">新增的 `confirmedAmount` 直接接收外部金额，但没有任何数值校验。当前 DTO 允许传入 `0`、负数以及异常精度的小数，这会把非法金额带入“确认应收”流程，属于资金计算输入面缺口，可能导致确认金额、未收金额等后续账务结果被错误更新。</div>
+                <div class="finding-suggestion">💡 修复建议：在请求模型上补充金额边界与精度约束，例如使用 `@NotNull`（针对 `/confirm` 场景）、`@DecimalMin(&quot;0.01&quot;)`，并增加位数/小数位校验；同时在服务层再次校验金额必须为正且满足账务精度规则。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-facade-impl/src/main/java/io/speedx/oms/facade/impl/MqFacadeImpl.java:324-334</code>
+                    <code class="finding-loc">oms-facade/src/main/java/io/speedx/oms/facade/model/req/SaveArReceivableRequest.java:30-38</code>
                 </div>
-                <div class="finding-desc">将消息体校验失败从“记录并返回错误响应”改为直接抛出 `ConstraintViolationException`，会把格式错误或字段缺失的单条 MQ 消息升级为未处理异常。对于消费端而言，这类异常通常会触发重复投递、阻塞分区或暂停消费，外部只需发送一条畸形消息即可造成持续性的消息堆积和处理停滞，形成可利用的拒绝服务风险。</div>
-                <div class="finding-suggestion">💡 修复建议：对可预期的脏数据继续做降级处理：记录必要审计日志后返回业务失败结果或显式 ack/丢弃到死信队列；仅对真正的系统异常抛出异常。至少要把参数校验异常与系统异常分流，避免 poison message 无限重试。</div>
+                <div class="finding-desc">`SaveArReceivableRequest` 新增可编辑的 `confirmedAmount`，但同样缺少最小值和精度约束。该字段注释说明会“recalculate unpaid amount”，意味着保存接口可直接触发账务金额重算；若接收负数、零或异常精度金额，容易造成未收金额等资金字段计算错误。</div>
+                <div class="finding-suggestion">💡 修复建议：为 `confirmedAmount` 增加正数和精度校验，并在保存逻辑中校验其与当前应收状态、总金额、已支付/已抵扣金额之间的关系，拒绝任何会导致账务结果为负或精度异常的输入。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-facade/src/main/java/io/speedx/oms/facade/model/req/ConfirmArReceivableRequest.java:23</code>
+                    <code class="finding-loc">oms-test/rest/oms.cache.http:7-12</code>
                 </div>
-                <div class="finding-desc">新增的 `confirmedAmount` 直接暴露为确认入参，但未加 `@NotNull`、`@DecimalMin` 或类似金额边界校验。按注释该字段在 `/confirm` 场景是必填，如果客户端传入负数、0 或超大值，容易把应收确认金额写成非法值，进一步影响 unpaid amount 的资金计算结果。</div>
-                <div class="finding-suggestion">💡 修复建议：为 `confirmedAmount` 增加显式校验，至少补充 `@NotNull`（针对 /confirm 场景）和 `@DecimalMin(value = &quot;0.01&quot;)`；如存在上限或小数位约束，再补充 `@Digits`。若商业确认场景复用该 DTO，建议拆分请求模型或使用分组校验避免“部分接口必填、部分接口忽略”的弱契约。</div>
-            </div>
-            <div class="finding-card finding-critical">
-                <div class="finding-header">
-                    <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-facade/src/main/java/io/speedx/oms/facade/model/req/SaveArReceivableRequest.java:31-38</code>
-                </div>
-                <div class="finding-desc">新增的 `confirmedAmount` 允许在保存接口中直接修改“已确认金额并重算未支付金额”，但当前字段没有最小值、精度或非空约束。攻击者或误调用方可提交负数/异常精度金额，导致 post-confirm 状态下的应收金额和 unpaid amount 被错误重算，属于资金完整性风险。</div>
-                <div class="finding-suggestion">💡 修复建议：给 `confirmedAmount` 增加金额格式校验，例如 `@DecimalMin(value = &quot;0.01&quot;)` 与 `@Digits(integer = X, fraction = Y)`；若仅允许特定状态编辑，应在保存接口进入业务逻辑前做统一参数校验，并对空值与非法值明确拒绝。</div>
+                <div class="finding-desc">新增的 REST 调试用例中直接提交了固定 Bearer Token（`mocktokenmocktoken1`）。即使标注为 mock，也会把令牌样式凭证固化到仓库，后续极易被复制到真实联调流程，且违反禁止硬编码 Token 的基线要求。</div>
+                <div class="finding-suggestion">💡 修复建议：将 Authorization 头改为变量占位符，例如 `Authorization: Bearer {{mockToken}}`，并通过本地环境变量、IDE HTTP Client 私有配置或未纳入版本控制的 `.env`/`http-client.private.env.json` 注入具体值；同时检查同类 `.http` 文件，避免继续提交任何字面量 token。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-facade-impl/src/main/java/io/speedx/oms/facade/impl/MqFacadeImpl.java:309,325,334</code>
-                </div>
-                <div class="finding-desc">这里把原先对脏消息/校验失败消息的 `BaseResponse` 返回改成直接抛异常，等同于把单条消息错误上抛给 MQ 调用方。对于消息消费场景，这会改变既有容错语义：原本可记录错误并继续消费，修改后可能触发反复重试、消费堆积，甚至影响同一分区/队列后续消息处理。</div>
-                <div class="finding-suggestion">💡 修复建议：保留消息级失败隔离，不要在 facade 边界直接抛出这类业务异常。可恢复为返回错误响应，或仅对需要重试的异常分类抛出，例如：`if (isValidationError) { log.error(...); return BaseResponse.error(400, errorMessage); }`；仅在瞬时依赖故障等可重试场景再抛出异常。至少补充单测覆盖“非法报文/校验失败时不阻塞后续消费”的行为。</div>
-            </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-facade/src/main/java/io/speedx/oms/facade/model/req/ConfirmArReceivableRequest.java:19-22</code>
-                </div>
-                <div class="finding-desc">`confirmedAmount` 的注释写明在 `/confirm` 接口中必填，但这里既没有 `@NotNull`/金额下限校验，Swagger 也显式标成了 `required = false`。这会让客户端按文档传空值或负数进入后续流程，容易在确认金额计算时触发空指针或写入非法金额。</div>
-                <div class="finding-suggestion">💡 修复建议：把接口契约和参数校验收敛到 DTO 上，至少为 `/confirm` 场景补充非空和正数校验；如果同一个 DTO 需要复用到不同接口，建议拆分请求对象或使用校验分组。例如：`@NotNull(groups = ConfirmGroup.class)` + `@DecimalMin(value = &quot;0.01&quot;)`，并将 `@ApiModelProperty(required = true)` 与实际约束保持一致。</div>
-            </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
                     <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/api/SnsApi.java:470</code>
                 </div>
-                <div class="finding-desc">将 `unmappedCustomers` 的值类型从 `Long` 放宽为 `String` 后，这个方法会接受任意文本作为 `customerId`/`pickupAccountId`。同一方法后续直接把这两个字段拼入 HTML 邮件表格而未做转义，新增契约会把原本仅数值 ID 的安全边界放开，存在邮件 HTML 注入/钓鱼内容混入风险。</div>
-                <div class="finding-suggestion">💡 修复建议：不要直接放宽为原始 `String`。优先保持数值类型；如果业务上必须传字符串，进入模板前对 `customerId` 和 `pickupAccountId` 做严格格式校验（如仅允许数字/固定字符集）并进行 HTML 转义后再拼接邮件内容。</div>
+                <div class="finding-desc">`sendCustomerMappingReminder` 的入参从 `List&lt;Map&lt;String, Long&gt;&gt;` 放宽为 `List&lt;Map&lt;String, String&gt;&gt;`，使 `customerId`/`pickupAccountId` 可携带任意字符串。该方法后续会将这些值直接拼入 HTML 邮件内容，新增类型变更引入了 HTML 注入风险，攻击者可构造标签或链接污染告警邮件内容，影响通知可信度。</div>
+                <div class="finding-suggestion">💡 修复建议：在拼接 HTML 前对 `customerId` 和 `pickupAccountId` 做严格格式校验或 HTML 转义；如果业务上应为数字标识，保持 `Long` 类型或在进入该方法前显式转换并拒绝非数字输入。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/datasource/RateCardDataSource.java:740-745</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/datasource/RateCardDataSource.java:51</code>
                 </div>
-                <div class="finding-desc">`getRateCardVersionInfoCache` 直接把 `cacheResult` 中的 `versionZipCodes`/`versionZones` 可变集合引用透传到返回 DTO。调用方如果对 DTO 中的 Map/List 做修改，会反向污染 Caffeine 缓存里的共享对象，导致后续请求读到被篡改的数据。</div>
-                <div class="finding-suggestion">💡 修复建议：在设置到 DTO 前做防御性拷贝，避免暴露缓存内部状态，例如：`dto.setVersionZipCodes(new HashMap&lt;&gt;(cacheResult.getVersionZipCodes()));`；如果 value 也是集合，还需要继续深拷贝。`versionZones` 同理。</div>
+                <div class="finding-desc">将费率卡缓存的 `expireAfterWrite` 从 10 分钟延长到 1 小时，会显著扩大旧费率被继续使用的时间窗口。该类缓存直接承载 rate card / version 定价数据；一旦费率配置刚被更新，或 5 分钟后的 refresh 发生加载失败，系统仍可能在最长 1 小时内返回过期价格，进而导致报价、结算或应收金额按旧费率计算，形成资金计算偏差。相同变更在本文件其他 rate card 相关缓存上也重复出现。</div>
+                <div class="finding-suggestion">💡 修复建议：不要仅通过延长 TTL 保持费率缓存。对直接参与计费的缓存应维持较短失效时间，或在费率变更时显式失效相关 key；同时对 refresh 失败场景增加兜底策略（如失败即失效/告警并回源），避免旧价格长时间继续参与金额计算。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/datasource/RateCardDataSource.java:743-766</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/datasource/RateCardDataSource.java:739-743,757-759,772-774</code>
                 </div>
-                <div class="finding-desc">`getRateCardVersionInfoCache` 将 `cacheResult` 中的 `versionZipCodes` / `versionZones` 直接挂到返回 DTO 上，暴露了缓存内部的可变集合。调用方一旦对返回对象中的集合执行修改，会直接污染共享缓存，导致后续请求读取到被篡改的费率版本数据，形成跨线程数据串扰。</div>
-                <div class="finding-suggestion">💡 修复建议：对缓存中的集合做防御性拷贝后再写入 DTO；如果集合元素本身也可变，需要一并做深拷贝，或返回不可变视图以阻止调用方修改缓存内容。</div>
+                <div class="finding-desc">新增的 3 个缓存读取方法直接把缓存中的可变对象返回给调用方：`versionZipCodes`/`versionZones` 原样透传，`zoneRateCardVersionCache` 和 `zipCodeRateCardVersionCache` 中的 `List&lt;RateCardDto&gt;` 也直接返回。调用方一旦对这些 `Map`/`List` 做增删改，会污染 Caffeine 中的共享缓存，导致后续请求读到被意外篡改的费卡版本或报价数据。</div>
+                <div class="finding-suggestion">💡 修复建议：返回前做防御性拷贝，避免调用方修改缓存内部状态。例如：`dto.setVersionZipCodes(new HashMap&lt;&gt;(cacheResult.getVersionZipCodes()))`；`dto.setVersionZones(new HashMap&lt;&gt;(cacheResult.getVersionZones()))`；列表返回 `Collections.unmodifiableList(new ArrayList&lt;&gt;(rateCardDtos))` 或 `new ArrayList&lt;&gt;(rateCardDtos)`。如果 `RateCardDto` 本身也会被外部修改，需要进一步做元素级拷贝。</div>
             </div>
-            <p class="more-note">... 还有 28 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/helper/ArReceivableExportDueDateHelper.java:37-39</code>
+                </div>
+                <div class="finding-desc">这里将 `DuedateCalculationTypeEnum.valueOf(code)` 的 `IllegalArgumentException` 直接吞掉并返回 `null`。一旦上游传入了未覆盖的新枚举值、大小写变体或脏数据，本次导出会静默丢失 due date，排查时也缺少任何可观测信号，容易形成业务结果异常而不易发现。</div>
+                <div class="finding-suggestion">💡 修复建议：至少记录带有 `calcTypeCode` 的告警日志，或改为显式降级到约定默认值；如果该字段理论上必须合法，建议抛出业务异常而不是静默返回 `null`。示例：`catch (IllegalArgumentException e) { log.warn(&quot;Unknown due date calc type: {}&quot;, calcTypeCode, e); return billCreateDate.plusDays(paymentTerm); }`，或按业务要求抛出明确异常。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillRecalculationService.java:32-40</code>
+                </div>
+                <div class="finding-desc">在逐条遍历 `settlements` 时，每条记录都会执行一次 `findByTrackingNoAndBillingType(...)` 查询，形成典型的 N+1 查询。账单重算通常按页批量处理，页内数据一多就会显著放大数据库往返次数，导致任务耗时和数据库压力陡增。</div>
+                <div class="finding-suggestion">💡 修复建议：按当前页的 `trackingNo` 批量预查询 `SYSTEM_RATING` 类型的结算数据，先构造成 `Map&lt;trackingNo, ApLmSettlement&gt;` 后再在循环内直接读取；更新也建议评估批量更新能力，至少先消除循环内查询。</div>
+            </div>
+            <p class="more-note">... 还有 22 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
