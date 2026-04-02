@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-exchange-api &nbsp;|&nbsp; 2026-04-02 17:48:04</div>
+      <div class="meta">pos-exchange-api &nbsp;|&nbsp; 2026-04-02 18:33:40</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -62,7 +62,7 @@
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#ff9800">42.3%</div>
+            <div class="metric-value" style="color:#ff9800">42.2%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,16 +73,17 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:2</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:3</div>
       <div class="metric-threshold">已抑制: 0</div>
-      <div class="metric-note">已检测到问题，但当前配置未阻断流水线</div>
+      
     </div>
   </div>
 
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube analysis timed out after 1 minutes</li></ul>
+            <ul><li>SonarQube analysis timed out after 1 minutes</li>
+<li>AI Review: 3 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -93,18 +94,26 @@
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/api/PusApi.java:41-50</code>
+                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/web/WebInboundParcelController.java:97-106</code>
                 </div>
-                <div class="finding-desc">`createPickup` 在 `info` 级别直接记录完整请求体 `body`。`PickupCreateForm` 通常包含收寄件地址、联系人、电话、追踪号等业务敏感信息，常规日志可被广泛访问或长期留存，形成敏感数据泄露面。</div>
-                <div class="finding-suggestion">💡 修复建议：不要记录完整请求报文。改为仅记录最小必要字段（如请求ID、orgId、bookingCode/条数），并对手机号、地址、trackingNumber 等字段做脱敏；如确需排障，放到受控的 `debug` 日志并默认关闭。</div>
+                <div class="finding-desc">新增的 `log.info(&quot;scan: {}&quot;, JSON.toJSON(form))` 将扫描接口完整请求体输出到 INFO 日志，存在敏感业务数据泄露风险。此类日志通常会进入集中日志平台，扩大运单号等数据的可见范围。</div>
+                <div class="finding-suggestion">💡 修复建议：删除整对象日志，改为白名单字段日志并对敏感值脱敏；默认不要在 INFO 级别记录请求体。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/api/PusApi.java:43-46</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/api/PusApi.java:39-48</code>
                 </div>
-                <div class="finding-desc">这里在 `payload` 存在时直接反序列化返回，没有校验响应里的 `success`/`code`。如果 PUS 返回 `success=false` 但仍带有 `payload`，且 `failList` 为空或字段不完整，调用方会把本次创建当成成功处理，导致 pickup 失败被误判为成功。</div>
-                <div class="finding-suggestion">💡 修复建议：先显式校验 `success` 和 `code`，只有成功时才返回 `payload`；失败时统一抛出异常或构造明确的失败结果。例如：`boolean success = root.path(&quot;success&quot;).asBoolean(false); int code = root.path(&quot;code&quot;).asInt(-1); if (!success || code != 200) { throw new RRException(root.path(&quot;message&quot;).asText(&quot;PUS createPickup failed&quot;)); }`，然后再解析 `payload`。</div>
+                <div class="finding-desc">`log.info(&quot;[PusApi] createPickup url={}, body={}&quot;, url, body)` 会记录发往下游 PUS 的完整创建 pickup 报文。该报文通常包含收寄件地址、联系人、电话或运单信息，属于明显的敏感数据落日志问题。</div>
+                <div class="finding-suggestion">💡 修复建议：禁止记录完整请求报文；仅记录请求唯一标识、目标接口和必要的非敏感摘要字段。若必须排障，增加统一脱敏器后再输出。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/api/PusApi.java:45-48</code>
+                </div>
+                <div class="finding-desc">这里在 `payload` 非空时直接把响应当作成功结果返回，没有校验顶层 `success`/`code`。如果 PUS 返回 `success=false` 但仍带空对象或不完整的 `payload`，下游 `createPickupStaging` 只检查 `failList`，会把实际失败请求当成成功处理。</div>
+                <div class="finding-suggestion">💡 修复建议：先校验顶层成功标记，再解析 `payload`。例如：`boolean success = root.path(&quot;success&quot;).asBoolean(false); int code = root.path(&quot;code&quot;).asInt(-1); if (!success || code != 200) { String message = root.path(&quot;message&quot;).asText(&quot;PUS createPickup failed&quot;); log.error(&quot;[PusApi] createPickup failed, url={}, response={}&quot;, url, resp); throw new RRException(message); }`，之后再做 `payload` 转换。</div>
             </div>
             
         </div>
