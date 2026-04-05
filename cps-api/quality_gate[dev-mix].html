@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">cps-api &nbsp;|&nbsp; 2026-04-01 12:44:18</div>
+      <div class="meta">cps-api &nbsp;|&nbsp; 2026-04-05 21:07:40</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:3</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:8</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,7 +83,7 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 3 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 8 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,28 +94,44 @@
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">cps-infrastructure/src/main/java/com/speedx/cps/integration/PickupClient.java:107</code>
+                    <code class="finding-loc">cps-infrastructure/src/main/java/com/speedx/cps/integration/PickupClient.java:110</code>
                 </div>
-                <div class="finding-desc">新增的 `log.info(&quot;toEditPickup from pickup api res: {}&quot;, res)` 直接记录下游接口完整响应体。`toEditPickup` 返回的是提货编辑表单，通常包含地址、联系人、账号等业务敏感信息；以 `info` 级别落盘会扩大日志泄露面，属于敏感数据暴露风险。</div>
-                <div class="finding-suggestion">💡 修复建议：不要记录完整响应体。改为仅记录请求追踪号、结果码等最小必要信息；如确需排障，使用脱敏后的字段并降为 `debug` 级别。</div>
+                <div class="finding-desc">新增的 `log.info(&quot;toEditPickup from pickup api res: {}&quot;, res);` 会将下游 Pickup API 的完整响应写入信息级日志。该响应对象类型为 `ResponseObject&lt;CpsPickupCreateForm&gt;`，按上下文推断通常包含提货地址、联系人等业务明细；一旦日志被集中采集或被低权限运维人员访问，会扩大敏感业务数据暴露面。</div>
+                <div class="finding-suggestion">💡 修复建议：不要记录完整响应体。改为仅记录请求结果摘要，例如状态码、业务码、traceId，必要时对地址、联系人、电话等字段做脱敏后再打印，并将此类日志降为 `debug` 且默认关闭。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">cps-infrastructure/src/main/java/com/speedx/cps/integration/PickupClient.java:31-32</code>
+                    <code class="finding-loc">cps-infrastructure/src/main/java/com/speedx/cps/integration/PickupClient.java:29-32,36-39,43-46,50-53,57-60,64-67,71-74,78-81,85-88,92-95,99-103,107-110</code>
                 </div>
-                <div class="finding-desc">这里将 `pickupApiConfig.getTimeout(country)` 的返回值直接参与 `timeout * 10` 计算。`PickupApiConfig` 中 `timeout`/`timeoutByCountry` 都是可空配置，只要启用新链路后某个环境或国家缺少超时配置，就会在这里触发空指针，导致创建取件等功能整体失败。相同问题在本类其他新增方法中也重复存在。</div>
-                <div class="finding-suggestion">💡 修复建议：在发起请求前对超时配置做非空校验并提供明确兜底，例如：`Integer timeout = Optional.ofNullable(pickupApiConfig.getTimeout(country)).orElseThrow(() -&gt; new IllegalStateException(&quot;exchange.pus.timeout is required&quot;));`；如果业务允许，也可以提供统一默认值后再做乘法。</div>
+                <div class="finding-desc">多个新方法直接链式读取 `form/cpsSo/dto` 的嵌套字段并立即参与路由与超时计算，例如 `form.getPickupAddress().getPickupCountry()`、`cpsSo.getAccountDto().getCountry()`、`timeout * 20`。当入参对象、嵌套 DTO、country，或配置返回的 timeout 为空时，这里会直接触发 `NullPointerException`，导致接口在发起下游请求前崩溃。</div>
+                <div class="finding-suggestion">💡 修复建议：在每个入口先校验必填对象和 country，再对 `pickupApiConfig.getHost/getTimeout` 的返回值做非空保护；例如先提取 `String country = Optional.ofNullable(form).map(CpsPickupCreateForm::getPickupAddress).map(PickupAddressDto::getPickupCountry).filter(StringUtils::isNotBlank).orElseThrow(() -&gt; new BizException(&quot;pickup country is required&quot;));`，随后校验 `timeout != null` 后再计算超时。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">shippers-portal/src/main/java/com/speedx/shippers/facade/ShipperTicketFacade.java:22</code>
+                    <code class="finding-loc">cps-test/src/test/java/com/speedx/shippers/integration/sap/SapApiClientIntegrationTest.java:141</code>
                 </div>
-                <div class="finding-desc">将分页请求参数名从 `pageSize` 改为 `size`，但未提供兼容层。已有客户端继续传 `pageSize` 时，Spring 只会采用默认值 `10`，导致接口行为静默变化。这属于破坏性 API 契约变更，可能影响依赖方的分页控制与批量处理逻辑。</div>
-                <div class="finding-suggestion">💡 修复建议：保留对 `pageSize` 的兼容支持，例如继续使用原参数名，或同时兼容 `pageSize`/`size` 并在版本化后再移除旧参数。</div>
+                <div class="finding-desc">这里开始改为调用 `ticketApiClient.getTicket(...)`，但当前 diff 同时删除了该测试类里唯一的 `@BeforeEach` 初始化逻辑，`ticketApiClient` 在测试执行时将保持为 `null`。一旦启用这些测试，调用会直接触发空指针，导致集成测试全部失败。</div>
+                <div class="finding-suggestion">💡 修复建议：恢复测试夹具初始化，至少保证 `ticketApiClient` 在每个 `@Test` 前完成构造。例如恢复 `@BeforeEach`，或改为基于 Spring Test 注入：`@Autowired private TicketApiClient ticketApiClient;`。如果这些方法本意是不执行，也应移除对共享字段的直接调用，避免留下可运行即失败的测试。</div>
             </div>
-            
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">shippers-portal/src/main/java/com/speedx/shippers/integration/TicketApiClient.java:111-347</code>
+                </div>
+                <div class="finding-desc">`getTicket` 新增账号号回填时，直接解引用 `ticketDetailDto`。当 `getCaseByDisplayId(ticketNumber)` 未查到工单返回 `null` 时，这里会触发空指针，导致“工单不存在”场景从原先的空返回变成 500。</div>
+                <div class="finding-suggestion">💡 修复建议：先判空再做账号补全，例如：`TicketDetailDto dto = getCaseByDisplayId(ticketNumber); if (dto == null) { return null; } if (dto.getAccountId() != null) { dto.setSpeedxAccountNumber(getAccountNumberById(dto.getAccountId())); } return dto;`</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">shippers-portal/src/main/java/com/speedx/shippers/integration/TicketApiClient.java:112</code>
+                </div>
+                <div class="finding-desc">`getTicket` 新增了对 `ticketDetailDto.getAccountId()` 的直接访问，但 `getCaseByDisplayId(ticketNumber)` 的注释和现有实现都表明查不到工单时会返回 `null`。当传入不存在或异常的 ticketNumber 时，这里会触发空指针并导致接口返回 500，可被低成本构造为稳定的可用性问题。</div>
+                <div class="finding-suggestion">💡 修复建议：在调用 `getAccountNumberById` 前先判空；若 `ticketDetailDto == null`，按既有契约返回 `null` 或转换为受控业务异常，避免未处理的 NPE。</div>
+            </div>
+            <p class="more-note">... 还有 3 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
