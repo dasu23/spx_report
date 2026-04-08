@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">cps-api &nbsp;|&nbsp; 2026-04-05 21:41:35</div>
+      <div class="meta">cps-api &nbsp;|&nbsp; 2026-04-08 23:34:31</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:9</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:3</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,7 +83,7 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 9 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 3 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,44 +94,28 @@
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">cps-infrastructure/src/main/java/com/speedx/cps/integration/PickupClient.java:107</code>
+                    <code class="finding-loc">cps-infrastructure/src/main/java/com/speedx/cps/integration/PickupClient.java:33-34</code>
                 </div>
-                <div class="finding-desc">`toEditPickup` 将外部 Pickup API 的完整响应体直接写入 `info` 日志。该响应会被反序列化为 `ResponseObject&lt;CpsPickupCreateForm&gt;`，按类型推断很可能包含取件地址、联系人等业务敏感信息；一旦日志被集中采集或被低权限运维账号访问，会形成非必要的数据暴露面。</div>
-                <div class="finding-suggestion">💡 修复建议：删除该整包响应日志，或改为仅记录必要的非敏感元数据（如请求结果码、traceId、记录数）。如果确需排障日志，应在打印前对地址、电话、姓名等字段做脱敏，并将级别降为受控的 debug 日志。</div>
+                <div class="finding-desc">新引入的 `PickupApiConfig` 没有提供默认值或必填校验，这里直接对 `timeout` 做乘法运算；当开启 `exchange.pus.enabled=true` 但漏配 `timeout`/`timeoutByCountry` 时，会在首次调用取件接口时触发 `NullPointerException`。同类问题在本类多个新方法中重复出现。</div>
+                <div class="finding-suggestion">💡 修复建议：在发起请求前统一校验配置并兜底默认值，例如：`Integer timeout = Optional.ofNullable(pickupApiConfig.getTimeout(country)).orElse(3000);`；或者在 `PickupApiConfig` 上设置默认值并在启动阶段校验 `enabled=true` 时 `host/timeout/endpoint` 必填。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">cps-infrastructure/src/main/java/com/speedx/cps/integration/PickupClient.java:29-110</code>
+                    <code class="finding-loc">shippers-portal/src/main/java/com/speedx/shippers/web/ShipperTicketController.java:92</code>
                 </div>
-                <div class="finding-desc">多个新方法直接链式访问入参的嵌套字段，例如 `form.getPickupAddress().getPickupCountry()`、`form.getAccountDto().getCountry()`、`form.getAddressDto().getPickupCountry()`。一旦调用方传入的表单缺少这些子对象，当前代码会在发起远程调用前抛出 `NullPointerException`，导致创建/取消/查询/编辑提货等核心流程直接失败。</div>
-                <div class="finding-suggestion">💡 修复建议：在每个入口方法中先校验必要对象和国家字段，再继续组装请求；对缺失参数返回明确业务异常而不是依赖 NPE。示例：`if (form == null || form.getAccountDto() == null || StringUtils.isBlank(form.getAccountDto().getCountry())) { throw new BizException(&quot;country is required&quot;); }`。对 `pickupAddress`、`addressDto` 等同样处理，或抽取统一的 `resolveCountry(...)` 校验方法。</div>
+                <div class="finding-desc">`downloadAttachment` 直接对上游返回的 `downloadUrl` 执行 `new URL(downloadUrl).openConnection()` 并透传下载，未校验协议、主机或端口范围。只要上游返回值异常或被篡改，这里就会把服务端当作任意 URL 的访问代理，形成 SSRF/内网探测风险。</div>
+                <div class="finding-suggestion">💡 修复建议：对 `downloadUrl` 做严格白名单校验：限制为 `https`，并校验 host 必须属于预期的 SAP 域名集合；禁止访问内网/环回/链路本地地址。更稳妥的方式是由 `TicketApiClient` 直接使用受控 HTTP 客户端向固定 SAP 域名拉取附件，不要信任并直连外部返回的完整 URL。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">shippers-portal/src/main/java/com/speedx/shippers/facade/resp/TicketDetailResp.java:65</code>
+                    <code class="finding-loc">shippers-portal/src/main/java/com/speedx/shippers/web/ShipperTicketController.java:93-94</code>
                 </div>
-                <div class="finding-desc">新增对外响应字段 `zendeskTicketId`，会把第三方工单系统的内部标识直接暴露给客户端。该标识通常属于内部集成实现细节，一旦外泄，可能被用于关联外部系统对象、辅助枚举工单或在日志/工单流转链路中扩大信息暴露面。</div>
-                <div class="finding-suggestion">💡 修复建议：仅在确有业务必要且已完成脱敏评估时才返回该字段；否则移除此响应字段，或改为返回平台侧自有的非敏感映射标识/一次性引用值。若必须保留，补充接口文档并明确其敏感级别及使用范围。</div>
+                <div class="finding-desc">这里直接使用 `ticketService.getAttachmentDownloadUrl` 的返回值构造 `URL`，但上游新方法在解析 SAP 响应时允许返回 `null`。一旦 SAP 返回体缺少 `value.url` 或解析结果为空，这里会在下载入口直接抛出运行时异常，附件下载功能失败。</div>
+                <div class="finding-suggestion">💡 修复建议：在控制器中先校验 `downloadUrl` 非空且格式合法，再建立连接；为空时返回业务异常而不是继续 `new URL(...)`。例如：`if (StringUtils.isBlank(downloadUrl)) { throw new BizException(&quot;Attachment download url is empty&quot;); }`。</div>
             </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">shippers-portal/src/main/java/com/speedx/shippers/facade/resp/TicketResp.java:28</code>
-                </div>
-                <div class="finding-desc">工单列表响应新增 `zendeskTicketId` 字段，将第三方 Zendesk 内部主键批量暴露给调用方。相比详情接口，列表接口会一次性泄露更多内部标识，增加被批量收集、关联分析和外部系统对象枚举的风险。</div>
-                <div class="finding-suggestion">💡 修复建议：不要在列表接口直接返回第三方系统原始 ID。若前端确有展示或跳转诉求，改为返回平台内部生成的安全引用值，或由服务端在需要时完成第三方 ID 到前端动作的转换。</div>
-            </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">shippers-portal/src/main/java/com/speedx/shippers/integration/TicketApiClient.java:111-348</code>
-                </div>
-                <div class="finding-desc">`getTicket` 新增逻辑直接解引用 `getCaseByDisplayId` 的返回值；当 SAP 未查到工单时，该方法按注释会返回 `null`，这里会在读取 `ticketDetailDto.getAccountId()` 时触发空指针，导致原本可返回 `null` 的场景变成接口异常。</div>
-                <div class="finding-suggestion">💡 修复建议：在补充账号号段前先判空，例如：`TicketDetailDto ticketDetailDto = getCaseByDisplayId(ticketNumber); if (ticketDetailDto == null) { return null; }`，再继续读取 `accountId`。</div>
-            </div>
-            <p class="more-note">... 还有 4 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            
         </div>
         
 
