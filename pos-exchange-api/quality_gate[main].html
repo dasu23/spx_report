@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-exchange-api &nbsp;|&nbsp; 2026-03-25 15:01:57</div>
+      <div class="meta">pos-exchange-api &nbsp;|&nbsp; 2026-04-08 21:36:55</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -56,14 +56,14 @@
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#f44336">12.1%</div>
-      <div class="metric-threshold">阈值: 60%</div>
+      <div class="metric-value" style="color:#4caf50">30.9%</div>
+      <div class="metric-threshold">阈值: 1%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#f44336">40.2%</div>
-            <div class="metric-threshold">阈值: 60%</div>
+            <div class="metric-value" style="color:#f44336">39.4%</div>
+            <div class="metric-threshold">阈值: 50%</div>
         </div>
         
     <div class="metric-card">
@@ -73,17 +73,16 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:12</div>
+      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:2</div>
       <div class="metric-threshold">已抑制: 0</div>
-      
+      <div class="metric-note">已检测到问题，但当前配置未阻断流水线</div>
     </div>
   </div>
 
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube analysis timed out after 5 minutes</li>
-<li>AI Review: 12 Major finding(s) &gt;= threshold 3</li></ul>
+            <ul><li>SonarQube analysis timed out after 1 minutes</li></ul>
         </div>
         
   
@@ -94,44 +93,20 @@
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/web/WebInboundParcelController.java:107-108</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/container/ParcelContainerService.java:75</code>
                 </div>
-                <div class="finding-desc">`findByScanCode` 和 `fistScanPushOms(...)` 被移动到分布式锁之外执行，导致同一运单并发扫描时，会在互斥保护前重复触发 OMS 首扫推送。原逻辑中虽然推送也在锁前，但本次变更新增了依赖 `label` 的首扫推送参数，使这段非幂等外部调用更容易受到竞态影响，出现重复首扫事件或状态错乱。</div>
-                <div class="finding-suggestion">💡 修复建议：将 `findByScanCode` 与 `fistScanPushOms(...)` 一并放入 `lockFlag` 成功后的临界区，或在 `fistScanPushOms` 内增加基于 trackingNumber/facility/scanType 的幂等校验。例如先加锁，再查询 `label`，最后调用推送；若必须锁外调用，则需引入去重表/幂等键。</div>
+                <div class="finding-desc">新增的 info 日志将 `aScanResponse` 整体序列化输出。该响应对象来自 `parentScanWhole(...)`，按本次 diff 可返回重复扫描提示、跨 POE 标签数据等业务载荷；整包记录到常规日志会扩大运单、路由标签等敏感业务数据的暴露面。</div>
+                <div class="finding-suggestion">💡 修复建议：不要在 info 级别打印完整响应对象。改为仅记录必要字段（如 `code`、是否成功、简短错误码），并对可能包含标签内容、面单 Base64、备注等字段做脱敏或完全不落日志。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/api/BeansApi.java:168</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerImplService.java:1098-1100</code>
                 </div>
-                <div class="finding-desc">请求日志直接打印了 `apiKey`。该字段属于鉴权凭据，写入普通 `info` 日志后会在日志平台长期留存，命中自定义规则 [LOG-001]/[SEC-002]，存在凭据泄露风险。</div>
-                <div class="finding-suggestion">💡 修复建议：不要记录完整鉴权值。至少移除该参数，或仅保留脱敏后的前后几位，例如：`log.info(&quot;BeansApi.getItemByTrackingNumber request itemForm:{}&quot;, jsonString);` 或 `String maskedKey = StringUtils.left(apiKey, 4) + &quot;***&quot;;` 后再记录。</div>
+                <div class="finding-desc">这里把原先仅在 `checkLabelStatus(...)` 明确返回 `false` 时拦截，改成了对所有“非 TRUE”结果都进入 Auto A-Scan 分支。若该方法返回 `null` 表示“不适用/无需校验/无法判定”，本次改动会把原本可继续的流程改成强制补做 A-scan，导致 parcel to container 行为回归。</div>
+                <div class="finding-suggestion">💡 修复建议：保留原有三态语义，只有明确失败时才触发补扫，例如改为 `if (Boolean.FALSE.equals(result)) { ... }`；如果确实希望把 `null` 也视为失败，需要同步梳理 `checkLabelStatus` 的所有返回场景并补充回归测试。</div>
             </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/UpdateAddressService.java:554-568</code>
-                </div>
-                <div class="finding-desc">这里先 `findByTrackingNumber` 读取旧备注，再在内存中拼接并执行 `updateNotes`，属于典型的读改写流程。并发请求同时追加备注时，后写入的事务会覆盖先写入结果，导致备注丢失。</div>
-                <div class="finding-suggestion">💡 修复建议：将“追加备注”改为单条原子 SQL/JPQL 更新，或引入乐观锁版本字段。例如直接在更新语句中基于当前值拼接：`update Label set notes = case when notes is null or notes = &#x27;&#x27; then :newNotes else right(concat(notes, &#x27;; &#x27;, :newNotes), 255) end where trackingNumber = :trkNumber`，避免先查后改。</div>
-            </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerImplService.java:1045-1053</code>
-                </div>
-                <div class="finding-desc">新增分布式锁的 key 同时包含 `containerNo` 和 `trackingNumber`，只能拦住“同一箱号 + 同一运单号”的并发请求；如果同一个 `trackingNumber` 被并发扫入两个不同箱号，会拿到两把不同的锁，仍然可能同时通过后续校验并写入，破坏包裹归箱幂等性。返回文案写的是“Multiple scans at the same time is not allowed [trackingNumber]”，但当前实现并没有真正按运单维度串行化。</div>
-                <div class="finding-suggestion">💡 修复建议：锁粒度至少收敛到运单号，必要时再叠加箱号维度的校验。例如：`RLock lock = redissonClient.getLock(&quot;scan-parcel-to-container:&quot; + trackingNumber);`，并在持锁期间再次校验该运单是否已归入其他 container，确保并发下不会重复入箱。</div>
-            </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerImplService.java:1062-1063</code>
-                </div>
-                <div class="finding-desc">这里在非 ACTIVE 分支直接执行 `container.getStatus().toLowerCase()`，当容器记录存在但 `status` 为空时会触发 `NullPointerException`，导致扫描接口直接报 500。前一行虽然用常量在左侧规避了 equals 的空指针，但错误信息拼接又重新引入了空指针风险。</div>
-                <div class="finding-suggestion">💡 修复建议：对状态值做空值保护，例如：`String status = StringUtils.defaultIfBlank(container.getStatus(), &quot;unknown&quot;); String errorMsg = String.format(&quot;container [%s] is %s&quot;, containerNo, status.toLowerCase());`，或直接避免对空值调用 `toLowerCase()`。</div>
-            </div>
-            <p class="more-note">... 还有 7 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            
         </div>
         
 
