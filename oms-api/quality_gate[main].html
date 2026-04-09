@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">oms-api &nbsp;|&nbsp; 2026-04-08 09:48:04</div>
+      <div class="meta">oms-api &nbsp;|&nbsp; 2026-04-09 18:00:59</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -62,7 +62,7 @@
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#4caf50">58.9%</div>
+            <div class="metric-value" style="color:#4caf50">58.1%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:10 &nbsp; 主要:133</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:13 &nbsp; 主要:115</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,8 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 10 Critical finding(s)</li>
-<li>AI Review: 133 Major finding(s) &gt;= threshold 5</li></ul>
+<li>AI Review: 13 Critical finding(s)</li>
+<li>AI Review: 115 Major finding(s) &gt;= threshold 5</li></ul>
         </div>
         
   
@@ -94,85 +94,85 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/datasource/RateCardDataSource.java:51</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/datasource/RateCardDataSource.java:48</code>
                 </div>
-                <div class="finding-desc">将费率卡缓存的 `expireAfterWrite` 从 10 分钟放宽到 1 小时，会显著扩大旧费率被继续使用的窗口。该类缓存直接承载 rate card/version 数据，若费率发布后缓存未被主动失效，后续计费/结算仍可能命中过期价格，形成实际资费计算错误。相同放宽在本次变更中还重复出现在 141、300、315、377 行。</div>
-                <div class="finding-suggestion">💡 修复建议：不要仅通过延长 TTL 提升命中率。对费率类缓存保持较短过期时间，或在费率/版本变更时增加显式失效机制；若必须保留 1 小时 TTL，需确保更新链路同步清理所有相关 cache key，并在刷新失败时阻止继续使用旧价格参与计费。</div>
+                <div class="finding-desc">将费率卡相关 Caffeine 缓存的 `expireAfterWrite` 从 10 分钟统一放宽到 1 小时（同类修改还出现在 138、297、312、374 行），会显著拉长刷新失败场景下继续使用旧费率的窗口。该类缓存直接参与 rate card 命中与版本选择；一旦底层费率已更新但异步 `refreshAfterWrite` 未及时成功，系统会在最长 1 小时内继续返回旧费率，属于可导致账单/结算金额错误的资金计算风险。</div>
+                <div class="finding-suggestion">💡 修复建议：将 `expireAfterWrite` 恢复到与费率发布 SLA 一致的较短窗口，或在费率卡变更发布时主动失效相关缓存；若必须保留长 TTL，需要在刷新失败时拒绝继续使用旧值并增加告警，避免账单继续按过期费率计算。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArRecalculationService.java:444-458</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArReceivableService.java:928-965</code>
                 </div>
-                <div class="finding-desc">`computeUnpaidFromConfirmed` 直接返回 `confirmed.subtract(totalDeduct).subtract(totalPay)`，没有对结果做下限保护。当前新增逻辑在回算应收时，若历史 payment/deduct 合计大于 confirmed/totalAmount，就会把 `unpaidAmount` 写成负数，属于资金字段计算错误，后续可能影响催收、核销或导出金额。</div>
-                <div class="finding-suggestion">💡 修复建议：在写回 `unpaidAmount` 前增加金额边界校验，至少将结果钳制为 `max(result, BigDecimal.ZERO)`；若业务上不允许超扣/超付，还应在发现负值时记录异常并阻断回写，避免错误金额继续扩散。</div>
+                <div class="finding-desc">`updateArReceivablePayment` 直接将请求中的 `payAmount` 写回支付记录，但新增代码没有做金额合法性校验。相比已有 `confirm` 流程新增的 `validateConfirmedAmountForConfirm(...)`，这里缺少非空、非负、两位小数等约束，攻击者或异常调用可把支付金额改成负数/超精度值，进而在 `recalculateUnpaidAmountAndUpdateStatus(...)` 中篡改应收未付金额，属于资金计算错误风险。</div>
+                <div class="finding-suggestion">💡 修复建议：在写入 `payment.setPayAmount(request.getPayAmount())` 前复用现有金额校验模式，至少校验 `payAmount` 非空、`&gt;= 0`、scale 不超过 2，并补充与 receivable 剩余可支付金额的一致性校验；校验失败时拒绝更新。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArReceivableService.java:665-970</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/KafkaFailureLogService.java:107</code>
                 </div>
-                <div class="finding-desc">新增的 `updateArReceivablePayment(...)` 直接信任请求里的 `payAmount` 并落库，没有复用支付入口的金额校验。攻击者或误调用方可提交负数、超 2 位小数或超过应收约束的金额，随后 `recalculateUnpaidAmountAndUpdateStatus(...)` 会基于非法金额重算未付金额，造成资金数据被篡改。</div>
-                <div class="finding-suggestion">💡 修复建议：在更新支付记录前复用 `payArReceivable(...)` 同等的金额校验规则：至少校验非空、非负、最多 2 位小数、且更新后的累计支付金额不得突破 receivable 的金额约束；更稳妥的做法是抽取统一的 payment validation 方法，供新增和更新两条路径共用。</div>
+                <div class="finding-desc">`exportConsumerFailureLogs` 将导出内容写入 `ByteArrayOutputStream`，同时允许最多抓取 `50_000` 页数据。虽然下游分页了，但最终整个 Excel 仍会一次性驻留在 JVM 堆内；当失败日志量较大时，导出请求可触发堆内存耗尽，导致服务不可用。相同问题在 `exportProducerFailureLogs` 中重复出现。</div>
+                <div class="finding-suggestion">💡 修复建议：改为流式写出到 HTTP 响应或临时文件，避免将整个工作簿保存在内存中；同时增加硬性导出上限（总行数/文件大小/时间窗口），超过上限直接拒绝或异步生成离线文件。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/batchtask/processor/ApLmBillGenerationProcessor.java:121-176</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/lastmile/LmCostCalculator.java:226-237</code>
                 </div>
-                <div class="finding-desc">`doProcess` 在累计到 `totalFailedCount` 后，仍无条件执行总金额重算并将账单状态置为 `GENERATED`。一旦 `processShardTable(...)` 中某个分片/子批次失败，当前实现只累加失败数而不阻止封单，结果是“部分生成成功”的账单会被当作完整账单继续流转，直接带来 AP 金额不完整/不准确的资金风险。</div>
-                <div class="finding-suggestion">💡 修复建议：只有在 `totalFailedCount == 0` 时才允许执行 `calculateTotalApLmBillAmount(...)` 和状态切换到 `GENERATED`；否则应将任务置为失败/部分失败状态，并回滚或补偿已关联但未完整落库的候选数据。若需要允许部分成功，需显式引入中间状态并阻断后续财务动作。</div>
+                <div class="finding-desc">`convertWeight` 在单位解析或转换失败时仅记录日志并直接返回原始重量。新增代码随后会基于该值继续计费，导致在 `fromUom/toUom` 非法、配置漂移或枚举不兼容时静默产生错误金额，而不是阻断结算流程。这属于资金计算错误，且会把外部输入/配置异常放大为错误账单。</div>
+                <div class="finding-suggestion">💡 修复建议：单位转换失败时不要回退为原始重量；应抛出带业务错误码的异常并中止计费，或至少显式标记该票失败待人工处理。同时补充测试覆盖非法 UOM、未知枚举和值为空的场景。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/lastmile/LmCostCalculator.java:218-225</code>
+                    <code class="finding-loc">oms-facade/src/main/java/io/speedx/oms/facade/model/req/ConfirmArReceivableRequest.java:22-23</code>
                 </div>
-                <div class="finding-desc">`convertWeight` 在重量单位非法或转换运行时失败时，直接返回原始重量继续计费。该降级会把“未完成单位换算”的数值当成目标单位使用，导致静默的运费误算；例如 10 KG 在目标费卡为 LB 时，异常路径下会按 10 LB 继续计费，属于直接的资金计算风险。</div>
-                <div class="finding-suggestion">💡 修复建议：不要在单位转换失败后继续计费。改为抛出带明确错误码的业务异常，阻断本次计费并记录待人工处理的数据；如果必须兼容脏数据，也应先校验 `fromUom/toUom` 是否在白名单内，再进入计费逻辑。</div>
+                <div class="finding-desc">新增的 `confirmedAmount` 没有任何数值校验。按注释该字段会用于 `/confirm`，当前可提交负数或异常精度金额进入后续确认流程，直接引入应收确认金额被反向冲减或错误记账的资金计算风险。</div>
+                <div class="finding-suggestion">💡 修复建议：对 `confirmedAmount` 增加显式校验，至少补充 `@NotNull`（在 `/confirm` 场景）和 `@DecimalMin(value = &quot;0.01&quot;)`，并结合 `@Digits` 限制金额精度；若仅部分接口必填，应使用分组校验或拆分独立请求 DTO。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/datasource/RateCardDataSource.java:717-783</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/datasource/RateCardDataSource.java:740-744,762,778</code>
                 </div>
-                <div class="finding-desc">`getRateCardVersionInfoCache` 先新建 DTO，但随后把 `cacheResult.getVersionZipCodes()` 和 `cacheResult.getVersionZones()` 的原始引用直接塞进返回值。若上层调用方对返回 DTO 中的 Map/List 做增删改，会直接污染 Caffeine 缓存中的共享对象，导致后续请求读到被篡改的费卡版本数据。</div>
-                <div class="finding-suggestion">💡 修复建议：返回前对缓存中的可变集合做防御性拷贝，避免把缓存内部对象暴露给外部。例如：`dto.setVersionZipCodes(new HashMap&lt;&gt;(cacheResult.getVersionZipCodes()))`；若 value 仍包含可变集合，需要继续深拷贝。`versionZones` 同样处理。</div>
+                <div class="finding-desc">新增的缓存读取方法把缓存中的可变对象直接暴露给调用方：`dto.setVersionZipCodes(cacheResult.getVersionZipCodes())`、`dto.setVersionZones(...)` 以及直接 `return rateCardDtos`。如果上层代码对这些 `Map/List` 做增删改，会直接污染共享缓存，后续请求将读到被篡改的费卡版本数据。</div>
+                <div class="finding-suggestion">💡 修复建议：返回前做防御性拷贝，避免把缓存内部引用泄露出去。例如：`dto.setVersionZipCodes(new HashMap&lt;&gt;(cacheResult.getVersionZipCodes()))`、`dto.setVersionZones(new HashMap&lt;&gt;(cacheResult.getVersionZones()))`；列表返回 `return rateCardDtos.stream().map(RateCardDto::copyOf).collect(Collectors.toList())`，至少先做 `new ArrayList&lt;&gt;(rateCardDtos)`。如果 `RateCardDto` 本身可变，建议同时做元素级深拷贝。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/datasource/RateCardDataSource.java:758</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/lastmile/LmCostCalculator.java:172-186</code>
                 </div>
-                <div class="finding-desc">新增的缓存读取方法直接把缓存中的可变集合返回给调用方：`getZoneRateCardVersionCache`/`getZipCodeRateCardVersionCache` 直接返回缓存中的 `List&lt;RateCardDto&gt;`，`getRateCardVersionInfoCache` 也在 741、744 行把缓存持有的集合直接挂到 DTO 上。任一调用方若对返回集合做增删改，会污染共享缓存内容，导致跨线程/跨请求读到被篡改的数据。</div>
-                <div class="finding-suggestion">💡 修复建议：对所有从缓存导出的集合做防御性复制或返回不可变视图；如果 `RateCardDto` 可变，还需要逐项复制 DTO，避免调用方修改对象字段后回写到共享缓存对象图中。</div>
+                <div class="finding-desc">`calculateBaseCost()` 在 `flatPrice` 为空时，直接返回 `weightTierPrice1/2`，但这里没有校验 tier 价格是否为空。若明细配置缺少对应 tier 价格，方法会返回 `null`；后续单票结果会把 `baseCost` 置空，多票均价场景还会在 `BigDecimal::add` 处触发空指针，导致计费流程中断。</div>
+                <div class="finding-suggestion">💡 修复建议：在返回 tier 价格前做非空校验，缺失时抛出业务异常并带上明细 ID，避免把 `null` 价格继续传递。例如：`BigDecimal price = weight.compareTo(...) &gt; 0 ? detail.getWeightTierPrice2() : detail.getWeightTierPrice1(); if (price == null) { throw new BizException(&quot;Cost card detail price missing, detailId=&quot; + detail.getId()); } return price;`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArReceivableService.java:923-936</code>
+                    <code class="finding-loc">oms-facade/src/main/java/io/speedx/oms/facade/model/req/ConfirmArReceivableRequest.java:19-24</code>
                 </div>
-                <div class="finding-desc">新增的 `updateArReceivablePayment` 直接把 `request.getPayAmount()` 写回付款记录，没有复用已有支付入口的金额校验。若请求传入 `null`、负数或超过两位小数的金额，后续 `recalculateUnpaidAmountAndUpdateStatus(...)` 很容易出现空指针、金额异常或错误状态。相同问题也出现在后面的 deduction 更新接口。</div>
-                <div class="finding-suggestion">💡 修复建议：在更新 payment/deduct 前补齐与创建时一致的校验，至少校验非空、`&gt;= 0`、金额精度不超过 2 位；建议抽出公共校验方法并在 `updateArReceivablePayment`、`updateArReceivableDeduct` 复用。</div>
+                <div class="finding-desc">新增的 `confirmedAmount` 注释声明“`/confirm` 必填”，但字段未加任何条件校验。这样 `/confirm` 请求即使缺少金额也能通过 Bean Validation，容易把 `null` 继续传到后续确认逻辑，导致运行时异常或生成金额为空的确认结果。</div>
+                <div class="finding-suggestion">💡 修复建议：将 `/confirm` 与 commercial confirm 拆成不同请求 DTO，或为 `confirmedAmount` 增加校验分组/自定义校验器。例如对 `/confirm` 入参使用 `@NotNull(groups = ConfirmGroup.class)`，并在对应控制器上启用该 group。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-facade-impl/src/main/java/io/speedx/oms/facade/impl/JobTestController.java:73</code>
+                    <code class="finding-loc">oms-infrastructure/src/main/java/io/speedx/oms/infrastructure/db/finance/repository/ApLmSettlementRepository.java:34-83</code>
                 </div>
-                <div class="finding-desc">异常分支直接将 `e.getMessage()` 返回给调用方，会把内部实现细节、依赖异常文本或底层错误信息暴露到 HTTP 响应，造成信息泄露并为后续攻击提供探测线索。</div>
-                <div class="finding-suggestion">💡 修复建议：对外返回固定的通用错误文案和错误码，详细异常仅记录在服务端日志中；同时避免把底层异常消息直接透传到 API 响应。</div>
+                <div class="finding-desc">新增加的 `findByTrackingNo` 没有过滤 `deleted = 0`，而同文件其它查询基本都显式排除了逻辑删除数据。调用这个方法时会把已软删的结算记录一起查出来，容易造成重复处理或关联到历史无效数据。</div>
+                <div class="finding-suggestion">💡 修复建议：改成显式过滤逻辑删除记录，例如 `@Query(&quot;SELECT a FROM ApLmSettlement a WHERE a.trackingNo = :trackingNo AND a.deleted = 0&quot;)`，或新增 `findByTrackingNoAndDeleted(String trackingNo, Integer deleted)` 并统一传 `0`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pom.xml:44,169-170</code>
+                    <code class="finding-loc">pom.xml:41,165-166</code>
                 </div>
-                <div class="finding-desc">将 ShardingSphere 依赖从 `sharding-jdbc-core:4.1.1` 直接切换为 `shardingsphere-jdbc-core:5.2.1` 是一次不兼容升级。4.x 到 5.x 的依赖坐标、配置结构和 SPI/算法接入方式都有明显变化；当前 diff 里只修改了 Maven 坐标和版本，没有同步看到任何 Spring/YAML 配置、算法注册或初始化代码的适配，极易导致应用启动时分片规则加载失败或运行期路由异常。</div>
-                <div class="finding-suggestion">💡 修复建议：不要只替换依赖坐标。至少同步完成 5.2.1 的配置迁移并补齐启动验证：1) 按 5.x 规则调整 `application*.yml`/`bootstrap.yml` 中的 ShardingSphere 配置键；2) 检查自定义分片算法的 SPI/类型名是否仍兼容；3) 增加一个集成测试，直接启动 `PersistenceFinanceAutoConfiguration`/`PersistenceOmsAutoConfiguration` 并验证 `DataSource` 可创建、典型分片查询可执行。若暂未完成迁移，应先保留 4.1.1 依赖。</div>
+                <div class="finding-desc">将 ShardingSphere 从 `4.1.1` 直接升级到 `5.2.1`，并同时把 artifact 从 `sharding-jdbc-core` 切换为 `shardingsphere-jdbc-core`，这是一次破坏性升级。5.x 在配置结构、SPI/算法接口、Spring 集成方式上都与 4.x 存在不兼容变更；如果其余代码和 YAML/Java 配置未同步迁移，应用很容易在启动期出现数据源装配失败、分片规则解析失败或自定义分片算法不兼容。</div>
+                <div class="finding-suggestion">💡 修复建议：不要只替换版本和 artifact。需要同时完成 4.x -&gt; 5.x 的兼容性迁移并补充启动回归验证，例如：1）逐项核对 `application*.yml`/自动配置中的 ShardingSphere 配置键；2）确认自定义分片算法实现是否已切换到 5.x SPI/接口；3）补充一个最小化 Spring Boot 启动测试，实际加载分片数据源并验证路由。若暂未完成迁移，建议先保留 4.1.1，避免把依赖升级单独合入。</div>
             </div>
-            <p class="more-note">... 还有 133 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 118 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
