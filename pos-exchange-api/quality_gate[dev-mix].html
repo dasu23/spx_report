@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-exchange-api &nbsp;|&nbsp; 2026-04-09 13:13:55</div>
+      <div class="meta">pos-exchange-api &nbsp;|&nbsp; 2026-04-10 15:54:48</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -62,7 +62,7 @@
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#4caf50">51.8%</div>
+            <div class="metric-value" style="color:#f44336">36.9%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:10</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:4</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,7 +83,7 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube analysis timed out after 1 minutes</li>
-<li>AI Review: 10 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 4 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,44 +94,36 @@
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/sorter/DamonController.java:439-451</code>
+                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/sorter/DamonController.java:438-499</code>
                 </div>
-                <div class="finding-desc">`handleFirstStop` 先执行 `existsBySortIdAndStatusInAndFacilityCode(...)`，随后再创建 ACTIVE 容器，这两个步骤之间没有看到事务锁或唯一性约束保护。并发的首次 Stop 请求可同时通过存在性检查，导致同一 chute 被重复创建多个 ACTIVE 容器/标签，造成状态竞争和数据不一致。</div>
-                <div class="finding-suggestion">💡 修复建议：将“检查是否已存在容器”和“创建新容器”收敛到同一原子操作中，例如在服务层开启事务并对 chute 记录加行级锁，或在数据库层增加能约束同一 `facilityCode + sortId` 活跃容器唯一性的索引/幂等约束；创建冲突时返回明确的业务错误。</div>
+                <div class="finding-desc">`handleFirstStop` 采用“先查是否存在，再创建容器”的非原子流程。并发的两次 Stop 请求可同时通过 `existsBySortIdAndStatusInAndFacilityCode(...)` 检查，然后各自执行 `createContainerWithParcels(...)`，导致同一 chute 被重复创建多个 ACTIVE 容器，造成标签重复生成和后续分拣状态混乱。</div>
+                <div class="finding-suggestion">💡 修复建议：将“存在性校验 + 创建容器”放入单一事务并增加并发控制：优先使用数据库唯一约束（例如 facilityCode+sortId+status in ACTIVE 的唯一性）兜底，并在服务层对 chute 维度加悲观锁/分布式锁；创建失败时返回明确的幂等结果。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/sorter/DamonController.java:446-452</code>
+                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/sorter/DamonController.java:501-503</code>
                 </div>
-                <div class="finding-desc">查找目标容器时按 `createTime desc` 取第一个 `ACTIVE/CLOSED` 且 `scanType=A` 的容器，没有优先选择 `ACTIVE`。如果同一 chute 同时存在“较新的 CLOSED 容器”和“较早的 ACTIVE 容器”，当前逻辑会把本次包裹挂到 CLOSED 容器上，旧的 ACTIVE 容器则一直不关闭，导致容器归属和状态流转错误。</div>
-                <div class="finding-suggestion">💡 修复建议：选择目标容器时应优先命中 `ACTIVE`，仅在不存在 `ACTIVE` 时再回退到最新 `CLOSED`。可拆成两步查询，或在流中过滤后先找 `ACTIVE`：`List&lt;PosContainer&gt; containers = ...; Optional&lt;PosContainer&gt; targetOpt = containers.stream().filter(c -&gt; isScanTypeA(c.getContainerNum()) &amp;&amp; PosContainerStatusEnum.ACTIVE.getName().equals(c.getStatus())).findFirst().or(() -&gt; containers.stream().filter(c -&gt; isScanTypeA(c.getContainerNum()) &amp;&amp; PosContainerStatusEnum.CLOSED.getName().equals(c.getStatus())).findFirst());`</div>
+                <div class="finding-desc">这里直接按固定下标解析 `containerNum`，并假设最后一段一定是数字序号。当前仅通过 `isScanTypeA()` 校验了 `parts.length &gt; 3`，无法保证 `parts[4]` 存在或末段可 `parseInt`。一旦库里存在历史格式不符的容器号，会在满载 Stop 时触发数组越界或数字解析异常，导致接口直接返回 500。</div>
+                <div class="finding-suggestion">💡 修复建议：在解析前补充完整格式校验，例如先校验 `parts.length &gt;= 6` 且最后一段为纯数字；校验失败时返回明确业务错误而不是继续创建新容器。示例：`if (parts.length &lt; 6 || !NumberUtils.isDigits(parts[parts.length - 1])) { return BaseResponse.&lt;String&gt;builder().code(HttpStatus.HTTP_INTERNAL_ERROR).msg(&quot;Invalid container number format: &quot; + targetContainer.getContainerNum()).build(); }`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/sorter/DamonController.java:457-522</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/api/TrkApiService.java:55-57</code>
                 </div>
-                <div class="finding-desc">异常分支将 `e.getMessage()` 直接返回给外部调用方。若底层抛出数据库、DAO、容器编号解析或内部服务异常，错误细节会被原样暴露，增加攻击者枚举内部实现、表结构或调用链信息的机会。</div>
-                <div class="finding-suggestion">💡 修复建议：对外返回固定且无内部细节的错误码/错误文案，例如“first stop failed”；详细异常仅记录在服务端日志，并对日志内容做必要脱敏。</div>
+                <div class="finding-desc">`findStateHolidayDates()` 的查询结果第二列是实体字段 `h.holidayDate`，运行时通常返回 `Date`/`LocalDate` 一类对象，而这里强制转换为 `String`。当 tracking-service 调用该接口加载假期数据时，容易在流处理中触发 `ClassCastException`。</div>
+                <div class="finding-suggestion">💡 修复建议：不要直接把 `Object[]` 强转为 `String`。改为使用 DTO/Projection 承接查询结果，或对日期字段做显式格式化转换，例如 `Collectors.mapping(row -&gt; ((Date) row[1]).toString(), Collectors.toList())`，具体类型按实体字段实际类型处理。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/sorter/DamonController.java:471-472</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/xhc/DamonService.java:258-261</code>
                 </div>
-                <div class="finding-desc">这里直接按固定下标读取 `parts[4]` 并将末段强转为整数，但前面仅通过 `isScanTypeA` 校验了 `parts.length &gt; 3`。一旦库里存在历史/异常 `containerNum`（格式不完整、末段非数字），第二次 Stop 会抛出 `ArrayIndexOutOfBoundsException` 或 `NumberFormatException`，导致满载流程失败。</div>
-                <div class="finding-suggestion">💡 修复建议：在解析前补充完整格式校验，并对日期段、序号段做显式判断，例如先校验 `parts.length &gt;= 6` 且 `NumberUtil.isInteger(parts[parts.length - 1])`，不满足时返回明确业务错误而不是进入异常分支。示例：`if (parts.length &lt; 6 || !NumberUtil.isInteger(parts[parts.length - 1])) { return BaseResponse.&lt;String&gt;builder().code(HttpStatus.HTTP_BAD_REQUEST).msg(&quot;Invalid container number: &quot; + targetContainer.getContainerNum()).build(); }`</div>
+                <div class="finding-desc">这里对 `targetNoList` 中每个 chute 都单独调用一次 `existsBySortIdAndStatusInAndFacilityCode(...)`，形成典型 N+1 查询。自动线一次落件候选格口较多时，请求耗时会随格口数线性放大，容易拖慢分拣主流程。</div>
+                <div class="finding-suggestion">💡 修复建议：改为一次性批量查询已有容器的 chute 集合，再在内存中过滤。例如新增 DAO：`findSortIdBySortIdInAndStatusInAndFacilityCode(...)`，返回命中的 `sortId` 列表或集合，然后 `targetNoList.stream().filter(existingSet::contains)`。</div>
             </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-exchange-api/src/test/java/com/miq/posexchangeapi/controller/sorter/DamonControllerTest.java:686-690</code>
-                </div>
-                <div class="finding-desc">该用例将期望结果改为 HTTP 500，但同时删除了触发异常分支的 mock：`posContainerV2Service.buildContainerFromSortProfile(...)` 不再抛异常。这样 `gaylordDetails(...)` 很可能不会进入注释描述的异常路径，测试将稳定失败，且无法覆盖“handleFullStop 抛错后返回 500”的目标场景。</div>
-                <div class="finding-suggestion">💡 修复建议：恢复异常注入，确保测试前置条件与断言一致。例如重新添加 `when(posContainerV2Service.buildContainerFromSortProfile(anyString(), anyString())).thenThrow(new RuntimeException(&quot;service error&quot;));`，或改为 mock 实际会在该路径中抛错的依赖方法。</div>
-            </div>
-            <p class="more-note">... 还有 5 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            
         </div>
         
 
