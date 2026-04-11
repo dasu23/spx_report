@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">oms-api &nbsp;|&nbsp; 2026-04-11 16:25:26</div>
+      <div class="meta">oms-api &nbsp;|&nbsp; 2026-04-11 18:17:20</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -62,7 +62,7 @@
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#4caf50">56.6%</div>
+            <div class="metric-value" style="color:#4caf50">56.5%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:7 &nbsp; 主要:66</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:12 &nbsp; 主要:63</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,8 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 7 Critical finding(s)</li>
-<li>AI Review: 66 Major finding(s) &gt;= threshold 5</li></ul>
+<li>AI Review: 12 Critical finding(s)</li>
+<li>AI Review: 63 Major finding(s) &gt;= threshold 5</li></ul>
         </div>
         
   
@@ -94,85 +94,85 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmRateCalcService.java:149-171</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/datasource/RateCardDataSource.java:163-709</code>
                 </div>
-                <div class="finding-desc">`doCalculateLmCost` 的新实现删除了原先对 `ap_lm_bill_id` 的已出账校验，导致同一 trackingNo 在已计入账单后仍可再次进入费率计算与落库流程。该变更会直接影响已出账结算数据，属于资金计算与账务完整性风险。</div>
-                <div class="finding-suggestion">💡 修复建议：在 `doCalculateLmCost` 开始处恢复并保留“已出账即拒绝重算”的校验：按 `trackingNo + billingType` 查询结算记录，若任一记录 `apLmBillId != null` 则立即返回或抛出业务异常，并为该路径补充回归测试。</div>
+                <div class="finding-desc">生效区间判定被改为右开区间：`endDate &gt; targetDate`。这与原先代码/注释体现的闭区间语义不同，会在 `targetDate == endDate` 时把原本有效的费率直接判为失效。RateCard 用于计费/结算，边界日命中错误会直接导致取价失败或命中错误版本，属于资金计算风险。</div>
+                <div class="finding-suggestion">💡 修复建议：确认数据库中 `end_date` 的业务语义后再修改判定规则；若历史数据按闭区间维护，应保持 `endDate &gt;= targetDate`（如 `!endDate.before(targetDate)`），或在切换到左闭右开前完成全量数据迁移并增加兼容保护。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArAdjustmentService.java:222-255</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArAdjustmentService.java:252-253</code>
                 </div>
-                <div class="finding-desc">这里新增的增量金额计算先读取 `oldTotalFeeAmount`，随后用 `request.getAdjustedAmount().subtract(originalAdjustedAmount)` 推导 `newTotalFeeAmount` 并传给 `recalculateReceivableIncremental(...)`。该过程没有体现任何行锁/版本校验/重新聚合，若同一 settlement 上并发发生其他 adjustment 变更或导入，本次使用的 `oldTotalFeeAmount` 会过期，最终把错误的新总金额写入后续 AR 重算流程，属于直接的资金金额计算错误风险。</div>
-                <div class="finding-suggestion">💡 修复建议：不要基于无锁的历史快照做金额增量推导。应在同一事务内对 settlement/adjustment 做悲观锁或乐观锁校验，并在更新后基于数据库权威数据重新聚合总金额；若继续走增量路径，至少在 `recalculateReceivableIncremental(...)` 前校验当前版本未变化，否则回退到全量重算。</div>
+                <div class="finding-desc">这里用先前查询得到的 `oldTotalFeeAmount` 加本次 `adjustmentDelta` 直接推导 `newTotalFeeAmount`，再做增量重算。该计算未展示任何针对同一 settlement 的并发串行化或版本校验；若两个调整请求并发修改同一 settlement，不同事务可能基于相同旧总额各自计算新值，导致后续 receivable 增量重算按错误基线执行，形成金额漂移。</div>
+                <div class="finding-suggestion">💡 修复建议：对同一 settlement 的 adjustment 更新引入并发控制，例如数据库行锁/乐观锁版本号，或在持锁状态下重新汇总 settlement 总金额后再触发重算；若无法保证串行化，应回退为事务内全量重算而非基于旧值做增量推导。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArReceivableAsyncService.java:237-244</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArRateCalcService.java:46-63</code>
                 </div>
-                <div class="finding-desc">回滚流程被明确设计为“各步骤独立自动提交”，并在新增第 3 步删除 adjustment 后继续沿用该模式。若步骤 2/3 已提交、步骤 4 重置 receivable 状态失败，系统会留下“发票/调整已删，但 receivable 仍未进入 REVOKED”的部分回滚状态，属于资金相关事务边界错误，可能导致后续重试、对账或导出基于不一致数据继续执行。</div>
-                <div class="finding-suggestion">💡 修复建议：将整段回滚放入单一数据库事务中，确保 settlement/mapping/invoice/adjustment 删除与 receivable 状态重置原子提交；如果受分库分表限制无法做单事务，至少引入补偿状态机，先把 receivable 标记为明确的中间失败态，并保证恢复/重试逻辑只在一致快照上运行。</div>
+                <div class="finding-desc">新增逻辑在 `parcelService.calculateAR(...)` 失败后，仍会继续执行 `sendArSettlementGenerateRequest(...)`，最后才重新抛出异常。这样会把“AR 计算失败”的包裹继续推进到结算生成流程，导致基于不完整或旧 AR 数据生成应收结算，属于直接的资金计算错误风险。</div>
+                <div class="finding-suggestion">💡 修复建议：当 `calculateAR` 抛出异常时立即中止后续结算事件发送；只有 AR 计算成功后才允许调用 `sendArSettlementGenerateRequest(...)`。如果确需保留失败消息进入死信队列，也应先跳过结算发送，再重新抛出异常。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArSettlementDomesticDetailService.java:174-176</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArReceivableAsyncService.java:236-245</code>
                 </div>
-                <div class="finding-desc">新增 adjustment 映射时，对同一 `settlementId + chargeCode` 直接使用 `Map.put(...)` 覆盖旧值。只要导入、补录或重试产生多条同 chargeCode 的 adjustment，前面的金额会被静默丢弃，后续 `getFeeByChargeCode` 与 `calculateNetCharge` 都会基于最后一条记录计算，造成导出金额被低估或篡改。</div>
-                <div class="finding-suggestion">💡 修复建议：在装载 adjustment 时按 `settlementId + chargeCode` 做显式聚合或唯一性校验：若业务允许多条记录则用 `BigDecimal::add` 累加；若不允许，则在发现重复时直接抛错并阻断导出，同时建议增加数据库唯一约束。</div>
+                <div class="finding-desc">新增 adjustment 删除仍沿用“每步独立自动提交”的回滚流程，且这里显式接受步骤 1-3 先提交后失败的情况。若在删除 settlement mapping / invoice / adjustment 之后、重置 receivable 金额与状态之前抛错，系统会留下“账单主体仍未回滚，但明细和调整已被物理删除”的半回滚状态，造成应收金额与底层数据不一致，属于事务边界导致的资金风险。</div>
+                <div class="finding-suggestion">💡 修复建议：将回滚链路至少包裹在单一事务中，确保 settlement、mapping、invoice、adjustment 与 receivable 状态重置原子提交；若受异步/分片限制无法单事务完成，需引入补偿机制和明确的中间状态，禁止在主体状态未切换前删除财务明细。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-infrastructure/src/main/java/io/speedx/oms/config/ApLmBillConfig.java:103</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArSettlementDomesticDetailService.java:171-177</code>
                 </div>
-                <div class="finding-desc">`ap.lm.bill.download-link.secret` 被改为允许空字符串默认值。若某环境漏配该配置，下载链接 HMAC 将退化为使用公开可预测的空密钥，攻击者可自行伪造有效签名，导致受保护的下载链接失去完整性校验。</div>
-                <div class="finding-suggestion">💡 修复建议：去掉默认值并在启动时强校验该配置非空，例如改为无默认值注入并在 `@PostConstruct`/配置校验中拒绝空白 secret；同时为本地环境通过独立配置文件显式提供仅用于开发的随机 secret。</div>
+                <div class="finding-desc">将调整记录装入 `Map&lt;String, BigDecimal&gt;` 时直接用 `put(chargeCode, adjustment.getAdjustedAmount())` 覆盖同一 `settlementId + chargeCode` 的已有值。只要同一费用项存在多条 adjustment，新逻辑就会随机以“最后一条”为准，导致导出明细和 `netCharge` 金额被低估或高估，属于资金计算错误。</div>
+                <div class="finding-suggestion">💡 修复建议：明确多条 adjustment 的合并语义，并在构建 `adjustmentMapBySettlementId` 时实现一致规则；若业务上允许累加，改为 `merge(chargeCode, amount, BigDecimal::add)`，若只允许唯一一条，则在读取阶段检测重复并直接报错阻断导出。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-infrastructure/src/main/java/io/speedx/oms/infrastructure/db/repository/RateCardRepository.java:176-181</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/datasource/RateCardDataSource.java:155-172</code>
                 </div>
-                <div class="finding-desc">`findByVersionAndZone` 将 `zone` 参数声明为 `String`，但同一仓储中现有所有 `zone` 查询参数都是 `Integer`。这里的 JPQL 条件 `a.zone = :zone` 很可能与实体字段类型不一致，运行时会出现参数绑定类型错误，或在数据库侧发生隐式转换导致查不到数据。</div>
-                <div class="finding-suggestion">💡 修复建议：将方法签名和 `@Param(&quot;zone&quot;)` 的类型改为与实体字段一致的 `Integer`；如果调用方拿到的是字符串，先在服务层显式转换并校验。</div>
+                <div class="finding-desc">新增 `usingRateCardVersionTable=true` 分支后，`queryRateCardAllVersionInfo` 只填充 `versions`，明确不再填充 `versionZipCodes/versionZones`。这改变了 `RateCardVersionResult` 的返回契约：同一方法在不同开关下返回的数据结构不一致，调用方若仍依赖这两个字段进行校验、审计或降级处理，会在开关切换后出现空映射/行为漂移。</div>
+                <div class="finding-suggestion">💡 修复建议：保持返回对象契约稳定：要么在新路径中继续填充 `versionZipCodes/versionZones`，要么拆分为新的返回类型/新方法并让调用方显式适配；同时为特性开关两侧补充契约测试。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/api/SnsApi.java:236-240</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArRateCalcService.java:36</code>
                 </div>
-                <div class="finding-desc">新增的 `additionalRecipients` 被直接拼接进收件人列表，未做格式校验或换行字符过滤。若该值可被外部输入影响，攻击者可注入 `\r`/`\n` 或伪造地址，导致通知被发送到非预期收件人，且该未清洗值还会继续进入后续日志与下游通知请求。</div>
-                <div class="finding-suggestion">💡 修复建议：在拼接前对 `additionalRecipients` 做严格白名单校验：按逗号拆分后逐个校验为合法邮箱地址，拒绝包含 `\r`、`\n`、制表符等控制字符的值；校验失败时直接丢弃或报错，不要原样拼接。</div>
+                <div class="finding-desc">`processArRateCalc` 新增 `throws Exception`，将原本无需处理的公共方法改为抛出受检异常。这会直接改变调用方编译契约：所有现有调用点都必须补充 `catch` 或继续 `throws`，否则会出现编译失败或接口不兼容问题。</div>
+                <div class="finding-suggestion">💡 修复建议：避免在该公共方法签名上暴露宽泛的受检异常。优先改为在方法内包装为运行时异常，或收敛为明确的业务异常类型；如果必须保留受检异常，需要同步确认并修改所有调用方签名与测试。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/datasource/RateCardDataSource.java:706-709</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArSettlementInternationalDetailService.java:170-179,552-555</code>
                 </div>
-                <div class="finding-desc">这里将版本生效区间从原来的右闭区间改成了右开区间：`endDate &gt;= targetDate` 变为 `endDate &gt; targetDate`。如果现网 `end_date` 数据仍按“截止当天仍生效”的语义维护，那么在 `targetDate == endDate` 的当天会直接判定为失效，导致费率卡命中失败；同一改动也同步出现在后面的多处过滤逻辑中（如 484-487、532-535、608-611、685-688），属于明确的边界回归。</div>
-                <div class="finding-suggestion">💡 修复建议：先确认 `rate_card`/`rate_card_version` 表中 `end_date` 的业务语义是否已统一为“失效时刻的上边界”。如果没有完成数据口径迁移，应保持旧判断：`boolean endValid = (endDate == null) || !endDate.before(targetDate);`，对应 stream 过滤也恢复为 `r.getEndDate() == null || !r.getEndDate().before(dateToQuery)`。如果确实要改成左闭右开，需要同时补充数据迁移与回归测试，覆盖 `targetDate == endDate` 的场景。</div>
+                <div class="finding-desc">调整金额映射在构建时没有过滤 `adjustedAmount == null`，而 `getFeeByChargeCode` 只要 `adjustmentMapByChargeCode.containsKey(...)` 就直接返回 map 中的值。这样一旦 adjustment 记录存在但调整金额为空，会把原始 fee 金额覆盖成 `null`，导出字段出现空值。</div>
+                <div class="finding-suggestion">💡 修复建议：构建 `adjustmentMapBySettlementId` 时过滤空调整金额，或改成仅在 `adjustedAmount != null` 时才覆盖原始 fee，例如先 `BigDecimal adjusted = map.get(codeUpper); if (adjusted != null) return adjusted;`，否则继续回退到 settlement fee。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/hub/ApLmBillHubResolver.java:50</code>
+                    <code class="finding-loc">oms-infrastructure/src/main/java/io/speedx/oms/infrastructure/db/repository/RateCardRepository.java:174-178</code>
                 </div>
-                <div class="finding-desc">`result.getHub().toUpperCase()` 未对 `getHub()` 做空值保护。若数据库中存在 `hub` 为 `null` 的异常账单记录，调用该分支会直接抛出 `NullPointerException`，返回 500，而不是受控的业务异常。这会把脏数据问题放大为可触发的服务可用性风险。</div>
-                <div class="finding-suggestion">💡 修复建议：在比较前先校验 `result.getHub()` 非空且非空串；为空时抛出明确的 `BizException`（例如“bill hub missing”），避免进入 `toUpperCase()`。同时建议在数据层增加非空约束或查询过滤。</div>
+                <div class="finding-desc">新方法 `findByVersionAndZone` 将 `zone` 参数声明为 `String`，但同文件其他相关查询一直使用 `Integer zone`。如果 `RateCard.zone` 实体字段是数值类型，JPA 在绑定 `:zone` 时会发生类型不匹配，运行时直接报错。</div>
+                <div class="finding-suggestion">💡 修复建议：将方法签名中的 `zone` 改为与实体字段一致的类型，例如 `@Param(&quot;zone&quot;) Integer zone`；若数据库列实际为字符串，也应统一当前仓库内所有 zone 查询参数类型，避免调用方混用。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/hub/ApLmBillHubResolver.java:50-53</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/api/SnsApi.java:236-242</code>
                 </div>
-                <div class="finding-desc">这里直接对 `result.getHub()` 调用 `toUpperCase()`，如果仓储查询到了记录但 `hub` 字段为空，会在校验阶段触发空指针，导致请求以 500 失败而不是按预期返回业务异常。`HubResolver` 的默认实现已经对 `targetHub == null` 做了保护，但该自定义分支绕过了这层判断。</div>
-                <div class="finding-suggestion">💡 修复建议：在大小写归一化前先判空，并对空 hub 返回明确的业务异常。例如：`String hub = result.getHub(); if (hub == null || hub.isEmpty()) { throw new BizException(&quot;AP LM Bill hub is missing: &quot; + ctx.getEntityId()); } if (!ctx.getAllowedHubs().contains(hub.toUpperCase())) { ... }`。</div>
+                <div class="finding-desc">新增的 `additionalRecipients` 被直接 `trim()` 后拼接进收件人列表，未做邮箱格式、分隔符或控制字符校验。若该参数可被外部输入影响，攻击者可注入额外收件人，甚至利用 CR/LF 等特殊字符污染下游通知请求，导致信用余额告警被发送到非预期地址，形成敏感业务信息外泄。</div>
+                <div class="finding-suggestion">💡 修复建议：在拼接前对 `additionalRecipients` 做严格校验：仅允许逗号分隔的合法邮箱地址，显式拒绝 `\r`、`\n` 等控制字符；解析后按白名单域名或允许列表过滤，并在最终请求前去重。若该参数来源不可信，优先改为服务端按用户关系查询收件人，而不是直接接受原始地址串。</div>
             </div>
-            <p class="more-note">... 还有 63 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 65 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
