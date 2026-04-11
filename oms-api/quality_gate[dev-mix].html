@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">oms-api &nbsp;|&nbsp; 2026-04-11 20:35:44</div>
+      <div class="meta">oms-api &nbsp;|&nbsp; 2026-04-11 23:18:01</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -56,13 +56,13 @@
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#4caf50">37.9%</div>
+      <div class="metric-value" style="color:#4caf50">38.0%</div>
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#4caf50">56.5%</div>
+            <div class="metric-value" style="color:#4caf50">56.6%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:8 &nbsp; 主要:56</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:13 &nbsp; 主要:112</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,8 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 8 Critical finding(s)</li>
-<li>AI Review: 56 Major finding(s) &gt;= threshold 5</li></ul>
+<li>AI Review: 13 Critical finding(s)</li>
+<li>AI Review: 112 Major finding(s) &gt;= threshold 5</li></ul>
         </div>
         
   
@@ -94,85 +94,85 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/datasource/RateCardDataSource.java:489-490</code>
+                </div>
+                <div class="finding-desc">将费率生效区间从原先的闭区间语义改为左闭右开后，`endDate == targetDate` 的记录会被判定为失效。该变更同时在多个费率过滤点和版本有效性判断中重复出现，但 diff 中未见任何存量数据迁移、字段语义切换或兼容逻辑；若现网 `endDate` 一直按“截止当天仍生效”维护，这会在边界日直接查不到费率，导致计费/结算金额错误，属于资金计算风险。</div>
+                <div class="finding-suggestion">💡 修复建议：在切换为左闭右开语义前，先保证数据层 `endDate` 已统一迁移为“失效时刻”而非“最后生效日”；若无法完成迁移，应保持现有闭区间判断，或在查询前将日期型 `endDate` 归一化到次日零点再做右开比较。同时补充回归测试，覆盖 `targetDate == endDate` 的费率查询、版本命中和结算金额场景。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArAdjustmentService.java:222,246-259</code>
+                </div>
+                <div class="finding-desc">这里先读取 `oldTotalFeeAmount`，再用 `newTotalFeeAmount = oldTotalFeeAmount + adjustmentDelta` 做增量重算，但新增代码未体现任何行级锁、版本校验或串行化控制。若同一 settlement 上并发发生其他 adjustment 的新增/更新/删除，当前线程会基于过期快照计算新总额，导致 receivable 金额被覆盖为错误值，属于资金计算并发风险。</div>
+                <div class="finding-suggestion">💡 修复建议：对同一 settlement 的 adjustment 变更引入并发控制：例如对 settlement/adjustment 记录加悲观锁，或使用版本号做乐观锁校验；若无法保证串行化，应在写入后重新从数据库聚合最新总额再触发 recalculation，而不是基于旧快照做 delta 计算。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
                     <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArRateCalcService.java:46-67</code>
                 </div>
-                <div class="finding-desc">`parcelService.calculateAR(req, parcel)` 失败后仅记录异常并继续执行 `sendArSettlementGenerateRequest(...)`。这会在 AR 计算未成功落库/更新的情况下继续触发结算生成，形成“计费失败但结算继续”的资金链路不一致，可能基于旧数据或缺失数据生成 AR settlement，属于资金计算错误风险。</div>
-                <div class="finding-suggestion">💡 修复建议：将结算生成严格放在 AR 计算成功之后执行：若 `calculateAR` 抛异常，应立即中止当前方法并让消息进入重试/死信；或显式增加成功标记，仅在 AR 计算成功时才调用 `sendArSettlementGenerateRequest(...)`。同时补充测试覆盖“AR 计算异常时不得发送结算事件”。</div>
+                <div class="finding-desc">新增逻辑在 `parcelService.calculateAR(req, parcel)` 失败后仅缓存异常并继续发送 `sendArSettlementGenerateRequest(...)`。这会在 AR 未成功计算时继续触发结算生成，结算侧读取到的可能是旧值或缺失值，直接引入资金计算错误。</div>
+                <div class="finding-suggestion">💡 修复建议：将“发送 AR settlement event”严格放在 AR 计算成功之后；若 `calculateAR` 抛错，应立即中断当前流程，不允许继续下发结算生成请求。若必须解耦，可先落库标记失败状态，由补偿任务在 AR 成功后再触发结算。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArReceivableAsyncService.java:237-244</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArRecalculationService.java:145-147</code>
                 </div>
-                <div class="finding-desc">新增回滚逻辑明确采用“各步骤独立自动提交”的方式，并在第3步新增 `deleteByReceivableId` 删除 adjustment 记录。如果后续第4步重置应收状态/金额失败，前面已提交的 settlement、invoice、adjustment 删除无法回滚，会留下‘业务单据仍非 REVOKED，但关键财务明细已被部分清空’的中间态，属于财务回滚场景中的事务边界错误。</div>
-                <div class="finding-suggestion">💡 修复建议：将 settlement/invoice/adjustment 删除与 receivable 状态/金额重置纳入同一数据库事务；若受分库分表限制无法单事务完成，至少引入可靠补偿机制和显式中间状态，避免对外暴露已删明细但未完成回滚的 receivable。</div>
+                <div class="finding-desc">这里将 `netSuitJobName == null` 的统计结果直接 `continue` 跳过，但同一方法后续又会删除所有未进入 `updatedInvoiceIds` 的既有 invoice。对仅存在未映射 settlement 的 facility，会出现“无新 invoice 被更新/创建，但旧 invoice 被清理”的结果；结合本次新增的 `updateReceivableTotalsFromInvoices` 按 invoice 汇总总额，最终会把该 facility 的应收金额从账单中抹掉，属于资金计算错误。</div>
+                <div class="finding-suggestion">💡 修复建议：不要直接跳过 `jobName == null` 的分组后再统一删旧数据。至少应先判定该 facility 是否仍有未映射 settlement 并保留对应 invoice，或为未映射数据建立明确的占位 jobName/独立汇总路径，确保 receivable 总额不会因 invoice 清理而丢失。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArSettlementSheinDetailService.java:606-630</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArReceivableAsyncService.java:239-246</code>
                 </div>
-                <div class="finding-desc">`calculateNetCharge` 在按 `fees` 逐条累加时，只要某个 `chargeCode` 存在 adjustment，就对每一条同编码 fee 都重复使用同一个 `adjustedAmount`。当同一结算单内存在多个相同 `chargeCode` 的 fee 记录时，会把同一调整金额重复计入总额，导致导出账单总金额被放大，属于资金计算错误。</div>
-                <div class="finding-suggestion">💡 修复建议：按 `chargeCode` 维度先聚合原始 fee，再用 adjustment 覆盖该编码的聚合结果；或在累加前对已应用 adjustment 的 `chargeCode` 去重，确保每个调整金额只参与一次净额计算。补充包含“同一 chargeCode 多条 fee + 单条 adjustment”的单测。</div>
-            </div>
-            <div class="finding-card finding-critical">
-                <div class="finding-header">
-                    <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/batchtask/processor/ApLmBillRecalculationProcessor.java:125-130</code>
-                </div>
-                <div class="finding-desc">在分页重算存在失败页时，代码仍会在 `failedCount` 判断之前执行 `calculateTotalApLmBillAmount(apLmBill)`。这会把“部分成功、部分失败”的中间态结算结果汇总进账单总金额，导致任务虽返回失败，但账单金额已经被持久化为不一致状态，属于资金计算/事务边界错误。</div>
-                <div class="finding-suggestion">💡 修复建议：将账单总金额重算移动到 `failedCount == 0` 分支内，确保仅在所有分页都成功后才更新总金额；如果分页内会落库，还应补充事务或补偿逻辑，在任一分页失败时回滚已更新的 settlement 和 bill total，避免部分成功状态对外可见。</div>
-            </div>
-            <div class="finding-card finding-critical">
-                <div class="finding-header">
-                    <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-facade-impl/src/main/java/io/speedx/oms/facade/impl/MqFacadeImpl.java:309-333</code>
-                </div>
-                <div class="finding-desc">将空/非法 MQ 消息从返回错误响应改为直接抛出 `IllegalArgumentException`，结合同一方法后续的 `throw e`，会把单条畸形消息升级为未处理异常。Kafka 消费场景下这会把“坏消息”变成 poison message，持续阻塞对应分区或触发监听器失败，存在被恶意构造消息导致结算消费不可用的风险。</div>
-                <div class="finding-suggestion">💡 修复建议：对反序列化失败和必填字段缺失继续做本地兜底处理：记录必要上下文后返回明确失败响应或进入死信队列，不要把可预期的输入校验错误直接抛出到监听器框架层。</div>
+                <div class="finding-desc">新增逻辑明确采用“每一步独立自动提交”的回滚策略，并新增了 `arAdjustmentRepository.deleteByReceivableId(receivableId)`。这会扩大账务回滚的非事务窗口：若删除 settlement/invoice/adjustment 后，后续 `resetArReceivableFinancialFields` 或操作记录写入失败，receivable 可能仍保持原状态，但调整项和发票已被物理删除，形成不可恢复的部分回滚，直接影响账务准确性。</div>
+                <div class="finding-suggestion">💡 修复建议：将 settlement 清理、invoice 删除、adjustment 删除、receivable 状态/金额重置纳入同一金融事务边界；如果受异步架构限制无法单事务提交，则至少引入可恢复的补偿机制和幂等状态机，避免出现“账务数据已删但单据状态未回滚”的中间态。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-facade-impl/src/main/java/io/speedx/oms/facade/impl/RateFacadeImpl.java:38</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/datasource/RateCardDataSource.java:740-778</code>
                 </div>
-                <div class="finding-desc">`getZipRateCardsByPoe(...)` 被直接改为 `return null;`，会让该接口在正常请求下返回空响应对象而不是 `BaseResponse`。上层 Feign/Controller/调用方如果继续按既有契约读取 `BaseResponse`，会出现空指针或直接返回 500，属于明确的功能回退。</div>
-                <div class="finding-suggestion">💡 修复建议：恢复原有返回逻辑，至少保证返回非空 `BaseResponse`。建议改回 `return BaseResponse.success(rateService.getZipRateCardsByPoe(pickUp, productCode, poe, currency, weightUom));`；如果需要临时兜底，也应返回明确的错误响应而不是 `null`。</div>
+                <div class="finding-desc">新增的 3 个公开查询方法直接把缓存中的可变对象返回给调用方：`versionZipCodes`、`versionZones` 以及 `List&lt;RateCardDto&gt;` 都没有做 defensive copy。上层一旦对返回结果做排序、增删或 put 操作，会直接污染 Caffeine 中的共享缓存，后续请求将读到被意外修改的数据。</div>
+                <div class="finding-suggestion">💡 修复建议：返回前复制缓存内容，避免暴露底层缓存引用。例如：`dto.setVersionZipCodes(new HashMap&lt;&gt;(cacheResult.getVersionZipCodes()))`；`dto.setVersionZones(new HashMap&lt;&gt;(cacheResult.getVersionZones()))`；列表返回 `return Collections.unmodifiableList(new ArrayList&lt;&gt;(rateCardDtos));` 或至少 `new ArrayList&lt;&gt;(rateCardDtos)`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-infrastructure/src/main/java/io/speedx/oms/infrastructure/db/repository/RateCardRepository.java:174-181</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/datasource/RateCardDataSource.java:741-762</code>
                 </div>
-                <div class="finding-desc">新方法 `findByVersionAndZone` 将 `zone` 参数声明为 `String`，但同一仓储内原有相关查询一直使用 `Integer zone`。如果 `RateCard.zone` 实际为数值类型，JPA 参数绑定会出现类型不匹配，导致运行时查询失败或查不到数据。</div>
-                <div class="finding-suggestion">💡 修复建议：将方法签名中的 `@Param(&quot;zone&quot;) String zone` 改为与实体字段一致的数值类型，例如 `Integer zone`；同时补充一个按 `zone=null` 和 `zone=具体值` 的查询测试，确保两种分支都能命中。</div>
+                <div class="finding-desc">`getRateCardVersionInfoCache` 直接把缓存中的 `versionZipCodes`/`versionZones` 引用塞进返回 DTO。若上层调用方对这些 `Map` 做增删改，会直接污染共享缓存内容，导致后续请求读到被篡改的数据；在单例数据源 + Caffeine 共享缓存场景下，这属于可跨线程传播的数据完整性风险。</div>
+                <div class="finding-suggestion">💡 修复建议：返回前对 `versionZipCodes` 和 `versionZones` 做防御性拷贝，或使用不可变集合包装；如果值对象内部仍可变，还需要做深拷贝。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/api/SnsApi.java:237-242</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArAdjustmentService.java:250-275</code>
                 </div>
-                <div class="finding-desc">`additionalRecipients` is appended into the outbound recipient list without any format or character validation. If this value is derived from external input, CR/LF or delimiter injection can expand the recipient set or poison the downstream notification payload, turning a credit reminder into an unintended mass-mail vector.</div>
-                <div class="finding-suggestion">💡 修复建议：Validate `additionalRecipients` as a strict allowlist of email addresses before concatenation. Reject entries containing CR, LF, semicolons, or other non-email characters, split on a single expected delimiter, and rebuild the recipient list from normalized validated addresses only.</div>
+                <div class="finding-desc">新增实现将调整后的金额重算完全放进 `updatedAdjustment.getReceivableId() != null` 分支中。对于未关联 receivable 的 adjustment，更新后既不会走增量重算，也看不到任何替代的 `updateSettlementTotalFeeAmount(...)` 刷新路径，`ar_settlement.total_fee_amount` 会停留在旧值，后续页面展示或依赖该汇总值的流程会出现错误。</div>
+                <div class="finding-suggestion">💡 修复建议：保留 settlement 级别的总金额刷新，不要依赖 receivable 关联。可在分支外先统一更新 settlement 汇总，再在有关联 receivable 时额外触发增量重算，例如：`updateSettlementTotalFeeAmount(updatedAdjustment.getSettlementId()); if (updatedAdjustment.getReceivableId() != null) { ...recalculateReceivableIncremental(...) }`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/hub/ApLmBillHubResolver.java:51</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArRecalculationService.java:143-146</code>
                 </div>
-                <div class="finding-desc">`result.getHub().toUpperCase()` assumes the projected hub is non-null. If the finance record exists but its hub column is null or dirty, this path throws `NullPointerException` and turns an authorization failure into a 500, creating a low-effort service disruption vector on the affected endpoint.</div>
-                <div class="finding-suggestion">💡 修复建议：Validate `result.getHub()` before calling `toUpperCase()`. If hub is missing, fail closed with a controlled `BizException` (for example 403/404 depending on contract) and log a sanitized diagnostic message.</div>
+                <div class="finding-desc">这里直接跳过 `netSuitJobName == null` 的统计分组，不会生成任何 invoice 记录；而同一变更又把应收总额改为完全从 invoice 表聚合。结果是这部分 settlement 金额会从 receivable 总额中丢失，出现账单金额被低估的业务错误。</div>
+                <div class="finding-suggestion">💡 修复建议：不要简单 `continue` 掉无 `netSuitJobName` 的分组。至少需要为这类 settlement 落一个可聚合的兜底 invoice（例如按 facility 维度合并），或在 `updateReceivableTotalsFromInvoices` 中补充这部分未映射 settlement 的金额。可增加回归用例：facility 下仅存在 `netSuitJobName=null` 的 settlement 时，刷新后 receivable.totalAmount 仍应等于 settlement 金额汇总。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/hub/ApLmBillHubResolver.java:53-58</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArRecalculationService.java:262-264</code>
                 </div>
-                <div class="finding-desc">这里直接对 `result.getHub()` 调用 `toUpperCase()`，当账单存在但 hub 字段为空时会触发 `NullPointerException`，导致请求以 500 失败，而不是返回可预期的业务异常。</div>
-                <div class="finding-suggestion">💡 修复建议：先缓存并校验 hub 再做大小写转换，例如：`String hub = result.getHub(); if (hub == null || hub.isEmpty()) { throw new BizException(&quot;AP LM Bill hub missing: &quot; + ctx.getEntityId()); } if (!ctx.getAllowedHubs().contains(hub.toUpperCase())) { ... }`。</div>
+                <div class="finding-desc">这里对 `facilityStatsList` 逐条调用 `refreshFacilityInvoice`，而 `refreshFacilityInvoice` 内部又会再次查询 settlement 统计和 invoice 列表，形成典型 N+1 数据库访问。receivable 下 facility 数量较大时，会显著放大数据库压力并拉长账单重算耗时，存在被大批量数据触发的可用性风险。</div>
+                <div class="finding-suggestion">💡 修复建议：改为批量预取本次 receivable 的 invoice/统计数据后在内存中分组处理，或提供按 receivable 一次性返回 facility+jobName 维度统计及现存 invoice 的批量接口，避免循环内重复访问数据库。</div>
             </div>
-            <p class="more-note">... 还有 54 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 115 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
