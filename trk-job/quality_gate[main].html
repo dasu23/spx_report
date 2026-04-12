@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">trk-job &nbsp;|&nbsp; 2026-03-31 17:26:34</div>
+      <div class="meta">trk-job &nbsp;|&nbsp; 2026-04-12 10:26:35</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -56,13 +56,13 @@
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#4caf50">6.6%</div>
+      <div class="metric-value" style="color:#4caf50">9.2%</div>
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#f44336">1.6%</div>
+            <div class="metric-value" style="color:#ff9800">49.0%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,16 +73,17 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:2</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:4</div>
       <div class="metric-threshold">已抑制: 0</div>
-      <div class="metric-note">已检测到问题，但当前配置未阻断流水线</div>
+      
     </div>
   </div>
 
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube quality gate status: ERROR</li></ul>
+            <ul><li>SonarQube quality gate status: ERROR</li>
+<li>AI Review: 4 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -93,18 +94,34 @@
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/api/SAPC4CApiClient.java:248</code>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/service/SAPService.java:342</code>
                 </div>
-                <div class="finding-desc">将 `patchBody` 从 `debug` 提升到 `info` 级别输出，会把发送给 SAP C4C 的完整补丁内容写入常规生产日志。结合本次变更中的报文构造逻辑，payload 可能包含 `ShipToAddress`、`ClientName`、`Hub`、`DSP` 等业务/个人信息，形成敏感数据泄露风险；`info` 日志通常默认采集、长期保留且更易被横向访问。</div>
-                <div class="finding-suggestion">💡 修复建议：不要在 `info` 级别记录完整请求体。改为仅记录 `caseId`、操作结果和必要的追踪标识；如果确需排障，保留在 `debug` 并对地址、客户名等字段做脱敏/白名单输出。</div>
+                <div class="finding-desc">将 `trackingNo` 直接拼接进 HTML 模板后发送到 SAP note-service，未做任何 HTML 转义或白名单过滤。若运单号来自外部系统且可包含 `&lt;`、`&gt;`、引号等字符，这里会把恶意标签/事件处理器原样写入下游备注，形成持久化 HTML/脚本注入风险。</div>
+                <div class="finding-suggestion">💡 修复建议：在生成 `htmlContent` 前对 `trackingNo` 做 HTML 转义（如 `StringEscapeUtils.escapeHtml4`），或改为使用模板引擎的安全占位渲染；同时对允许进入 HTML 的字段建立字符白名单。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/service/SAPService.java:187</code>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/service/SAPService.java:77</code>
                 </div>
-                <div class="finding-desc">`partyRole` 从固定值改为读取 `properties.getAccountPartyRole()`，但本次变更里只新增了配置字段，没有看到默认值、非空校验或回退逻辑。旧环境若未同步新增配置，运行时会向下游发送 `null`，容易导致 SAP 请求校验失败，属于直接的业务功能回归风险。</div>
-                <div class="finding-suggestion">💡 修复建议：为该配置增加启动期校验或兼容默认值，至少保留原有回退值。例如：`String partyRole = StrUtil.blankToDefault(properties.getAccountPartyRole(), &quot;Z001&quot;); datas.put(&quot;partyRole&quot;, partyRole);`；更稳妥的是在配置类上增加校验，缺失时启动失败。</div>
+                <div class="finding-desc">这里直接对 `ro.getExtensions().getTrackingNumber()` 调用 `equals`，当 C4C 回调缺少 `extensions` 或 `trackingNumber` 为空时会触发空指针，导致 `process` 整体失败。这个空指针是本次改动新增的，旧逻辑没有这次显式比较。</div>
+                <div class="finding-suggestion">💡 修复建议：先做空值保护，再比较 tracking 号，例如：`String newTrackingNo = ro.getExtensions() == null ? null : ro.getExtensions().getTrackingNumber(); if (StrUtil.isBlank(newTrackingNo)) { return; } if (!Objects.equals(newTrackingNo, dbObj.getTrackingNo())) { ... }`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/service/SAPService.java:80-81</code>
+                </div>
+                <div class="finding-desc">新增的 `else { return; }` 会让“本地已存在且 trackingNo 未变化”的 case 直接跳过后续 `updateFieldsByCaseId` 流程。这样重复收到同一 case 的同步/回调时，不再刷新 Shipment Details，也不会重新评估关单逻辑，属于明显的行为回退。</div>
+                <div class="finding-suggestion">💡 修复建议：不要在这里直接 `return`；如果只是想避免重复 `save`，可以保留后续更新流程，例如仅在 tracking 变化时执行 `caseDao.save(dbObj)`，但无论新旧 case 都继续执行 `updateFieldsByCaseId(ro.getId(), null)`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">trk-job/src/main/java/com/miq/trkjob/jobhandler/ResendSAPCaseNoteJob.java:46-58</code>
+                </div>
+                <div class="finding-desc">重试任务按 `FAILED` 状态批量拉取后直接发送并在成功后再更新状态，缺少抢占/状态迁移保护。若任务并发执行或上一次执行超时未结束，多个执行器可同时读到同一批 `FAILED` 记录并重复调用 `addNoteToSAP`，导致同一 Case 被重复写入备注。</div>
+                <div class="finding-suggestion">💡 修复建议：在发送前先通过条件更新将状态原子地从 `FAILED` 改为 `PROCESSING`（或引入乐观锁/`select ... for update`），仅抢占成功的记录才允许继续发送；发送完成后再落最终状态。</div>
             </div>
             
         </div>
