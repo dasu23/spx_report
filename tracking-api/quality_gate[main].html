@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">tracking-api &nbsp;|&nbsp; 2026-03-31 17:38:26</div>
+      <div class="meta">tracking-api &nbsp;|&nbsp; 2026-04-12 10:17:40</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -62,7 +62,7 @@
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#f44336">25.9%</div>
+            <div class="metric-value" style="color:#4caf50">56.0%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:1</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:3</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,29 +83,37 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 1 Critical finding(s)</li></ul>
+<li>AI Review: 3 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
         <div class="findings-section">
             <h3>AI 代码审查发现</h3>
             
-            <div class="finding-card finding-critical">
-                <div class="finding-header">
-                    <span class="finding-badge">严重</span>
-                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/api/SAPC4CApiClient.java:248</code>
-                </div>
-                <div class="finding-desc">将 `patchBody` 从 `debug` 提升为 `info` 级别记录，会在生产常规日志中持久化输出 SAP C4C case 的完整补丁请求体。该请求体包含工单扩展字段，结合本次变更上下文可见其中可能带有 `ShipToAddress`、`ClientName`、`Hub` 等客户/地址信息，属于敏感业务数据泄露风险。</div>
-                <div class="finding-suggestion">💡 修复建议：不要在 `info`/`warn` 级别打印完整请求体。改为仅记录 `caseId`、字段数量或脱敏后的白名单字段；如确需排障，保留在受控的 `debug` 日志并对地址、客户名等字段做脱敏/截断。</div>
-            </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/service/SAPService.java:187</code>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/service/SAPService.java:301-319</code>
                 </div>
-                <div class="finding-desc">`partyRole` 从固定值改为读取配置 `properties.getAccountPartyRole()`，但当前变更没有提供兜底值或非空校验。若配置中心/本地配置未同步新增项，这里会写入 `null`，导致提交给 SAP C4C 的组织信息缺少必填角色，出现建单/更新失败的业务回归。</div>
-                <div class="finding-suggestion">💡 修复建议：在写入前增加非空校验，并保留兼容兜底值，例如：`String partyRole = StrUtil.blankToDefault(properties.getAccountPartyRole(), &quot;Z001&quot;); datas.put(&quot;partyRole&quot;, partyRole);`。同时为新增配置项补充默认值或启动期校验，避免线上因漏配触发功能异常。</div>
+                <div class="finding-desc">新增备注的幂等实现只依赖 `(case_id, event_code)` 唯一键。首次调用一旦因为网络波动或下游异常落成 `FAILED`，后续同一关闭事件会在 `saveAndFlush` 时被直接去重返回 `null`，导致备注永久无法补发。当前 diff 中虽然新增了 `findByStatusOrderByUpdatedAtAsc`，但没有任何重试或补偿逻辑落地。</div>
+                <div class="finding-suggestion">💡 修复建议：把“去重”与“失败可重试”分开处理。可在命中唯一键后查询已有记录：若状态为 `FAILED`，允许重试并更新状态；或补充明确的失败重试任务消费 `PENDING/FAILED` 记录。至少要避免 `FAILED` 被永久短路。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/service/SAPService.java:343</code>
+                </div>
+                <div class="finding-desc">`addNoteToSAP` 将模板内容中的 `{tracking_no}` 直接替换为原始 `trackingNo`，随后作为 `htmlContent` 提交到 C4C note-service。由于目标字段明确是 HTML 备注，这里未做任何 HTML 转义或白名单净化，若运单号或模板配置中包含 HTML/脚本片段，会把可执行内容写入下游系统，形成存储型 HTML 注入/XSS 风险。</div>
+                <div class="finding-suggestion">💡 修复建议：在拼接 `htmlContent` 前，对 `trackingNo` 等动态占位值做严格的 HTML 转义；如果业务必须支持少量富文本，改为对最终 HTML 进行白名单净化（如仅允许 `b`、`br`、`p` 等安全标签），并对模板配置增加校验，禁止脚本、事件属性和危险 URL。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/service/SAPService.java:77-80</code>
+                </div>
+                <div class="finding-desc">这里改成了直接调用 `ro.getExtensions().getTrackingNumber().equals(dbObj.getTrackingNo())`。当 `trackingNumber` 为 `null` 时会触发空指针，导致 `process` 在处理异常 SAP case 数据时直接失败。这个空指针风险是本次新增判断引入的。</div>
+                <div class="finding-suggestion">💡 修复建议：改为空安全比较，例如 `Objects.equals(ro.getExtensions().getTrackingNumber(), dbObj.getTrackingNo())`，并在进入分支前对 `ro.getExtensions()` / `trackingNumber` 做判空保护。示例：`String trackingNo = ro.getExtensions() == null ? null : ro.getExtensions().getTrackingNumber(); if (!Objects.equals(trackingNo, dbObj.getTrackingNo())) { ... }`。</div>
             </div>
             
         </div>
