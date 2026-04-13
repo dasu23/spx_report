@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-ext-api &nbsp;|&nbsp; 2026-04-13 11:26:07</div>
+      <div class="meta">pos-ext-api &nbsp;|&nbsp; 2026-04-13 13:29:47</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -56,13 +56,13 @@
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#4caf50">14.2%</div>
+      <div class="metric-value" style="color:#4caf50">13.8%</div>
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#ff9800">47.1%</div>
+            <div class="metric-value" style="color:#ff9800">46.7%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:5</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:3</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,7 +83,7 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube analysis timed out after 1 minutes</li>
-<li>AI Review: 5 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 3 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,42 +94,26 @@
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/api/TrkApiService.java:51-54</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/api/TrkApiService.java:49-52</code>
                 </div>
-                <div class="finding-desc">`getAllHolidaysByState()`把 `findStateHolidayDates()` 返回的第二列直接强转为 `String`。JPQL `SELECT m.state, h.holidayDate` 返回的是实体字段原始类型；如果 `holidayDate` 映射为 `Date`/`LocalDate`，这里会在运行时触发 `ClassCastException`，导致 tracking-service 拉取假期数据失败。</div>
-                <div class="finding-suggestion">💡 修复建议：改为显式类型投影或在服务层做安全转换，例如先定义 DTO/接口投影承接 `state` 和 `holidayDate`，再统一格式化为字符串；至少应改成 `row -&gt; formatHolidayDate(row[1])`，在方法内按 `Date`/`LocalDate`/`String` 分支处理。</div>
+                <div class="finding-desc">`findStateHolidayDates()` 的查询结果第二列来自 `h.holidayDate`，这里被直接强转为 `String`。如果实体字段类型是 `Date`/`LocalDate`/`Timestamp`（JPA 中更常见），运行时会在聚合时触发 `ClassCastException`，导致 tracking-service 拉取假期数据失败。</div>
+                <div class="finding-suggestion">💡 修复建议：不要对 `Object[]` 做字符串硬转型。改为显式投影或在这里做类型转换，例如返回 DTO/接口投影；或使用 `row[1].toString()` 仅作为兜底，并按实际日期类型统一格式化。示例：`Collectors.mapping(row -&gt; ((LocalDate) row[1]).toString(), Collectors.toList())`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerV2ServiceImpl.java:257-280</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerV2ServiceImpl.java:257-274</code>
                 </div>
-                <div class="finding-desc">`addParcelsToContainer()` 通过 `findByTrackingNumberIn(trackingNumbers)` 只处理数据库里能查到的标签，未校验返回数量是否与入参一致；`addParcelsAndCloseContainer()` 随后无条件把容器置为 `CLOSED`。当硬件上报中存在不存在/重复/大小写不一致的 tracking number 时，会出现“部分包裹未关联但容器已关闭”的不一致状态。</div>
-                <div class="finding-suggestion">💡 修复建议：在保存前校验 `labels.size()` 与去重后的 `trackingNumbers.size()` 一致，不一致时抛错并禁止关箱；同时把缺失 tracking number 明细写入日志，便于现场排查。</div>
+                <div class="finding-desc">`addParcelsToContainer`/`addParcelsAndCloseContainer` 直接用 `findByTrackingNumberIn(trackingNumbers)` 的返回结果落库并关闭容器，但没有校验查询结果是否覆盖了本次上报的全部追踪号。只要有追踪号不存在、重复或被 DAO 去重，方法就会静默少关联部分包裹，随后 `addParcelsAndCloseContainer` 仍把容器置为 `CLOSED`，造成包裹漏关联且难以补救。</div>
+                <div class="finding-suggestion">💡 修复建议：在保存前校验 `labels` 与请求参数的一致性：对 `trackingNumbers` 去重后比对数量，并找出缺失单号；一旦存在未查到的追踪号，直接抛异常回滚，不要关闭容器。示例：`Set&lt;String&gt; requested = new HashSet&lt;&gt;(trackingNumbers); Set&lt;String&gt; found = labels.stream().map(Label::getTrackingNumber).collect(toSet()); if (!found.containsAll(requested)) throw new RRException(...)`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerV2ServiceImpl.java:277-281</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/xhc/DamonService.java:256-263</code>
                 </div>
-                <div class="finding-desc">`addParcelsAndCloseContainer` 在同一事务内先批量写入 parcel/scan history，再直接把共享的 `container` 状态更新为 `CLOSED`，但没有任何行锁、版本号或状态前置校验。并发调用时，多个请求可能同时向同一容器重复写入 parcel 关联和扫描历史，导致审计记录重复、容器关闭时序错乱。</div>
-                <div class="finding-suggestion">💡 修复建议：对容器记录增加乐观锁/悲观锁，并在更新时附带状态条件（如 `where id=? and status=&#x27;ACTIVE&#x27;`）；同时为 parcel-container 关联增加唯一约束，确保重复上报在数据库层被拒绝。</div>
-            </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/web/impl/WebNewReturnParcelServiceImpl.java:183-186</code>
-                </div>
-                <div class="finding-desc">`buildRdcWarningMsg` 将 `label.getInterceptMsg()` 原样拼入前端返回文案。`interceptMsg` 通常是内部拦截备注/调查说明，属于不受控文本；当前改动会在 RDC 扫描场景下直接回显给客户端，造成内部处置原因或敏感备注泄露。</div>
-                <div class="finding-suggestion">💡 修复建议：不要将 `interceptMsg` 直接返回给前端。对外仅返回固定告警文案或受控枚举码，例如“parcel is blocked, contact supervisor”；详细备注仅写入受限日志/审计系统，并对可展示字段做白名单过滤。</div>
-            </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/xhc/DamonService.java:257-266</code>
-                </div>
-                <div class="finding-desc">新增逻辑在 `targetNoList.stream().filter(...)` 中对每个 chute 调用一次 `posContainerDao.existsBySortIdAndStatusInAndFacilityCode(...)`，形成典型 N+1 查询。分拣高并发场景下，单次请求会放大为多次数据库往返，容易造成延迟抖动和数据库压力上升，进而影响分拣链路可用性。</div>
-                <div class="finding-suggestion">💡 修复建议：改为批量查询：一次性查出当前 facility 下满足状态的 `sortId` 集合，再在内存中过滤 `targetNoList`；或新增 DAO 方法按 `sortId in (...)` 批量返回存在的 chute。</div>
+                <div class="finding-desc">新增的容器校验在 `targetNoList.stream().filter(...)` 中对每个 chute 调用一次 `posContainerDao.existsBySortIdAndStatusInAndFacilityCode(...)`。这会把一次分拣请求放大为 N 次数据库查询，`targetNoList` 较大或被恶意构造时会显著增加数据库压力，形成可被外部流量放大的性能型拒绝服务风险。</div>
+                <div class="finding-suggestion">💡 修复建议：改为批量查询：一次性按 `sortId IN (...) + status IN (...) + facilityCode` 取回满足条件的 chute 集合，再在内存中过滤；或直接让 DAO 返回命中的 `sortId` 列表，避免逐条 `exists` 查询。</div>
             </div>
             
         </div>
