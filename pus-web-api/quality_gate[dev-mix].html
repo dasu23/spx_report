@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pus-web-api &nbsp;|&nbsp; 2026-04-14 16:56:53</div>
+      <div class="meta">pus-web-api &nbsp;|&nbsp; 2026-04-14 23:09:38</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:16</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:2 &nbsp; 主要:23</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,8 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 1 Critical finding(s)</li>
-<li>AI Review: 16 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 2 Critical finding(s)</li>
+<li>AI Review: 23 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,53 +94,61 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">pus-facade-impl/pus-facade-impl-exchange/src/main/java/io/speedx/pus/facade/impl/exchange/controller/PickupCoverageController.java:56</code>
+                    <code class="finding-loc">pus-facade-impl/pus-facade-impl-exchange/src/main/java/io/speedx/pus/facade/impl/exchange/controller/PickupCoverageController.java:49-58</code>
                 </div>
-                <div class="finding-desc">异常消息直接拼接并回传 `apiKey`，会把调用方凭证暴露到错误响应链路或下游日志/监控中；一旦异常被统一返回或记录，属于敏感密钥泄露。</div>
-                <div class="finding-suggestion">💡 修复建议：不要在异常消息中输出原始 `apiKey`。改为固定文案（如 `invalid api-key`），如需排障可记录脱敏后的摘要或哈希值，并确保仅进入受控安全日志。</div>
+                <div class="finding-desc">将原始 `apiKey` 直接拼接进 Redis key（`vinted:api-key:` + apiKey）会把凭证明文暴露到 Redis 键空间。键名通常会出现在监控、慢日志、备份、运维排障和 `MONITOR/SCAN` 等场景中，一旦基础设施侧可见，就会造成 API Key 泄露。</div>
+                <div class="finding-suggestion">💡 修复建议：不要把明文凭证写入缓存键名。改为对 `apiKey` 做不可逆摘要后再作为 key 片段，例如 `sha256(apiKey + serverSideSalt)`；同时统一约束缓存、日志、监控中都只出现脱敏后的标识。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pus-integration/src/main/java/io/speedx/pus/integration/rps/RpsAdapter.java:39</code>
+                </div>
+                <div class="finding-desc">异常日志直接打印外部传入的 `apiKey`。API Key 属于敏感凭证，一旦远程调用失败触发该分支，完整凭证会落盘到日志，存在凭证泄露风险，符合敏感数据泄露问题。</div>
+                <div class="finding-suggestion">💡 修复建议：不要记录完整 `apiKey`；改为不打印该字段，或仅记录脱敏后的摘要/前后几位，并结合 traceId 排查问题。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-facade-impl/pus-facade-impl-exchange/src/main/java/io/speedx/pus/facade/impl/exchange/controller/PickupCoverageController.java:62-71</code>
+                    <code class="finding-loc">pus-facade-impl/pus-facade-impl-exchange/src/main/java/io/speedx/pus/facade/impl/exchange/controller/PickupCoverageController.java:62-72</code>
                 </div>
-                <div class="finding-desc">这里直接调用 `form.getPickupAccountNum()` 和 `form.getCoverageType().getCode()`，当请求体为空，或 `coverageType` 未传时会触发空指针，接口返回 500 而不是受控的业务异常。该问题出现在新增接口入口，属于高频边界场景。</div>
-                <div class="finding-suggestion">💡 修复建议：在进入业务逻辑前补充入参判空与字段完整性校验，例如先判断 `form == null`、`StringUtils.isBlank(form.getPickupAccountNum())`、`form.getCoverageType() == null`，并抛出明确的 `BizException`；如果项目已接入参数校验，也可在 facade/form 上增加 `@Valid`、`@NotBlank`、`@NotNull`。示例：`if (form == null || form.getCoverageType() == null || StringUtils.isBlank(form.getPickupAccountNum())) { throw new BizException(PusResponseCode.PARAM_ERROR, &quot;invalid request&quot;); }`</div>
+                <div class="finding-desc">这里直接访问 `form.getPickupAccountNum()` 和 `form.getCoverageType().getCode()`，未对 `form` 和 `coverageType` 做空值保护。请求体缺失、反序列化为空，或只传了部分字段时会触发 `NullPointerException`，接口返回 500，而不是可识别的业务错误。</div>
+                <div class="finding-suggestion">💡 修复建议：在进入业务逻辑前补充参数校验，至少校验 `form != null`、`pickupAccountNum` 非空、`coverageType != null`。例如：`if (form == null || StringUtils.isBlank(form.getPickupAccountNum()) || form.getCoverageType() == null) { throw new BizException(PusResponseCode.PARAM_INVALID, &quot;invalid request&quot;); }`；如果项目已使用 Bean Validation，也应在 Facade/Controller 入参上增加 `@Valid` 与必填约束。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/impl/PickupBatchServiceImpl.java:509</code>
+                    <code class="finding-loc">pus-integration/src/main/java/io/speedx/pus/integration/rps/RpsAdapter.java:42-46</code>
                 </div>
-                <div class="finding-desc">删除批次时将 `createOperationLog(logCtx, batchCode)` 直接注释掉，且同文件后续新增行也把创建、加件、路由等场景的操作日志调用全部注释，同时底部实现也被整体注释。这样会导致批次相关操作不再落审计/追踪日志，若页面、排障或下游依赖这些日志，会出现功能缺失且难以追溯问题。</div>
-                <div class="finding-suggestion">💡 修复建议：不要直接注释掉日志链路；如果当前实现有兼容性问题，至少保留可用的最小实现或替换为新的日志服务调用。例如恢复 `createOperationLog(...)`，或在各场景改为显式调用新的 `pusOperationLogService.createOperationLogTask(...)`。同时补充创建/加件/路由/删除四类场景的回归测试，验证都会产生操作日志。</div>
+                <div class="finding-desc">远程客户端若返回 `null`，这里直接调用 `ro.isSuccess()` 会触发空指针，导致原本应判定为“无效 api-key/远程异常”的场景变成运行时失败。Feign/适配层在异常兜底、降级或反序列化异常时返回 `null` 并不少见。</div>
+                <div class="finding-suggestion">💡 修复建议：在访问 `ro` 前先做空值判断，并对空响应走统一异常或失败分支，例如：`if (ro == null) { log.error(&quot;[RpsAdapter] empty response from RPS&quot;); throw new BizException(&quot;findByApiKey failed: empty response&quot;); }`，之后再判断 `ro.isSuccess()`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/PickupService.java:86</code>
+                </div>
+                <div class="finding-desc">`checkPickupAddress` 接口新增了 `coverageType` 必填形参，属于破坏性签名变更。若同一分片之外仍存在按旧签名编译或反射调用的实现方/调用方，可能在发布后出现编译失败、`NoSuchMethodError` 或运行时调用异常，导致地址校验链路不可用。</div>
+                <div class="finding-suggestion">💡 修复建议：保留旧签名并在域服务层提供向后兼容的重载/默认适配逻辑，或确保所有实现、调用、Feign/Facade 映射与测试在同次发布中同步升级；若 `coverageType` 为新增可选语义，应显式定义默认值而不是直接修改既有方法签名。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/impl/PickupBatchServiceImpl.java:512</code>
                 </div>
-                <div class="finding-desc">新增修改将 `createOperationLog(...)` 调用注释掉，且同文件后续又把 `createOperationLog` 的实现整体注释，导致批次删除、创建、加件、路由等关键操作不再落审计日志。对可变更业务数据的关键操作失去可追溯性后，恶意或误操作将难以及时发现和事后取证，属于安全审计能力退化。</div>
-                <div class="finding-suggestion">💡 修复建议：恢复这些关键操作的审计日志写入；如果需要临时下线异步日志链路，应替换为可用的兜底审计实现（如同步持久化/消息补偿），不要直接注释掉。至少保证操作人、操作类型、批次号/运单号、时间等字段可追踪。</div>
+                <div class="finding-desc">新增变更将 `createOperationLog(...)` 调用直接注释掉，且下方私有实现也被整体注释，导致批次删除/创建/加件/路由等关键操作不再产生审计日志。该类日志通常用于事后追踪异常操作、篡改排查和安全事件取证，停用后会明显削弱审计能力，属于安全可追溯性退化。</div>
+                <div class="finding-suggestion">💡 修复建议：恢复这些关键状态变更的操作日志写入；如果担心性能或异步失败，应改为保留异步日志链路并增加降级/告警，而不是直接注释掉日志调用与实现。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/impl/PickupServiceImpl.java:278-283</code>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/impl/PickupRouteServiceImpl.java:76-81</code>
                 </div>
-                <div class="finding-desc">这里把 `coverageType` 仅按 `!= null` 判断后直接透传；当请求传入空串或全空白字符串时，不会回退到默认值 `STANDARD`，后续 `findFirstByZipCodeAndCoverageType(zip, coverageType)` 会按空值类型查库，导致原本可创建的 STANDARD 地址被误判为超区并抛错。</div>
-                <div class="finding-suggestion">💡 修复建议：对 `coverageType` 做空白归一化，而不是只判断 null。示例：`String coverageType = StringUtils.defaultIfBlank(value.getForm().getCoverageType(), DEFAULT_COVERAGE_TYPE);`，并保持 `checkAddress` 等入口逻辑一致。</div>
+                <div class="finding-desc">`updateRouteStatus` 和 `recordPickupLog` 被移到 `retryTemplate` 外部后，重试只覆盖了远端 `dmsAdapter.syncPickupRoute(req)`。一旦 DMS 已成功接收，但本地更新路由状态或记录日志时出现瞬时异常，方法会直接抛错，导致“远端已下发、本地仍未标记成功”的不一致状态。</div>
+                <div class="finding-suggestion">💡 修复建议：把本地状态更新与日志记录纳入明确的补偿/重试机制，至少对 `updateRouteStatus` 增加单独重试；如果要避免重复推送 DMS，可将远端调用成功结果持久化后，再基于本地幂等状态推进后续更新。示例：先在 `retryTemplate` 内只重试本地 `updateRouteStatus(req.getBizId())`，或为状态更新单独包一层 `retryTemplate.execute(...)`。</div>
             </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/so/PickupSo.java:43-44</code>
-                </div>
-                <div class="finding-desc">新增 `orgIds` 作为 `IN` 查询条件，但该字段本身没有任何长度上限或约束信息。若上游直接将外部请求映射到该 SO，攻击者可构造超大 `orgIds` 列表，生成超长 `IN (...)` 条件，放大数据库解析与执行开销，导致查询明显变慢甚至影响可用性。</div>
-                <div class="finding-suggestion">💡 修复建议：为 `orgIds` 增加明确的数量上限校验（例如 `@Size(max = 100)` 或在进入查询前手工限制），并在服务层对空列表、超长列表做失败快返，避免把不受控的参数直接下推到 JPA `IN` 查询。</div>
-            </div>
-            <p class="more-note">... 还有 11 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 18 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
