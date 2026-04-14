@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-exchange-api &nbsp;|&nbsp; 2026-04-13 13:47:42</div>
+      <div class="meta">pos-exchange-api &nbsp;|&nbsp; 2026-04-14 23:30:51</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -62,7 +62,7 @@
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#f44336">38.7%</div>
+            <div class="metric-value" style="color:#f44336">38.0%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:13</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:25</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,7 +83,7 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube analysis timed out after 1 minutes</li>
-<li>AI Review: 13 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 25 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,44 +94,44 @@
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/sorter/DamonController.java:439-472</code>
+                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/sorter/DamonController.java:440-515</code>
                 </div>
-                <div class="finding-desc">`handleFirstStop` 先执行 `existsBySortIdAndStatusInAndFacilityCode(...)`，再调用 `createContainerWithParcels(...)` 创建 ACTIVE 容器，这两个操作之间没有任何锁或事务级唯一性约束。并发的首停请求可同时通过存在性检查，导致同一 chute 被重复创建多个 ACTIVE 容器和多张标签，形成可被重复触发的资源滥用/状态竞争风险。</div>
-                <div class="finding-suggestion">💡 修复建议：将“检查是否存在容器”和“创建容器”收敛为单个原子操作：对 `(facilityCode, sortId, status in ACTIVE/CLOSED, scanType=A)` 增加唯一约束，或在事务中使用行锁/悲观锁串行化同一 chute 的首停处理；创建失败时返回明确的幂等结果。</div>
+                <div class="finding-desc">`handleFirstStop` 先查询是否存在容器，再创建新 `ACTIVE` 容器，两步之间没有事务隔离、行锁或唯一约束保护。同一 chute 上并发触发两次 first stop 时，两个请求都可能在 `existsBy...` 返回 false 后继续创建，导致重复面单和多个 `ACTIVE` 容器并存。</div>
+                <div class="finding-suggestion">💡 修复建议：将“存在性检查 + 创建容器”收敛到单个事务内，并对 chute 维度加锁；同时在数据库层补充能够约束同一 `facilityCode + sortId` 下唯一活动容器的唯一索引或幂等键，避免仅靠应用层先查后写。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/sorter/DamonController.java:458-458</code>
+                </div>
+                <div class="finding-desc">异常分支直接将 `e.getMessage()` 返回给外部调用方，新增接口会把内部异常细节原样暴露出去。若底层抛出数据库、序列生成或第三方集成异常，调用方可获得内部实现信息，形成信息泄露面。相同问题在 `handleFullStop` 的返回逻辑中也重复出现。</div>
+                <div class="finding-suggestion">💡 修复建议：对外返回固定的业务错误码和通用错误文案，保留详细异常仅写入服务端日志；如需排障，返回关联请求号或 traceId，而不是底层异常消息。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/sorter/DamonController.java:504-506</code>
                 </div>
-                <div class="finding-desc">`handleFullStop` 直接按固定下标解析 `targetContainer.getContainerNum()`，并假定最后一段一定是数字序号。只要库里存在格式不符合 `CTN-...-{seq}` 的历史容器号，`parts[4]` 会触发数组越界，或 `Integer.parseInt(...)` 抛出 `NumberFormatException`，导致满载 Stop 整体失败。</div>
-                <div class="finding-suggestion">💡 修复建议：在解析前显式校验容器号格式和值，例如先判断 `containerNum != null &amp;&amp; parts.length &gt;= 6`，再校验最后一段是否为纯数字；校验失败时返回明确业务错误，或改为调用统一的容器编号生成/续号能力，避免控制器手工拆字符串。示例：`if (StrUtil.isBlank(containerNum) || parts.length &lt;= 4 || !NumberUtil.isInteger(parts[parts.length - 1])) { return BaseResponse.&lt;String&gt;builder().code(HttpStatus.HTTP_BAD_REQUEST).msg(&quot;Invalid container number format&quot;).build(); }`</div>
+                <div class="finding-desc">这里直接按固定下标解析 `containerNum`：`parts[4]` 和最后一段序号都假设编号格式始终合法。当前仅通过 `isScanTypeA` 校验了 `parts.length &gt; 3`，如果历史数据或异常数据出现类似 `CTN-xxx-xxx-A`、缺少日期段、或末段不是数字，会在这里触发 `ArrayIndexOutOfBoundsException` 或 `NumberFormatException`，导致满载 Stop 整体失败。</div>
+                <div class="finding-suggestion">💡 修复建议：在解析前补充完整格式校验，并对日期段/序号段做兜底处理；校验失败时返回明确业务错误而不是依赖异常。示例：`String[] parts = containerNum.split(&quot;-&quot;); if (parts.length &lt; 6 || !NumberUtil.isInteger(parts[parts.length - 1])) { return BaseResponse.&lt;String&gt;builder().code(HttpStatus.HTTP_BAD_REQUEST).msg(&quot;Invalid container number: &quot; + containerNum).build(); }`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-exchange-api/src/test/java/com/miq/posexchangeapi/controller/sorter/DamonControllerTest.java:687-689</code>
+                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/web/shein/AbstractSheinController.java:47</code>
                 </div>
-                <div class="finding-desc">这里将期望结果改为 HTTP 500，但本次变更同时删除了触发异常分支的 mock（`posContainerV2Service.buildContainerFromSortProfile(...).thenThrow(...)`）。按当前用例构造，`gaylordDetails(...)` 不再被稳定驱动到 `handleFullStop` 异常路径，测试很可能实际返回 200，导致用例失败，且无法有效验证“捕获异常返回 500”的目标行为。</div>
-                <div class="finding-suggestion">💡 修复建议：恢复一个明确的异常注入点，再断言 500。例如继续对 `posContainerV2Service.buildContainerFromSortProfile(anyString(), anyString())` 打桩抛出异常，或对当前实现里 `handleFullStop` 实际依赖的方法打桩抛异常，确保测试前置条件与断言一致。</div>
+                <div class="finding-desc">新增代码将上游 `baseResponse.getMsg()` 和 `baseResponse.getData()` 直接封装进 `buildException(...)` 返回。相比原先固定使用 `SCAN_WARN_DUPLICATE_NOPARAM` 的标准化响应，这会把第三方/上游返回的原始错误信息与数据透传给调用方，带来非预期的错误响应契约变化，并可能泄露内部实现细节或调试信息。</div>
+                <div class="finding-suggestion">💡 修复建议：保持对外错误响应的固定化和白名单化：仅返回内部定义的 `MessageCode` 和经过脱敏/筛选的必要字段，不要直接透传上游 `msg`；如必须返回 `data`，应先校验其字段范围并剔除内部诊断信息。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerImplService.java:1077-1488</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/dao/StateHolidayMappingDao.java:17-20</code>
                 </div>
-                <div class="finding-desc">容器状态校验从“仅 ACTIVE 可继续”放宽为“仅拦截 DISPATCHING/DISPATCHED”。这会把 CLOSED、CREATED 等原本被拒绝的状态放行到后续流程，导致已关闭容器仍可能继续执行装载/扫描类操作，破坏容器生命周期约束。该变更属于破坏性 API/状态机契约变更，容易引发历史容器被重复写入的安全性与完整性风险。</div>
-                <div class="finding-suggestion">💡 修复建议：恢复白名单式状态校验，只允许明确可操作的状态（如 ACTIVE）；如果确需支持额外状态，需逐个显式枚举并补充对应的状态迁移校验与测试，避免 CLOSED 等终态被继续修改。</div>
+                <div class="finding-desc">这里的 `@Query` 使用了 `JOIN Holiday h ON m.holidayId = h.id`。在 Spring Data JPA/JPQL 中，这种基于非关联字段的实体 join 依赖具体 JPA 提供方实现，若 `Holiday` 不是受管实体名或当前环境不支持该写法，仓库初始化时会直接抛出查询解析异常，导致应用启动失败。</div>
+                <div class="finding-suggestion">💡 修复建议：改为标准、可移植的写法。若 `StateHolidayMapping` 与 `Holiday` 没有实体关联，优先使用显式双实体 `FROM` 条件连接，或改成 native SQL。例如：`@Query(&quot;SELECT m.state, h.holidayDate FROM StateHolidayMapping m, Holiday h WHERE m.holidayId = h.id AND m.deleted = 0 AND h.deleted = 0&quot;)`；如果 `Holiday` 是表名而非实体名，则应改为 `nativeQuery = true` 并使用真实表名。</div>
             </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerImplService.java:1077-1488</code>
-                </div>
-                <div class="finding-desc">这里将容器状态校验从“仅允许 ACTIVE”放宽成了“仅拒绝 DISPATCHING/DISPATCHED”。这样 CLOSED、CANCELLED 等其他非激活状态会继续后续流程，和原有行为不一致，容易导致已关闭/无效容器被继续操作。</div>
-                <div class="finding-suggestion">💡 修复建议：恢复白名单式校验，只允许 ACTIVE 状态继续处理，例如：`if (!PosContainerStatusEnum.ACTIVE.getName().equals(status)) { return generateFailedResponse(...); }`。如果确实要放开某些状态，请显式枚举允许状态并补充对应测试。</div>
-            </div>
-            <p class="more-note">... 还有 8 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 20 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
