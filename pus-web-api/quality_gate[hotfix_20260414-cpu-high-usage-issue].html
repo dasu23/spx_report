@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pus-web-api &nbsp;|&nbsp; 2026-04-14 16:47:57</div>
+      <div class="meta">pus-web-api &nbsp;|&nbsp; 2026-04-14 17:04:49</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:3</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:16</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,39 +83,64 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 3 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 1 Critical finding(s)</li>
+<li>AI Review: 16 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
         <div class="findings-section">
             <h3>AI 代码审查发现</h3>
             
-            
-            <div class="finding-card finding-major">
+            <div class="finding-card finding-critical">
                 <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/impl/PickupBatchServiceImpl.java:512-696</code>
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pus-facade-impl/pus-facade-impl-exchange/src/main/java/io/speedx/pus/facade/impl/exchange/controller/PickupCoverageController.java:56</code>
                 </div>
-                <div class="finding-desc">将 `createOperationLog(...)` 调用直接注释掉，导致批次删除等关键操作不再产生审计日志。该类日志通常用于安全追踪、事后取证和异常操作定位；热修后若发生误操作或恶意批量处理，将缺少可追溯证据。</div>
-                <div class="finding-suggestion">💡 修复建议：保留操作日志链路；如果当前实现导致 CPU 过高，应改为限流、批量异步、降采样或修复具体热点，而不是整体移除审计。至少为删除、确认、路由等状态变更保留最小必要日志。</div>
-            </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/impl/PickupBatchServiceImpl.java:512,540,646,697,767-782</code>
-                </div>
-                <div class="finding-desc">本次变更将批量删除、确认、加件、路由后的 `createOperationLog(...)` 全部注释掉，并连同私有实现一起停用。这样会导致这些操作不再落库/发出操作日志，形成永久性的业务留痕缺失；如果下游还有依赖操作日志做追踪、对账或异步处理，也会直接出现数据缺口。</div>
-                <div class="finding-suggestion">💡 修复建议：不要直接注释掉整条日志链路。若当前热点问题是日志异步线程或消息量过高，建议改为可开关的降级方案，例如通过配置开关关闭非关键场景，或增加采样/批量提交/限流，而保留关键操作日志：`if (operationLogEnabled) { createOperationLog(context, batchCode); }`。同时补充回放或补偿方案，避免这段时间的操作日志永久丢失。</div>
-            </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-facade-impl/pus-facade-impl-job/src/main/java/io/speedx/pus/facade/impl/job/PushRouteToDmsJob.java:66-73</code>
-                </div>
-                <div class="finding-desc">这里按 `routedRoutes` 逐个循环调用 `buildRouteDtoList(route)`，而后者会再次查询 `PickupRouteItem`、`Pickup`、`PickupParcel`。当一个 batch 下 route 数量较大时，会形成明显的 N+1 查询模式，容易在补偿任务执行时放大数据库压力，触发可用性风险。</div>
-                <div class="finding-suggestion">💡 修复建议：改为按 batch 一次性预取所需 routeItem、pickup、pickupParcel 数据，再在内存中按 routeId/bookingCode 分组组装 DTO；至少应避免在循环体内发起多次 repository 查询。</div>
+                <div class="finding-desc">异常消息直接拼接并回传 `apiKey`，会把调用方凭证暴露到错误响应链路或下游日志/监控中；一旦异常被统一返回或记录，属于敏感密钥泄露。</div>
+                <div class="finding-suggestion">💡 修复建议：不要在异常消息中输出原始 `apiKey`。改为固定文案（如 `invalid api-key`），如需排障可记录脱敏后的摘要或哈希值，并确保仅进入受控安全日志。</div>
             </div>
             
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-facade-impl/pus-facade-impl-exchange/src/main/java/io/speedx/pus/facade/impl/exchange/controller/PickupCoverageController.java:62-71</code>
+                </div>
+                <div class="finding-desc">这里直接调用 `form.getPickupAccountNum()` 和 `form.getCoverageType().getCode()`，当请求体为空，或 `coverageType` 未传时会触发空指针，接口返回 500 而不是受控的业务异常。该问题出现在新增接口入口，属于高频边界场景。</div>
+                <div class="finding-suggestion">💡 修复建议：在进入业务逻辑前补充入参判空与字段完整性校验，例如先判断 `form == null`、`StringUtils.isBlank(form.getPickupAccountNum())`、`form.getCoverageType() == null`，并抛出明确的 `BizException`；如果项目已接入参数校验，也可在 facade/form 上增加 `@Valid`、`@NotBlank`、`@NotNull`。示例：`if (form == null || form.getCoverageType() == null || StringUtils.isBlank(form.getPickupAccountNum())) { throw new BizException(PusResponseCode.PARAM_ERROR, &quot;invalid request&quot;); }`</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/impl/PickupBatchServiceImpl.java:509</code>
+                </div>
+                <div class="finding-desc">删除批次时将 `createOperationLog(logCtx, batchCode)` 直接注释掉，且同文件后续新增行也把创建、加件、路由等场景的操作日志调用全部注释，同时底部实现也被整体注释。这样会导致批次相关操作不再落审计/追踪日志，若页面、排障或下游依赖这些日志，会出现功能缺失且难以追溯问题。</div>
+                <div class="finding-suggestion">💡 修复建议：不要直接注释掉日志链路；如果当前实现有兼容性问题，至少保留可用的最小实现或替换为新的日志服务调用。例如恢复 `createOperationLog(...)`，或在各场景改为显式调用新的 `pusOperationLogService.createOperationLogTask(...)`。同时补充创建/加件/路由/删除四类场景的回归测试，验证都会产生操作日志。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/impl/PickupBatchServiceImpl.java:512</code>
+                </div>
+                <div class="finding-desc">新增修改将 `createOperationLog(...)` 调用注释掉，且同文件后续又把 `createOperationLog` 的实现整体注释，导致批次删除、创建、加件、路由等关键操作不再落审计日志。对可变更业务数据的关键操作失去可追溯性后，恶意或误操作将难以及时发现和事后取证，属于安全审计能力退化。</div>
+                <div class="finding-suggestion">💡 修复建议：恢复这些关键操作的审计日志写入；如果需要临时下线异步日志链路，应替换为可用的兜底审计实现（如同步持久化/消息补偿），不要直接注释掉。至少保证操作人、操作类型、批次号/运单号、时间等字段可追踪。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/impl/PickupServiceImpl.java:278-283</code>
+                </div>
+                <div class="finding-desc">这里把 `coverageType` 仅按 `!= null` 判断后直接透传；当请求传入空串或全空白字符串时，不会回退到默认值 `STANDARD`，后续 `findFirstByZipCodeAndCoverageType(zip, coverageType)` 会按空值类型查库，导致原本可创建的 STANDARD 地址被误判为超区并抛错。</div>
+                <div class="finding-suggestion">💡 修复建议：对 `coverageType` 做空白归一化，而不是只判断 null。示例：`String coverageType = StringUtils.defaultIfBlank(value.getForm().getCoverageType(), DEFAULT_COVERAGE_TYPE);`，并保持 `checkAddress` 等入口逻辑一致。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/so/PickupSo.java:43-44</code>
+                </div>
+                <div class="finding-desc">新增 `orgIds` 作为 `IN` 查询条件，但该字段本身没有任何长度上限或约束信息。若上游直接将外部请求映射到该 SO，攻击者可构造超大 `orgIds` 列表，生成超长 `IN (...)` 条件，放大数据库解析与执行开销，导致查询明显变慢甚至影响可用性。</div>
+                <div class="finding-suggestion">💡 修复建议：为 `orgIds` 增加明确的数量上限校验（例如 `@Size(max = 100)` 或在进入查询前手工限制），并在服务层对空列表、超长列表做失败快返，避免把不受控的参数直接下推到 JPA `IN` 查询。</div>
+            </div>
+            <p class="more-note">... 还有 11 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
