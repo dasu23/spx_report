@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">tracking-api &nbsp;|&nbsp; 2026-04-11 15:40:43</div>
+      <div class="meta">tracking-api &nbsp;|&nbsp; 2026-04-14 13:14:16</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -62,7 +62,7 @@
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#4caf50">65.0%</div>
+            <div class="metric-value" style="color:#4caf50">59.1%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:2 &nbsp; 主要:19</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:4 &nbsp; 主要:32</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,8 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 2 Critical finding(s)</li>
-<li>AI Review: 19 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 4 Critical finding(s)</li>
+<li>AI Review: 32 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -96,59 +96,75 @@
                     <span class="finding-badge">严重</span>
                     <code class="finding-loc">tracking-api/src/main/resources/bootstrap-dev.yml:4-5</code>
                 </div>
-                <div class="finding-desc">在开发环境配置中直接提交了 Nacos 访问凭证，包含明文密码 `Speedx@123`。该类敏感凭证进入代码库后会长期暴露于仓库、CI 日志和制品分发链路，满足敏感数据泄露/硬编码密码风险。</div>
-                <div class="finding-suggestion">💡 修复建议：删除仓库中的明文凭证，改为从环境变量、启动参数或受管密钥中心注入；同时轮换当前已暴露的 Nacos 账号密码。若必须保留示例值，使用不可用占位符并在部署侧覆盖。</div>
+                <div class="finding-desc">在开发环境配置中提交了 Nacos 明文凭证（`username: dev` / `password: Speedx@123`）。凭证进入代码库后会被长期保留在提交历史中，属于敏感信息泄露，且可能被用于访问配置中心。</div>
+                <div class="finding-suggestion">💡 修复建议：立即移除仓库中的明文凭证，改为从环境变量、启动参数或密钥管理服务注入；同时轮换该 Nacos 账号密码，并检查提交历史与下游镜像/制品中是否已扩散。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
                     <code class="finding-loc">tracking-api/src/main/resources/bootstrap-lws.yml:7-13</code>
                 </div>
-                <div class="finding-desc">新环境配置文件同时为 Nacos `discovery` 和 `config` 写入了明文用户名/密码，违反 [SEC-001]。这类环境文件通常会被直接复用到测试或部署流程中，凭证泄露面更大。</div>
-                <div class="finding-suggestion">💡 修复建议：改为占位符或密文注入，例如 `username: ${NACOS_USERNAME}`、`password: ${NACOS_PASSWORD}`，并通过部署系统下发；如果必须保留示例文件，也应提供脱敏示例值而非真实凭证。</div>
+                <div class="finding-desc">新增环境配置中同时为 `discovery` 和 `config` 写入了明文 Nacos 账号密码，形成重复的硬编码敏感信息。该问题会扩大泄露面，并增加后续凭证轮换成本。</div>
+                <div class="finding-suggestion">💡 修复建议：删除文件中的明文凭证，统一改为占位符引用，例如 `username: ${NACOS_USERNAME}`、`password: ${NACOS_PASSWORD}`，并通过部署环境注入；若两处配置必须共用，提取到公共配置节点避免重复。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/dao/LabelStatus57409DaoImpl.java:47-59</code>
+                </div>
+                <div class="finding-desc">`findTrackingNosByPoeZone` 通过 `StringBuilder` 直接拼接 `poeZone` 中的外部输入生成 SQL，并将字符串交给 `JdbcTemplate` 执行。`poe` 值未做参数绑定或转义，若上游可控，攻击者可通过构造包含引号/SQL 片段的值注入任意条件，导致未授权数据读取甚至破坏性语句执行。</div>
+                <div class="finding-suggestion">💡 修复建议：改为参数化查询，不要拼接值进 SQL。可使用 `NamedParameterJdbcTemplate` 或按 `(?, ?)` 批量生成占位符，并将 `poe`/`internalZone` 作为绑定参数传入；同时对 `internalZone` 做类型约束，对 `poe` 做长度和字符集校验。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/service/job/InsertUndeliveredService.java:170-178</code>
+                </div>
+                <div class="finding-desc">这里把 `trackingNos` 直接拼进 `IN` 子句生成 SQL，属于新增的 SQL 拼接逻辑。若单号包含引号、逗号等特殊字符，会导致查询失败；来源不可完全保证时还会引入 SQL 注入风险。</div>
+                <div class="finding-suggestion">💡 修复建议：改为 `JdbcTemplate` 参数化查询，不要直接拼接值。可按 `trackingNos.size()` 生成占位符：`WHERE tracking_no IN (?, ?, ...)`，并将 `trackingNos.toArray()` 作为参数传入。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
+                    <code class="finding-loc">tracking-api/src/main/java/com/miq/trackingapi/config/XxlJobConfig.java:1-78</code>
+                </div>
+                <div class="finding-desc">该文件被整体替换为注释内容后，`@Configuration` 和 `xxlJobExecutor()` Bean 都不会再参与编译和注册，导致 XXL-Job 执行器在应用启动后缺失。依赖该执行器注册的定时任务会直接失效，属于明确的功能回归。</div>
+                <div class="finding-suggestion">💡 修复建议：不要用整文件注释的方式下线配置。若只是按环境禁用，保留类定义并增加条件装配，例如 `@ConditionalOnProperty(name = &quot;xxl.job.enabled&quot;, havingValue = &quot;true&quot;)`；若要彻底移除，请同步删除所有任务依赖并确认没有运行中的 job 需要该 executor。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">tracking-api/src/main/java/com/miq/trackingapi/controller/EventInternalController.java:131</code>
+                </div>
+                <div class="finding-desc">新分支在 `useNewQueryEventWeb` 打开时直接对 `queryEventCmdBridge.toWeb(Collections.singletonList(trackingNo))` 的返回结果取 `get(0)`，未校验返回列表是否为空。若新查询链路因单号不存在、被过滤或下游异常降级而返回空列表，这里会抛出 `IndexOutOfBoundsException`，导致单号查询接口直接 500。</div>
+                <div class="finding-suggestion">💡 修复建议：先校验返回列表非空，再取首项；为空时返回与旧实现一致的业务响应或明确异常。例如：`List&lt;TrackingItemWebRo&gt; result = queryEventCmdBridge.toWeb(Collections.singletonList(trackingNo)); if (CollectionUtil.isEmpty(result)) { throw new RRException(&quot;trackingNo not found&quot;); } return ResponseObject.success(result.get(0));`</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
                     <code class="finding-loc">tracking-api/src/main/java/com/miq/trackingapi/controller/EventInternalController.java:133</code>
                 </div>
-                <div class="finding-desc">新分支在开启 `useNewQueryEventWeb` 时直接对 `queryEventCmdBridge.toWeb(...)` 的返回结果执行 `.get(0)`。当桥接层因无轨迹数据、过滤后为空或异常降级返回空列表时，这里会触发 `IndexOutOfBoundsException`，导致查询单号接口直接 500。</div>
-                <div class="finding-suggestion">💡 修复建议：先校验返回列表非空，再取首元素；为空时返回明确的空结果或业务异常。例如：`List&lt;TrackingItemWebRo&gt; items = queryEventCmdBridge.toWeb(Collections.singletonList(trackingNo)); if (CollectionUtil.isEmpty(items)) { throw new RRException(&quot;tracking data not found&quot;); } return ResponseObject.success(items.get(0));`</div>
+                <div class="finding-desc">新增分支在开启 `useNewQueryEventWeb` 时直接对 `queryEventCmdBridge.toWeb(Collections.singletonList(trackingNo))` 的结果执行 `.get(0)`，默认假设返回列表非空。若新查询链路因无匹配数据、下游过滤或异常降级返回空列表，该接口会抛出 `IndexOutOfBoundsException` 并返回 500，破坏原有查询接口的稳定返回契约，形成可被外部输入触发的可用性风险。</div>
+                <div class="finding-suggestion">💡 修复建议：在取首元素前先校验返回列表非空；为空时按旧链路的既有语义返回明确的业务错误或空结果，而不是依赖运行时异常。必要时为新旧链路统一 not-found 响应格式。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">tracking-api/src/main/java/com/miq/trackingapi/controller/web/CacheController.java:78,98</code>
+                    <code class="finding-loc">tracking-api/src/main/java/com/miq/trackingapi/controller/web/CacheController.java:74-98</code>
                 </div>
-                <div class="finding-desc">新增的 `posApiService` 分支直接调用 `params.get(&quot;key&quot;).toString()`；当请求体缺少 `key` 或其值为 `null` 时，这里会触发 `NullPointerException`，导致清缓存/查缓存接口直接失败。</div>
-                <div class="finding-suggestion">💡 修复建议：在进入分支前显式校验 `key` 是否存在且非空，再调用服务方法，例如：`Object keyObj = params.get(&quot;key&quot;); if (keyObj == null) { return ResponseObject.failure(&quot;key不能为空&quot;); } String key = keyObj.toString();`，随后复用 `key` 调用 `posApiService.clearByKey(key)` 和 `posApiService.getByKey(key)`。</div>
+                <div class="finding-desc">新增的 `posApiService` 分支直接对 `params.get(&quot;key&quot;)` 调用 `toString()`，当请求体缺少 `key` 或其值为 `null` 时会触发 `NullPointerException`。该异常可被恶意构造请求稳定触发，形成接口级拒绝服务风险。</div>
+                <div class="finding-suggestion">💡 修复建议：在进入 `posApiService.clearByKey(...)` 前显式校验 `params` 与 `params.get(&quot;key&quot;)` 非空，并对空值返回 4xx 参数错误，而不是依赖运行时空指针异常。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">tracking-api/src/main/resources/bootstrap.yml:9-14</code>
+                    <code class="finding-loc">tracking-api/src/main/java/com/miq/trackingapi/controller/web/CacheController.java:78</code>
                 </div>
-                <div class="finding-desc">默认 `bootstrap.yml` 将 Nacos `discovery` 和 `config` 从关闭改为开启，且未在同文件中保留认证配置。这个变更会让所有未显式覆盖该配置的启动场景在应用初始化阶段强依赖外部 Nacos，可导致本地开发、单测或无 Nacos 环境直接启动失败。</div>
-                <div class="finding-suggestion">💡 修复建议：将该开关限定在明确的 profile 中开启，或增加 `spring.cloud.nacos.*.enabled` 的环境变量兜底开关。例如仅在 `bootstrap-dev.yml`/目标环境配置里开启，默认配置继续保持关闭。</div>
+                <div class="finding-desc">新增的 `posApiService.clearByKey(params.get(&quot;key&quot;).toString())` 在 `key` 缺失或值为 `null` 时会直接触发 `NullPointerException`，导致按 key 清理缓存接口返回 500。该控制器中这里没有做非空校验或兜底处理。</div>
+                <div class="finding-suggestion">💡 修复建议：先校验 `params` 中的 `key` 是否存在且非空，再调用服务。例如：`Object key = params.get(&quot;key&quot;); if (key == null) { return ResponseObject.failure(&quot;key不能为空&quot;); } posApiService.clearByKey(key.toString());`</div>
             </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">tracking-api/src/test/java/com/miq/trackingapi/service/api/RpsApiServiceTest.java:40</code>
-                </div>
-                <div class="finding-desc">在 `@MockitoSettings(strictness = Strictness.STRICT_STUBS)` 下，这个放在 `@BeforeEach` 中的全局 stub 会要求每个测试都实际命中 `redisUtils.get(...)`。如果类中存在只验证参数校验、异常分支或缓存命中分支的用例，没有走到该调用，就会触发 `UnnecessaryStubbingException`，导致测试整体失败。</div>
-                <div class="finding-suggestion">💡 修复建议：将该 stub 改为按需在具体测试用例中声明，或显式使用宽松模式，例如 `lenient().when(redisUtils.get(anyString(), any(RedisDataEnum.class), eq(RpsUserBo.class))).thenReturn(null);`。更稳妥的是仅在依赖该回退逻辑的测试中添加该 stub，避免影响其他用例。</div>
-            </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/api/SAPC4CApiClient.java:273</code>
-                </div>
-                <div class="finding-desc">新增备注接口将调用方提供的 `htmlContent` 直接写入下游 note-service，代码中没有任何 HTML 清洗、标签白名单或转义处理。若 `htmlContent` 拼接了外部可控字段，容易把脚本事件、恶意标签等持久化到 SAP C4C 备注中，形成存储型 XSS 或下游富文本注入风险。</div>
-                <div class="finding-suggestion">💡 修复建议：在写入 `htmlContent` 前增加服务端净化：默认按纯文本转义，或使用严格白名单 HTML Sanitizer 仅保留必要标签/属性；同时补充长度与标签校验，禁止脚本、事件属性、内联样式和危险 URL scheme。</div>
-            </div>
-            <p class="more-note">... 还有 14 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 27 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
