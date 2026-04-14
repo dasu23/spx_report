@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pus-web-api &nbsp;|&nbsp; 2026-04-14 14:05:02</div>
+      <div class="meta">pus-web-api &nbsp;|&nbsp; 2026-04-14 16:47:57</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,16 +73,17 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:2</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:3</div>
       <div class="metric-threshold">已抑制: 0</div>
-      <div class="metric-note">已检测到问题，但当前配置未阻断流水线</div>
+      
     </div>
   </div>
 
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube quality gate status: ERROR</li></ul>
+            <ul><li>SonarQube quality gate status: ERROR</li>
+<li>AI Review: 3 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -93,18 +94,26 @@
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/impl/PickupRouteServiceImpl.java:78-83</code>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/impl/PickupBatchServiceImpl.java:512-696</code>
                 </div>
-                <div class="finding-desc">`updateRouteStatus` 和 `recordPickupLog` 被移到 `retryTemplate` 外部后，重试只覆盖 `dmsAdapter.syncPickupRoute(req)`。如果 DMS 已成功接收，但后续状态更新或日志记录抛异常，方法会直接失败并保留路由为 `ROUTED`，后续补偿任务会再次推送同一路线，造成重复下发和状态不一致。</div>
-                <div class="finding-suggestion">💡 修复建议：将 `updateRouteStatus(req.getBizId())` 与 `recordPickupLog(bookCodes)` 保持在重试闭包内，或至少对“DMS 已成功但本地更新失败”做幂等保护。例如先在闭包内完成状态更新，再记录日志；若必须拆开，需为 DMS 推送增加去重键/幂等校验。</div>
+                <div class="finding-desc">将 `createOperationLog(...)` 调用直接注释掉，导致批次删除等关键操作不再产生审计日志。该类日志通常用于安全追踪、事后取证和异常操作定位；热修后若发生误操作或恶意批量处理，将缺少可追溯证据。</div>
+                <div class="finding-suggestion">💡 修复建议：保留操作日志链路；如果当前实现导致 CPU 过高，应改为限流、批量异步、降采样或修复具体热点，而不是整体移除审计。至少为删除、确认、路由等状态变更保留最小必要日志。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-facade-impl/pus-facade-impl-job/src/main/java/io/speedx/pus/facade/impl/job/PushRouteToDmsJob.java:63-94</code>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/impl/PickupBatchServiceImpl.java:512,540,646,697,767-782</code>
                 </div>
-                <div class="finding-desc">新增的补偿任务按 `routedRoutes` 逐条循环，并在每次迭代中调用 `buildRouteDtoList(route)`；该辅助方法在新增代码里又会执行 `findByRouteId`、`findByBookingCodeIn`、`findByBookingCodeIn` 三次仓储查询。批次内 route 数量较大时会形成明显的 N+1 数据库访问，补偿任务本身容易放大数据库与下游 DMS 压力，导致可用性风险。</div>
-                <div class="finding-suggestion">💡 修复建议：将任务改为批量预取所需数据，至少按 `routeIds` 和全部 `bookingCodes` 一次性查询 `PickupRouteItem`、`Pickup`、`PickupParcel`，在内存中按 `routeId/bookingCode` 分组组装 `PickupRouteDto`，避免在 `for` 循环内触发仓储查询。</div>
+                <div class="finding-desc">本次变更将批量删除、确认、加件、路由后的 `createOperationLog(...)` 全部注释掉，并连同私有实现一起停用。这样会导致这些操作不再落库/发出操作日志，形成永久性的业务留痕缺失；如果下游还有依赖操作日志做追踪、对账或异步处理，也会直接出现数据缺口。</div>
+                <div class="finding-suggestion">💡 修复建议：不要直接注释掉整条日志链路。若当前热点问题是日志异步线程或消息量过高，建议改为可开关的降级方案，例如通过配置开关关闭非关键场景，或增加采样/批量提交/限流，而保留关键操作日志：`if (operationLogEnabled) { createOperationLog(context, batchCode); }`。同时补充回放或补偿方案，避免这段时间的操作日志永久丢失。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-facade-impl/pus-facade-impl-job/src/main/java/io/speedx/pus/facade/impl/job/PushRouteToDmsJob.java:66-73</code>
+                </div>
+                <div class="finding-desc">这里按 `routedRoutes` 逐个循环调用 `buildRouteDtoList(route)`，而后者会再次查询 `PickupRouteItem`、`Pickup`、`PickupParcel`。当一个 batch 下 route 数量较大时，会形成明显的 N+1 查询模式，容易在补偿任务执行时放大数据库压力，触发可用性风险。</div>
+                <div class="finding-suggestion">💡 修复建议：改为按 batch 一次性预取所需 routeItem、pickup、pickupParcel 数据，再在内存中按 routeId/bookingCode 分组组装 DTO；至少应避免在循环体内发起多次 repository 查询。</div>
             </div>
             
         </div>
