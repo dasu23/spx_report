@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">trk-job &nbsp;|&nbsp; 2026-04-11 15:44:42</div>
+      <div class="meta">trk-job &nbsp;|&nbsp; 2026-04-14 13:57:53</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -56,13 +56,13 @@
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#4caf50">13.8%</div>
+      <div class="metric-value" style="color:#4caf50">13.7%</div>
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#4caf50">64.1%</div>
+            <div class="metric-value" style="color:#4caf50">55.7%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:19</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:2 &nbsp; 主要:19</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,6 +83,7 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
+<li>AI Review: 2 Critical finding(s)</li>
 <li>AI Review: 19 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
@@ -90,46 +91,62 @@
         <div class="findings-section">
             <h3>AI 代码审查发现</h3>
             
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/dao/LabelStatus57409DaoImpl.java:47-59</code>
+                </div>
+                <div class="finding-desc">`findTrackingNosByPoeZone` 直接将 `poeZone` 中的 `poe`/`internalZone` 值拼接进 SQL，再交给 `JdbcTemplate` 执行。只要上游参数可控，攻击者就能通过构造恶意字符串注入任意 SQL，属于典型 SQL 注入风险。</div>
+                <div class="finding-suggestion">💡 修复建议：改为参数化查询，使用 `?` 占位符批量拼接 `(?, ?)` 条件并通过 `JdbcTemplate`/`NamedParameterJdbcTemplate` 传参；同时对 `internalZone` 做类型约束，禁止将原始字符串直接进入 SQL。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/service/job/InsertUndeliveredService.java:170-174</code>
+                </div>
+                <div class="finding-desc">新增的 `getLastEventIs57104(List&lt;String&gt; trackingNos)` 直接将 `trackingNos` 拼接进 `IN` 子句生成 SQL，没有任何参数化或转义。只要上游列表中混入恶意内容，就可能造成 SQL 注入，并且这里还会执行拼接后的原始语句。</div>
+                <div class="finding-suggestion">💡 修复建议：改为参数化查询，使用 `JdbcTemplate` 占位符批量绑定参数，例如按 `trackingNos.size()` 生成 `?, ?, ...` 后将列表作为参数传入；同时对空列表做前置返回，避免 `substring` 和非法 SQL。</div>
+            </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/api/PosApiApi.java:43-51</code>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/service/job/InsertUndeliveredService.java:170-176</code>
                 </div>
-                <div class="finding-desc">`fetchAllHolidays` 在 `code == 200` 时直接返回 `resObj.getPayload()`，但没有像同文件新增的 `fetchAllPoeZoneFacilityMappings` 一样校验 `payload != null`。当下游接口返回成功码但载荷为空时，这里会把 `null` 继续向外传播，后续调用方若直接遍历/读取该结果，容易触发空指针并导致节假日相关业务异常。</div>
-                <div class="finding-suggestion">💡 修复建议：对返回载荷补充非空校验，并在为空时返回空集合或抛出明确异常，保持与另一新增方法一致。例如：`if (resObj == null || resObj.getCode() != 200 || resObj.getPayload() == null) { throw new RRException(&quot;getAllHolidaysByState failed, country=&quot; + country); }`。</div>
+                <div class="finding-desc">该方法把 `trackingNos` 直接拼接到 `IN (...)` 中，但没有为字符串值加引号/参数占位。`tracking_no` 从上下文看是运单号字符串，最终 SQL 会变成 `tracking_no in (ABC123,DEF456)`，在大多数数据库上会被当成列名或非法表达式，导致查询失败或结果错误。</div>
+                <div class="finding-suggestion">💡 修复建议：改为参数化查询，不要手工拼接字符串。示例：先生成与列表长度匹配的占位符 `String placeholders = trackingNos.stream().map(x -&gt; &quot;?&quot;).collect(Collectors.joining(&quot;,&quot;));`，再执行 `jdbcTemplate.query(&quot;SELECT ... WHERE tracking_no in (&quot; + placeholders + &quot;)&quot;, trackingNos.toArray(), new BeanPropertyRowMapper&lt;&gt;(InsertUndeliveredLabelDto.class))`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/api/SAPC4CApiClient.java:269-279</code>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/api/PosApiApi.java:49-61</code>
                 </div>
-                <div class="finding-desc">`addNote` 仅以“未抛异常”作为成功条件，完全没有校验 `requestPostJsonStr` 的 HTTP 响应码或响应体状态。若下游返回 4xx/5xx 但底层工具未抛异常，当前实现仍会记录 `add note success` 并返回 `true`，导致备注未创建却被上层当作成功处理，产生错误业务状态。</div>
-                <div class="finding-suggestion">💡 修复建议：解析并校验 POST 返回结果，至少校验 HTTP 状态码/业务码后再返回成功；若工具类无法直接给出状态码，应改用可获取响应对象的方法。例如仅在 `2xx` 或明确业务成功标记时记录 success 并返回 `true`，否则记录失败并返回 `false`。</div>
+                <div class="finding-desc">两个新增方法都直接使用 `resObj.getCode() != 200` 判断返回码；如果下游接口反序列化后 `code` 字段为 `null`，这里会发生自动拆箱 `NullPointerException`，无法按预期抛出业务异常，导致调用链出现非预期失败。</div>
+                <div class="finding-suggestion">💡 修复建议：改为使用空安全比较，避免对可能为 `null` 的包装类型做拆箱，例如：`if (resObj == null || !Integer.valueOf(200).equals(resObj.getCode()) || resObj.getPayload() == null) { throw new RRException(...); }`。`fetchAllHolidays` 也应补充 `payload` 非空校验或返回 `Collections.emptyMap()`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/api/SAPC4CApiClient.java:276</code>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/dao/LabelStatus57409Dao.java:18-19</code>
                 </div>
-                <div class="finding-desc">`htmlContent` 被直接作为 HTML 透传到下游 note-service，没有任何清洗、转义或标签白名单控制；如果该内容来源可被外部输入影响，攻击者可写入恶意脚本/事件属性，形成存储型 XSS，并在后续 SAP/C4C 页面或消费端渲染时触发。</div>
-                <div class="finding-suggestion">💡 修复建议：在写入前对 `htmlContent` 做服务端净化：优先改为纯文本字段；如业务必须保留 HTML，使用严格白名单的 HTML sanitizer，仅允许安全标签和属性，显式剔除 `script`、事件处理器、`javascript:` URL 等危险内容。</div>
+                <div class="finding-desc">新增的 JPQL `DELETE` 语句只有 `@Query`，缺少 `@Modifying`。Spring Data JPA 会将其按查询语句处理，运行到这里时通常会抛出执行异常，导致清理任务无法删除过期数据。</div>
+                <div class="finding-suggestion">💡 修复建议：为该方法补充 `@Modifying`，并确保由事务包裹执行，例如：`@Modifying @Transactional @Query(&quot;DELETE FROM LabelStatus57409 ls WHERE ls.lastEventDate &lt; ?1&quot;) void deleteByLastEventDate(Date startDate);`</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/cmd/queryEvent/EventFilterHelper.java:139-140</code>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/dao/LabelStatus57411Dao.java:23-24</code>
                 </div>
-                <div class="finding-desc">过滤流程在排序阶段直接使用 `Comparator.comparing(EventQueryDto::getEventTs)`。只要任一事件的 `eventTs` 为空，就会在比较时抛出空指针，导致整单轨迹查询失败。</div>
-                <div class="finding-suggestion">💡 修复建议：为时间字段提供空值兜底排序，并在去重逻辑中同步处理空时间。例如改为 `events.sort(Comparator.comparing(EventQueryDto::getEventTs, Comparator.nullsLast(Date::compareTo)));`，同时在 `removeSameDayDuplicates` 中对 `eventTs` 为空的记录单独保留或跳过去重判断。</div>
+                <div class="finding-desc">这里新增的 `DELETE` JPQL 同样缺少 `@Modifying`。实际执行时不会按更新语句提交，批量清理 `LabelStatus57411` 过期数据会失败。</div>
+                <div class="finding-suggestion">💡 修复建议：在方法上增加 `@Modifying`，并放在事务中执行，例如：`@Modifying @Transactional @Query(&quot;DELETE FROM LabelStatus57411 ls WHERE ls.dspReceivedDate &lt; ?1&quot;) void deleteByDspReceivedDate(Date startDay);`</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/cmd/queryEvent/EventRoConverter.java:166</code>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/dao/LabelStatus57412Dao.java:23-24</code>
                 </div>
-                <div class="finding-desc">`updateDescription()` 在 DOM 分支内对每个事件都调用一次 `rpsApiService.getRpsUser(label.getOrgId())`。该方法会在 `buildEventRo()` 的事件遍历中被反复触发，单个含大量事件的查询即可放大成 N 次远程调用，形成明显的请求放大和下游依赖压垮风险。</div>
-                <div class="finding-suggestion">💡 修复建议：将 `orgId -&gt; customerType/isDom` 的解析前移到 `QueryEventCmd`，按 label 或 orgId 只查询一次并传入 converter；至少在当前命令实例内做本地缓存，避免按事件重复调用 RPS。</div>
+                <div class="finding-desc">`deleteByDspReceivedDate` 使用了自定义 `DELETE` JPQL，但没有 `@Modifying`。这会导致仓储方法在运行期报错，57412 清理逻辑无法生效。</div>
+                <div class="finding-suggestion">💡 修复建议：补充 `@Modifying`，必要时同时加 `@Transactional`，例如：`@Modifying @Transactional @Query(&quot;DELETE FROM LabelStatus57412 ls WHERE ls.dspReceivedDate &lt; ?1&quot;) void deleteByDspReceivedDate(Date startDate);`</div>
             </div>
             <p class="more-note">... 还有 14 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
