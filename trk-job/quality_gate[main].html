@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">trk-job &nbsp;|&nbsp; 2026-04-12 12:07:50</div>
+      <div class="meta">trk-job &nbsp;|&nbsp; 2026-04-20 12:40:43</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -56,13 +56,13 @@
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#4caf50">9.2%</div>
+      <div class="metric-value" style="color:#4caf50">9.3%</div>
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#ff9800">49.0%</div>
+            <div class="metric-value" style="color:#f44336">33.0%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,16 +73,17 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:2</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:10</div>
       <div class="metric-threshold">已抑制: 0</div>
-      <div class="metric-note">已检测到问题，但当前配置未阻断流水线</div>
+      
     </div>
   </div>
 
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube quality gate status: ERROR</li></ul>
+            <ul><li>SonarQube quality gate status: ERROR</li>
+<li>AI Review: 10 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -93,20 +94,44 @@
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/service/SAPService.java:341</code>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/cmd/CreateLabelCmd.java:149-151</code>
                 </div>
-                <div class="finding-desc">将数据库模板与 `trackingNo` 直接拼接为 `htmlContent` 后发送到 SAP note-service。`trackingNo` 属于外部业务数据，若包含 HTML/脚本片段，会被原样写入备注，存在跨系统 HTML 注入风险；一旦 SAP 侧页面渲染该备注，可能触发存储型脚本执行或内容篡改。</div>
-                <div class="finding-suggestion">💡 修复建议：在生成备注前对 `trackingNo` 做严格 HTML 转义，或改为使用安全模板引擎按文本上下文输出；同时限制模板仅允许受控标签/属性，避免任意 HTML 直传。</div>
+                <div class="finding-desc">这里把 Vinted 分支细分为 `isVintedPushAggregator` 后，只在命中聚合器时写入 `TRK_WEBHOOK_AGGREGATOR`。但未命中聚合器的 Vinted 单号不会继续落到后面的 `else if (webhookFlag)`，导致这部分单号不再生成任何 push log，后续 webhook/异步推送链路可能直接丢失。</div>
+                <div class="finding-suggestion">💡 修复建议：为 `isVinted(...) &amp;&amp; !isVintedPushAggregator(...)` 增加明确兜底，按业务要求继续写普通 webhook push log，或在该分支显式说明无需推送。示例：`if (orgIdService.isVinted(labelSummary.getSoldToOrgId())) { if (orgIdService.isVintedPushAggregator(labelSummary.getSoldToOrgId())) { commonPushLogService.savePushLog(PushLogTypeEnum.TRK_WEBHOOK_AGGREGATOR, labelSummary.getTrackingNo()); } else if (webhookFlag) { commonPushLogService.savePushLog(PushLogTypeEnum.TRK_TO_WEBHOOK, String.valueOf(save.getId()), event.getTrackingNo(), webhookMode.name()); } } else if (webhookFlag) { ... }`</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/service/SAPService.java:74-312</code>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/entity/SAPCloseEventIdempotent.java:16-33</code>
                 </div>
-                <div class="finding-desc">`process` 现在对“已存在且 trackingNo 未变化”的 case 直接 `return`，不再区分该 case 是否仍为打开态。这会导致已有打开中的 SAP case 在后续重复同步时跳过 `updateFieldsByCaseId` 流程，新增的事件、客户信息或关单状态都不会再回写到 SAP，属于明显的功能回归。</div>
-                <div class="finding-suggestion">💡 修复建议：恢复对打开中 case 的更新流程，只在明确无需同步的场景才提前返回。例如保留“tracking 变更时重置 closed”，但对 `closed=false` 的旧 case 继续执行后续更新：`else if (!Objects.equals(ro.getExtensions().getTrackingNumber(), dbObj.getTrackingNo())) { ... } else if (Boolean.TRUE.equals(dbObj.getClosed())) { return; }`。同时补充测试覆盖“existing open case + same tracking”应继续调用更新逻辑。</div>
+                <div class="finding-desc">`SAPCloseEventIdempotent` 作为幂等记录实体引入，但当前表声明没有任何基于业务键的唯一约束。并发重试或多实例同时处理同一 `caseId + eventCode` 时，可以插入多条 `PENDING/SUCCESS` 记录，幂等语义会退化为“尽量避免重复”而不是“严格只处理一次”，后续按状态查询时也容易出现结果不确定。</div>
+                <div class="finding-suggestion">💡 修复建议：在实体或建表脚本上补充数据库级唯一约束，至少覆盖幂等判定使用的业务键，例如：`@Table(name = &quot;tb_sap_close_event_idempotent&quot;, uniqueConstraints = @UniqueConstraint(name = &quot;uk_case_event&quot;, columnNames = {&quot;case_id&quot;, &quot;event_code&quot;}))`。如果业务上同一运单也参与幂等判定，则应将 `tracking_no` 一并纳入唯一键，并在写入侧处理唯一键冲突后的幂等返回。</div>
             </div>
-            
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/entity/SAPCloseEventIdempotent.java:16-34</code>
+                </div>
+                <div class="finding-desc">该实体被明确用于“幂等”记录，但新增定义中未对业务幂等键建立任何唯一性约束。并发场景下，多个线程/实例可同时插入相同 `caseId`/`eventCode`/`trackingNo` 组合的记录，导致幂等失效，进而重复触发 SAP 关闭事件或产生状态覆盖，属于并发安全风险。</div>
+                <div class="finding-suggestion">💡 修复建议：在实体和数据库层为业务幂等键增加唯一约束（例如 `@Table(..., uniqueConstraints=...)`，并同步在建表 SQL 中创建唯一索引）；写入时捕获唯一键冲突并按已存在记录处理，避免依赖“先查后插”的非原子逻辑。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/listener/SAPUpdateEventListener.java:25</code>
+                </div>
+                <div class="finding-desc">`@TransactionalEventListener` 配置了 `phase = AFTER_COMMIT`，但同时开启了 `fallbackExecution = true`。当事件在非事务上下文中发布时，监听器会直接执行，而不是等到提交后再执行，这会让 SAP 推送在本地数据尚未落库或后续流程失败时提前触发，造成本地与外部系统状态不一致。</div>
+                <div class="finding-suggestion">💡 修复建议：如果该监听器的语义必须是“仅在事务提交后触发”，应移除 `fallbackExecution = true`，例如：`@TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)`。如果确实需要兼容非事务场景，建议显式区分两类调用路径，在非事务发布时改为补偿队列/重试任务，而不是复用 AFTER_COMMIT 监听逻辑。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/service/SAPService.java:77-314</code>
+                </div>
+                <div class="finding-desc">`addNoteToCase` 在调用 `addNoteToSAP` 之前就先落库幂等记录；一旦 `addNoteToSAP` 因模板缺失、SAP 短暂异常等返回失败，该事件会被标记为 `FAILED`。结合 `tryCreateCloseEvent` 的去重逻辑，后续同一 `caseId + eventCode` 再次触发时会直接命中幂等并返回，导致备注永远无法重试，形成持久性数据缺失。</div>
+                <div class="finding-suggestion">💡 修复建议：将幂等语义限定为“成功后去重”，或为 `FAILED/PENDING` 状态提供显式重试通道。例如仅在 `addNoteToSAP` 成功后插入唯一记录；或者在 `DataIntegrityViolationException` 后查询现有记录，若状态为 `FAILED` 则允许更新状态并重试调用。至少需要区分“已成功处理”和“曾经失败”。</div>
+            </div>
+            <p class="more-note">... 还有 5 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
