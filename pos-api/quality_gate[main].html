@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-api &nbsp;|&nbsp; 2026-03-25 15:06:56</div>
+      <div class="meta">pos-api &nbsp;|&nbsp; 2026-04-20 11:39:41</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -56,14 +56,14 @@
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#f44336">18.8%</div>
-      <div class="metric-threshold">阈值: 50%</div>
+      <div class="metric-value" style="color:#4caf50">18.2%</div>
+      <div class="metric-threshold">阈值: 1%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#f44336">34.4%</div>
-            <div class="metric-threshold">阈值: 60%</div>
+            <div class="metric-value" style="color:#f44336">17.0%</div>
+            <div class="metric-threshold">阈值: 50%</div>
         </div>
         
     <div class="metric-card">
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:12</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:11</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -82,8 +82,8 @@
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube analysis timed out after 5 minutes</li>
-<li>AI Review: 12 Major finding(s) &gt;= threshold 3</li></ul>
+            <ul><li>SonarQube analysis timed out after 1 minutes</li>
+<li>AI Review: 11 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,44 +94,44 @@
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">backend-common/src/main/java/com/miq/backendcommon/http/HttpClientUtil.java:394-397,423-425</code>
+                    <code class="finding-loc">pos-api/src/main/java/com/miq/posapi/job/PartnerPickupStagingJob.java:50-51</code>
                 </div>
-                <div class="finding-desc">`requestGetWithHeaders` 把响应头存进普通 `HashMap`，`getHeader` 也按大小写精确匹配。HTTP Header 名大小写不敏感，若上游返回 `etag`/`ETag`/`ETAG` 与调用方读取大小写不一致，会直接读不到值，导致依赖 ETag 的并发控制或缓存逻辑失效。</div>
-                <div class="finding-suggestion">💡 修复建议：将响应头容器改为大小写不敏感的实现，例如 `new TreeMap&lt;&gt;(String.CASE_INSENSITIVE_ORDER)`，或在写入/读取时统一 `toLowerCase(Locale.ROOT)`。示例：`Map&lt;String,String&gt; responseHeaders = new TreeMap&lt;&gt;(String.CASE_INSENSITIVE_ORDER);`。</div>
+                <div class="finding-desc">这里将 `createPickupStaging(dto)` 的调用结果直接视为成功，并立即把回调状态更新为 `PROCESSED`。与变更前“返回 false 时回写 `NEW` 等待重试”的语义相比，当前实现丢失了“可重试失败”分支；只要服务内部未抛异常但实际未创建成功，就会被错误标记为已处理，后续不会再重试，可能导致揽收单据丢失。</div>
+                <div class="finding-suggestion">💡 修复建议：保留显式的成功/失败判定，不要仅以“未抛异常”作为成功条件。例如让 `createPickupStaging` 返回布尔值或结果对象，并根据结果分别更新状态：`boolean created = vintedService.createPickupStaging(dto); if (created) { updateStatus(...PROCESSED...) } else { updateStatus(...NEW..., &quot;waiting for retry&quot;) }`。如果方法已改为抛异常模式，也应区分业务失败异常（可重试）与最终失败异常。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-api/src/main/java/com/miq/posapi/controller/LabelController.java:279-283</code>
+                    <code class="finding-loc">pos-api/src/main/java/com/miq/posapi/job/PartnerPickupStagingJob.java:53-54</code>
                 </div>
-                <div class="finding-desc">这里把 `/innerApi/updateLabelNotes` 接口整段注释掉，等价于直接移除已发布路由。现有调用方会从原先可用变成 404/405，属于明确的接口兼容性破坏。</div>
-                <div class="finding-suggestion">💡 修复建议：不要通过注释代码下线路由。若确需停用，至少保留接口并返回明确错误码/错误信息，或先走 `@Deprecated` + 灰度开关的兼容下线流程。</div>
+                <div class="finding-desc">`catch (Exception)` 后统一将状态更新为 `FAILED`，把所有异常都当作终态处理。对于瞬时异常（如网络抖动、下游超时）这会直接终止后续重试，较原先“失败回到 `NEW`”的行为更激进，容易造成任务一次性失败后永久积压/丢单。</div>
+                <div class="finding-suggestion">💡 修复建议：按异常类型区分可重试与不可重试场景。对临时性异常回写 `NEW` 或专门的重试状态，对明确的参数非法/数据不可恢复错误才置为 `FAILED`。示例：`catch (TransientAccessException e) { updateStatus(traceId, CallbackStatusEnum.NEW.name(), e.getMessage()); } catch (Exception e) { updateStatus(traceId, CallbackStatusEnum.FAILED.name(), e.getMessage()); }`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/api/BeansApi.java:156-157</code>
+                    <code class="finding-loc">pos-api/src/main/java/com/miq/posapi/job/PartnerPickupStagingJob.java:54</code>
                 </div>
-                <div class="finding-desc">日志直接输出 `apiKey`，会把 Beans 授权凭证落到应用日志中。日志系统、排障导出或下游日志平台一旦可访问，就会造成凭证泄露并允许未授权调用第三方接口。</div>
-                <div class="finding-suggestion">💡 修复建议：不要记录完整密钥。删除该字段，或仅记录脱敏后的前后几位，例如 `mask(apiKey)`；同时检查同类调用日志，避免 Authorization/Token 类凭证进入日志。</div>
+                <div class="finding-desc">将 `e.getMessage()` 原样写入回调状态明细，会把底层异常文本持久化到业务记录中。该异常消息可能包含上游接口返回、内部类名/SQL/连接信息或凭证片段，形成非预期的信息泄露面。</div>
+                <div class="finding-suggestion">💡 修复建议：不要持久化原始异常消息。改为写入固定错误码或通用失败描述，并仅在受控日志中记录脱敏后的异常摘要；如需排障，使用 `traceId` 关联详细日志。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/UpdateAddressService.java:553-569</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/beans/impl/BeanRefreshRouteServiceImpl.java:529-530</code>
                 </div>
-                <div class="finding-desc">`updateLabelNotesForm` 对同一运单执行的是典型的读-改-写流程：先查 `labelPo.getNotes()`，再在内存中拼接，最后 `updateNotes`。并发请求同时更新同一 tracking number 时，后写入的请求会覆盖先写入的追加内容，导致备注丢失。</div>
-                <div class="finding-suggestion">💡 修复建议：将追加逻辑下推到数据库侧做原子更新，或引入乐观锁/版本号控制。例如提供单条 SQL：`update label set notes = case when notes is null or notes = &#x27;&#x27; then :newNote else right(concat(notes, &#x27;; &#x27;, :newNote), 255) end where tracking_number = :trkNumber`；如果继续保留先查后改，需要配合事务隔离和行锁。</div>
+                <div class="finding-desc">新增的 `pickupType` 直接参与 `facilityCode += &quot;-PICKUP-&quot; + pickupType` 拼接，但这里没有对 `pickupType` 做空值或空串校验。调用方一旦传入 `null`/空白值，会生成诸如 `xxx-PICKUP-null` 或 `xxx-PICKUP-` 的错误 facilityCode，后续 `routeAccountService.findByFacilityCode(facilityCode)` 很可能查不到配置，导致路由查询异常或后续空指针。</div>
+                <div class="finding-suggestion">💡 修复建议：在拼接前显式校验 `pickupType`，并在非法值时尽早抛出业务异常；同时建议只接受枚举/白名单值。示例：`if (StrUtil.isBlank(pickupType)) { throw new RRException(&quot;pickupType is required&quot;); } facilityCode = facilityCode + &quot;-PICKUP-&quot; + pickupType.trim();`。如果系统只支持固定类型，优先改为接收 `PickupTypeEnum` 而不是裸字符串。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerImplService.java:1046-1055</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/container/ParcelContainerService.java:59-77</code>
                 </div>
-                <div class="finding-desc">新增分布式锁的 key 同时包含 `containerNo` 和 `trackingNumber`。这只能拦住“同一包裹扫入同一容器”的并发，无法拦住“同一包裹同时扫入两个不同容器”的并发，因为两次请求会拿到不同的锁，仍可能造成包裹被重复装箱或状态竞争。</div>
-                <div class="finding-suggestion">💡 修复建议：锁粒度应覆盖真实业务唯一性。至少按 `trackingNumber` 加锁；如果还要保护容器侧并发，可对 `trackingNumber` 和 `containerNo` 分别加锁，或结合数据库唯一约束兜底。示例：`getLock(&quot;scan-parcel:&quot; + trackingNumber)`。</div>
+                <div class="finding-desc">`baseFacilityService.getInRedisByFacilityCode(facilityCode)` 的结果未校验就直接传给 `xhcService.queryCurrentDayParentBatchInfo(facilityPo)`。当 `facilityCode` 无效或缓存未命中时，`facilityPo` 可能为 `null`，这里会把空值继续下传，极易在后续流程中引发空指针。</div>
+                <div class="finding-suggestion">💡 修复建议：在查询批次前先校验 `facilityPo`，为空时直接返回失败结果并给出明确提示，例如：`if (facilityPo == null) { autoEncodingBo.setEncodingResult(false); autoEncodingBo.setMessage(&quot;Invalid facility code.&quot;); return autoEncodingBo; }`。</div>
             </div>
-            <p class="more-note">... 还有 7 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 6 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
