@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">dms-api &nbsp;|&nbsp; 2026-04-21 15:12:40</div>
+      <div class="meta">dms-api &nbsp;|&nbsp; 2026-04-21 15:22:32</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -56,13 +56,13 @@
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#4caf50">17.5%</div>
+      <div class="metric-value" style="color:#4caf50">17.9%</div>
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#f44336">23.8%</div>
+            <div class="metric-value" style="color:#f44336">22.4%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:3</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:5</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,7 +83,7 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 3 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 5 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,26 +94,42 @@
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/biz/LoadingScanBizService.java:1065-1077</code>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/biz/LoadingScanBizService.java:1077,1176</code>
                 </div>
-                <div class="finding-desc">`buildRouteByQuickScan` 的调用删除了 `fleetId` 入参，结合本次变更后该方法不再具备初始化新路线 `fleetId/driverId/dispatchStatus` 的必要上下文。这样快速扫描新建的路线很容易以未绑定司机/车队、未处于 `ACCEPTED` 派车状态的半初始化数据落库，后续依赖这些字段的派车、查询或状态流转会直接异常或表现为空。</div>
-                <div class="finding-suggestion">💡 修复建议：保留并继续传递 `fleetId`，或在 `buildRouteByQuickScan` 内基于 `uid` 补齐 `fleetId/driverId/dispatchStatus` 的赋值，确保快速扫描创建的 `Route` 与原有业务语义一致。例如恢复为 `buildRouteByQuickScan(uid, itemInRoutes, requestId, driver.getFleetId())`，并在方法内显式设置 `route.setFleetId(...)`、`route.setDriverId(uid)`、`route.setDispatchStatus(DispatchStatus.ACCEPTED)`。</div>
+                <div class="finding-desc">`buildRouteByQuickScan` 的调用与签名修改后，不再传入 `fleetId`，且该方法内部也不再为新建 route 设置 `fleetId`、`driverId`、`dispatchStatus`。这会让 QUICK_SCAN 场景下新创建的 route 缺少司机/车队归属和已接单状态，后续依赖这些字段的路线查询、分派状态流转或统计逻辑可能直接异常。</div>
+                <div class="finding-suggestion">💡 修复建议：恢复新建 route 的关键字段赋值，至少保证 QUICK_SCAN 创建出的 route 与原有语义一致。例如保留 `fleetId` 参数，或在方法内根据 `uid` 查出司机后补齐：`route.setFleetId(driver.getFleetId()); route.setDriverId(uid); route.setDispatchStatus(DispatchStatus.ACCEPTED);`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/service/RouteImportService.java:528-1006</code>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/biz/RouteMgmtBizService.java:818</code>
                 </div>
-                <div class="finding-desc">`updateOneRoute` 分支新建了 `upsertParcels`，但实际调用 `saveRouteData(...)` 时传入的仍是旧的 `parcels`。当本次改单包含数据库中不存在的 trackingNo 时，这些新 `Parcel` 不会被落库，也不会写入 `sourceRouteId`，导致路线更新后包裹主数据缺失。</div>
-                <div class="finding-suggestion">💡 修复建议：将调用参数改为 `upsertParcels`，确保已有包裹更新、缺失包裹创建都走同一批次保存，例如：`saveRouteData(Collections.emptyList(), Collections.singletonList(new RouteInfoBo(route, routeInfoBo.getRouteItems())), upsertParcels);`。</div>
+                <div class="finding-desc">`result.setSourceRouteId(route.getSourceRouteId());` 将返回值从“仅当源路由仍存在时返回 ID，否则返回 null”改为“无条件返回数据库中的原始 ID”。这会破坏既有接口契约：当 `sourceRouteId` 已失效或指向已删除记录时，调用方仍会拿到一个不可解析的引用，容易触发后续查询异常、错误缓存或前端错误跳转，属于可被异常数据放大的稳定性/安全边界问题。</div>
+                <div class="finding-suggestion">💡 修复建议：保留原有存在性校验逻辑，或显式定义并同步升级接口契约（例如新增字段标识源路由是否存在），避免在未做版本变更的情况下直接返回悬空引用。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">drivermgmt-infrastructure/src/main/java/io/speedx/drivermgmt/infrastructure/db/po/Parcel.java:14-16</code>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/service/RouteImportService.java:171-975</code>
                 </div>
-                <div class="finding-desc">`Parcel` 实体未显式声明 `@Table`，但 `@SQLDelete` 硬编码了 `update Parcel ...`。在 Spring Boot 2.5 默认 Hibernate 命名策略下，实体表名通常会落到 `parcel`，这会导致逻辑删除 SQL 与真实表名不一致，在区分大小写的 MySQL/部署环境中删除操作直接失败。</div>
-                <div class="finding-suggestion">💡 修复建议：为实体补充显式表名，并让 `@SQLDelete` 与其保持一致，例如：`@Table(name = &quot;parcel&quot;)` 与 `@SQLDelete(sql = &quot;update parcel set deleted = id where id = ?&quot;)`。同时补一条集成测试，覆盖逻辑删除后查询被 `@Where` 过滤的场景。</div>
+                <div class="finding-desc">新增的 `upsertParcels` 构造逻辑对 `allTrackingNos` 中的每个元素都线性扫描一次 `parcels` 列表，形成 O(n^2) 复杂度。导入接口处理的是外部上传的批量数据，攻击者可通过构造超大批次触发高 CPU 消耗，放大为可用性风险。</div>
+                <div class="finding-suggestion">💡 修复建议：先将 `parcels` 预构造成 `Map&lt;String, Parcel&gt;`，再按 trackingNo O(1) 查找并生成 `upsertParcels`，避免在批量导入路径上出现平方级处理。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/service/RouteImportService.java:505-1005</code>
+                </div>
+                <div class="finding-desc">`updateOneRoute` 分支虽然构造了 `upsertParcels`，但实际调用 `saveRouteData(...)` 时传入的是旧的 `parcels` 集合。这样当单条路由更新里出现数据库中不存在的 trackingNo 时，新建的 `Parcel` 不会被保存，也不会写入 `sourceRouteId`，导致该入口与批量导入路径行为不一致，后续按 source route 查询会漏数。</div>
+                <div class="finding-suggestion">💡 修复建议：将 `saveRouteData(Collections.emptyList(), Collections.singletonList(new RouteInfoBo(route, routeInfoBo.getRouteItems())), parcels);` 改为传入 `upsertParcels`，保证新 trackingNo 对应的 `Parcel` 也会被落库并更新 `sourceRouteId`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">drivermgmt-infrastructure/src/main/java/io/speedx/drivermgmt/infrastructure/db/po/Parcel.java:15-16</code>
+                </div>
+                <div class="finding-desc">`@SQLDelete` 使用原生 SQL 指向 `Parcel` 表，但该实体未显式声明 `@Table`。在 Spring Boot 2.5 默认命名策略下，实体表名通常会映射为 `parcel`，这里的删除 SQL 很容易在运行时命中不存在的表，导致软删除失败。</div>
+                <div class="finding-suggestion">💡 修复建议：为实体补充明确的表名并与 `@SQLDelete` 保持一致，例如：`@Table(name = &quot;parcel&quot;)`，同时将 SQL 改为 `@SQLDelete(sql = &quot;update parcel set deleted = id where id = ?&quot;)`。</div>
             </div>
             
         </div>
