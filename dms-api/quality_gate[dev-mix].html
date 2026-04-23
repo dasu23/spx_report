@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">dms-api &nbsp;|&nbsp; 2026-04-22 10:14:24</div>
+      <div class="meta">dms-api &nbsp;|&nbsp; 2026-04-23 16:26:41</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -56,13 +56,13 @@
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#4caf50">18.3%</div>
+      <div class="metric-value" style="color:#4caf50">18.4%</div>
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#f44336">23.7%</div>
+            <div class="metric-value" style="color:#f44336">8.8%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:4</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:6</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,7 +83,7 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 4 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 6 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,36 +94,44 @@
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/service/RouteImportService.java:531-538</code>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/service/RouteImportService.java:171-172</code>
                 </div>
-                <div class="finding-desc">`uploadOne` 分支虽然构造了 `upsertParcels`，但实际仍把旧的 `parcels` 传给 `saveRouteData(...)`。当本次改单包含库中尚不存在的 trackingNo 时，这些新建的 `Parcel` 不会被写入，后续 `sourceRouteId` 也不会落库，导致导入后的包裹关联数据缺失。</div>
-                <div class="finding-suggestion">💡 修复建议：将调用改为传入 `upsertParcels`，确保缺失包裹会按导入数据补建并统一写入。例如：`saveRouteData(Collections.emptyList(), Collections.singletonList(new RouteInfoBo(route, routeInfoBo.getRouteItems())), upsertParcels);`。同时补充测试：单条路线更新时包含全新 trackingNo，校验 `parcel` 记录被创建且 `sourceRouteId` 已写入。</div>
+                <div class="finding-desc">这里对 `allTrackingNos` 外层遍历时，每次都再次线性扫描 `parcels` 查找同一 trackingNo，对导入批次形成 O(n^2) 的 CPU 开销。该批量导入入口直接处理外部上传数据，若一次提交的 trackingNo 数量较大，容易被放大为应用层 DoS，拖慢导入线程并影响同 JVM 其他请求。</div>
+                <div class="finding-suggestion">💡 修复建议：先将 `parcels` 预构造成 `Map&lt;String, Parcel&gt;`，再按 trackingNo 做 O(1) 查询；同时为单次导入增加明确的最大 trackingNo 数量限制，超限直接拒绝。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/service/RouteImportService.java:977-1008</code>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/service/RouteImportService.java:528-536</code>
                 </div>
-                <div class="finding-desc">`sync` 流程里已构造 `upsertParcels`，但后续只对旧集合 `parcels` 赋值并 `saveAll(parcels)`。这会导致两类问题：1）新 trackingNo 对应的新 `Parcel` 从未保存；2）`parcels.forEach(...)` 发生在 `sourceRouteId` 重新计算之前，首次同步时会把旧值/空值写回数据库，造成 `Parcel.sourceRouteId` 与新路线不一致。</div>
-                <div class="finding-suggestion">💡 修复建议：改为在拿到最终 `routeSourceId` 后统一更新并保存 `upsertParcels`。例如在事务内先保存 route、计算 `routeSourceId`，再执行 `upsertParcels.forEach(p -&gt; p.setSourceRouteId(finalRoute.getSourceRouteId())); parcelRepository.saveAll(upsertParcels);`。</div>
+                <div class="finding-desc">单路线更新场景里先构造了 `upsertParcels`，但实际仍把旧的 `parcels` 传给 `saveRouteData(...)`。当请求里包含数据库中不存在的新 trackingNo 时，这些新 Parcel 不会被创建，也就不会写入 `sourceRouteId`，后续基于 Parcel 的 source-route 关联会丢失。</div>
+                <div class="finding-suggestion">💡 修复建议：将调用改为传入 `upsertParcels`，确保新增 trackingNo 也会落库并更新 `sourceRouteId`。例如：`saveRouteData(Collections.emptyList(), Collections.singletonList(new RouteInfoBo(route, routeInfoBo.getRouteItems())), upsertParcels);`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/service/SourceRouteService.java:219-241</code>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/service/SourceRouteService.java:103-142</code>
                 </div>
-                <div class="finding-desc">`createOrUpdateOnRouteCreated` 以 `route.getSourceRouteId()` 是否为正数作为“是否已存在”的唯一判定；当同一条路线被并发导入/同步时，多个线程都可能看到 `sourceRouteId` 为空或负数，并各自执行“首次创建”分支插入新的 `SourceRoute` 记录。该竞态会产生重复的 source route 记录，并进一步导致后续 `parcel.sourceRouteId`、详情查询及删除逻辑指向不一致的数据。</div>
-                <div class="finding-suggestion">💡 修复建议：为 `SourceRoute` 建立可唯一标识业务记录的唯一约束，并将这里改为幂等 upsert：例如按稳定业务键先查后加锁更新，或在事务内使用唯一索引配合捕获重复键后重试查询，避免并发下重复插入。</div>
+                <div class="finding-desc">`getSourceRouteDetail` 在未做分页或上限控制的情况下，一次性加载指定 `sourceRouteId` 下全部 `Parcel`，随后继续级联查询全部 `RouteItem`、`Route`、`Fleet`、`Driver`、`Deliver` 并组装完整响应。对于包含大量包裹的 source route，这会把单次查询放大为高内存占用和多表批量读取，存在被大数据量请求触发的可用性风险。</div>
+                <div class="finding-suggestion">💡 修复建议：为明细接口增加分页或硬性上限，只返回请求页的数据；若业务必须返回全量，至少增加最大 parcel 数阈值并在超限时拒绝，同时改为分段流式处理避免在内存中堆积所有中间集合。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">drivermgmt-infrastructure/src/main/java/io/speedx/drivermgmt/infrastructure/db/po/Parcel.java:20</code>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/service/SourceRouteService.java:145</code>
                 </div>
-                <div class="finding-desc">`@SQLDelete` 使用了 `update Parcel ...`，这里是直接下发给数据库的原生 SQL，不会按 JPA 实体名解析。当前类没有 `@Table` 显式映射，默认物理表名通常是 `parcel`，这条 SQL 在大小写敏感或命名策略不一致的环境下会直接执行失败，导致删除/软删除功能异常。</div>
-                <div class="finding-suggestion">💡 修复建议：将 SQL 中的表名改为实际物理表名，并与 `@Table` 显式保持一致，例如：`@Table(name = &quot;parcel&quot;)` 配合 `@SQLDelete(sql = &quot;update parcel set deleted = id where id = ?&quot;)`。这样可以避免命名策略或大小写差异带来的运行时失败。</div>
+                <div class="finding-desc">这里用 `==` 比较 `Long` 类型的 `routeId`，比较的是对象引用而不是数值。超过 Long 缓存范围时，即使两个 routeId 数值相同也可能判定为不相等，导致 `trackingNoDeliverMap` 关联失败，明细接口把本应有状态的包裹错误显示为 `NEW`。</div>
+                <div class="finding-suggestion">💡 修复建议：改为值比较并兼容空值，例如：`if (matchedItem != null &amp;&amp; Objects.equals(matchedItem.getRouteId(), d.getRouteId())) { ... }`。如果确认两边都非空，也可先判空后比较 `longValue()`。</div>
             </div>
-            
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">drivermgmt-infrastructure/src/main/java/io/speedx/drivermgmt/configuration/BizConfig.java:54</code>
+                </div>
+                <div class="finding-desc">将 `@Value(&quot;${biz.invalidAddressId:109}&quot;)` 改为 `@Value(&quot;${biz.invalidAddressId}&quot;)` 后，`biz.invalidAddressId` 从“可缺省、有默认值”变为“必填配置”。一旦某个部署环境或临时发布配置未显式下发该键，Spring 在启动期会因占位符无法解析而直接失败，形成可用性风险。该问题属于破坏性配置契约变更，可能导致服务不可用。</div>
+                <div class="finding-suggestion">💡 修复建议：如果该配置并非所有环境都已强制下发，恢复安全默认值，或改为 `@ConfigurationProperties` 并在启动前做显式校验与清晰报错；同时补齐所有环境配置并在发布检查中加入该键的存在性校验。</div>
+            </div>
+            <p class="more-note">... 还有 1 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
