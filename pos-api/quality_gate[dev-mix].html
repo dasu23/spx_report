@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-api &nbsp;|&nbsp; 2026-04-24 13:26:17</div>
+      <div class="meta">pos-api &nbsp;|&nbsp; 2026-04-24 22:23:05</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -62,7 +62,7 @@
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#f44336">17.4%</div>
+            <div class="metric-value" style="color:#f44336">17.6%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:15</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:18</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,7 +83,7 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube analysis timed out after 1 minutes</li>
-<li>AI Review: 15 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 18 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,44 +94,44 @@
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-api/src/main/java/com/miq/posapi/controller/LabelController.java:121-126</code>
+                    <code class="finding-loc">backend-common/src/main/java/com/miq/backendcommon/dto/rps/CustomerUpdateReq.java:10-18</code>
                 </div>
-                <div class="finding-desc">`enableShipment=true` 的新分支直接调用 `shipmentService.processTEMUData(...)`，但不再执行原先“先保证落库”的 `pushLogService.saveBatchUpdateLabelFromRps(...)`。这样一旦 shipment 处理过程中部分成功后再抛异常，当前批次就没有持久化的请求记录可用于补偿/重放，容易出现数据丢失或标签、shipment 状态不一致。</div>
-                <div class="finding-suggestion">💡 修复建议：保留“先落库再处理”的兜底语义：在 shipment 分支进入业务处理前也先保存批次请求，或改为同一事务内写入可重放的 outbox/操作表，再异步执行 shipment。示例：先执行 `pushLogService.saveBatchUpdateLabelFromRps(batchUpdateLabelDto);`，成功后再调用 `shipmentService.processTEMUData(...)`，并在失败时基于落库记录做补偿。</div>
+                <div class="finding-desc">新增的请求 DTO 仅用注释声明了字段约束，但代码中未加入任何可执行校验。`status` 被说明为仅允许 &quot;A&quot;/&quot;I&quot;，`name`、`code` 也没有长度/格式限制；如果该 DTO 直接用于 Spring 请求绑定，任意状态值或超长字符串都能进入后续更新流程，导致接口契约失效，并可能把非法主数据写入下游系统。</div>
+                <div class="finding-suggestion">💡 修复建议：在 DTO 上补充 Bean Validation 约束，并在接收端配合 `@Valid` 强制校验，例如：`status` 使用 `@Pattern(regexp = &quot;A|I&quot;)`，`name`/`code` 使用合适的 `@Size`（必要时加白名单字符集约束）；对“全字段可选”的语义保留为 nullable，但非空时必须满足格式约束。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/dao/LabelDao.java:490-603</code>
+                    <code class="finding-loc">pos-api/src/main/java/com/miq/posapi/controller/LabelController.java:118-127</code>
                 </div>
-                <div class="finding-desc">新增的批量更新方法直接对 `trackingNumber in (:allTrackingNo)` 绑定集合参数。Spring Data JPA/Hibernate 在入参为空集合时通常会生成非法 `IN ()`，导致运行时查询异常，批量更新流程会直接失败。</div>
-                <div class="finding-suggestion">💡 修复建议：在调用该 DAO 前显式拦截空集合；或拆分为 service 层先判断 `allTrackingNumbers.isEmpty()` 后直接返回，再调用仓储。例如：`if (CollectionUtils.isEmpty(allTrackingNumbers)) { return; }`。同时补充空集合场景测试，避免执行到该 JPQL。</div>
+                <div class="finding-desc">`enableShipment=true` 分支不再执行原先的 `pushLogService.saveBatchUpdateLabelFromRps(...)` 落库逻辑，导致该类请求在进入 `shipmentService.processTEMUData(...)` 前没有任何持久化记录。一旦 shipment 处理或后续 `genOperationLog(...)` 中途失败，请求既无法回放也无法审计，相比旧逻辑会直接引入批次级数据丢失/不可追踪问题。</div>
+                <div class="finding-suggestion">💡 修复建议：保留“先落库再处理”的顺序，对 `enableShipment=true` 分支也先执行持久化，再调用 shipment 处理；若确实不应写原表，也至少在进入 shipment 前落一份等价的请求记录。示例：先 `pushLogService.saveBatchUpdateLabelFromRps(batchUpdateLabelDto);`，再执行 `shipmentService.processTEMUData(...)` 和 `genOperationLog(...)`，并将整个流程放在统一异常处理内。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerImplService.java:1204-1207,1402-1405</code>
+                    <code class="finding-loc">pos-api/src/main/java/com/miq/posapi/controller/LabelController.java:121-124</code>
                 </div>
-                <div class="finding-desc">新增的事件上报分支直接调用 `checkResult.getEventCode()`，但 `baseFacilityService.checkPoe(...)` 的返回值未做空判。如果该服务在异常场景下返回 `null`，这里会触发空指针，导致本次扫描成功后在补发事件时抛错并进入错误日志分支。</div>
-                <div class="finding-suggestion">💡 修复建议：在读取 `eventCode` 前先判空，例如：`CheckCrossPoeBo checkResult = baseFacilityService.checkPoe(...); if (checkResult != null &amp;&amp; StringUtils.isNotEmpty(checkResult.getEventCode())) { ... }`。如果 `checkPoe` 理论上不应返回 `null`，也应在这里做保护并补充单测覆盖空返回场景。</div>
+                <div class="finding-desc">新增的 `enableShipment` 分支直接调用 `shipmentService.processTEMUData(...)`，但当前唯一的批量上限校验仍然只绑定在 `enableSync` 条件上。结果是只要请求设置 `enableShipment=true` 且 `enableSync=false`，就可以提交任意大 `list` 进入重处理逻辑，单次请求即可放大 CPU/DB/日志写入压力，形成可被利用的资源消耗型拒绝服务风险。</div>
+                <div class="finding-suggestion">💡 修复建议：在进入 `enableShipment` 分支前增加独立且严格的 `list` 大小上限校验，不要复用 `enableSync` 条件；同时建议将超大批次拆分为分片异步处理，并对 `processTEMUData`/`genOperationLog` 增加请求级限流与超时保护。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/impl/ShipmentServiceImpl.java:523-526</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/api/TrkApi.java:269</code>
                 </div>
-                <div class="finding-desc">新增的幂等保护只在事务开始时一次性预加载 `existingParcelTrackingNos`，后续同事务内按该快照判断是否新增 parcel。若两个线程并发处理同一 `mawb/facilityCode` 批次，它们都可能在快照阶段看不到对方尚未提交的数据，随后各自继续插入相同 trackingNumber 的 `ShipmentParcel`，并在 550-553 行基于同一过期快照重复累加 `shipment.qty`，造成重复落库或数量失真。代码中的注释已提示该路径存在并发风险，但当前实现未真正消除竞态。</div>
-                <div class="finding-suggestion">💡 修复建议：不要依赖事务前置快照做并发幂等。为 `ShipmentParcel`/`Receptacle` 建立数据库唯一约束，并将写入改为 upsert/insert-ignore；同时对 `Shipment` 更新引入乐观锁（`@Version`）或行级锁（如 `SELECT ... FOR UPDATE`），保证 `qty/receptacleQty` 基于最新状态原子更新。</div>
+                <div class="finding-desc">成功码判断直接对 `resObj.getCode()` 做 `!=` 比较；如果下游返回体存在但 `code` 字段为 `null`，这里会发生自动拆箱空指针，方法会落入通用异常分支，表现为接口异常而不是可控的业务失败。</div>
+                <div class="finding-suggestion">💡 修复建议：先对 `code` 做空值判断，再比较成功码，例如：`Integer code = resObj.getCode(); if (resObj == null || code == null || !ResponseCode.SUCCESS.equals(code)) { ... }`；如果 `SUCCESS` 是基本类型常量，则改为 `code == null || code.intValue() != ResponseCode.SUCCESS`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/impl/TrackingServiceServiceImpl.java:116-124</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/api/TrkApi.java:278</code>
                 </div>
-                <div class="finding-desc">新增的 `createEvent(...)` 直接使用 `baseFacility.getFacilityCode()`、`baseFacility.getZoneId()` 等字段，但 `baseFacilityService.getInRedisByFacilityCode(facilityCode)` 没有空值校验。若 `facilityCode` 无效、缓存未命中或下游返回 `null`，这里会在事件创建流程中触发空指针，导致整次处理失败。</div>
-                <div class="finding-suggestion">💡 修复建议：在构建 `InsertEventForm` 前显式校验 `baseFacility`，并给出可定位的业务异常。例如：`if (baseFacility == null) { throw new RRException(&quot;facility not found: &quot; + facilityCode); }`。如 `facilityCode` 允许为空，也应一并在入口处校验。</div>
+                <div class="finding-desc">新增异常处理将底层异常原始消息直接拼接到 `RRException` 返回值中。若底层 HTTP 客户端、JSON 解析或上游服务错误消息包含内部地址、实现细节或响应片段，这些信息可能继续向上暴露，形成错误信息泄露。</div>
+                <div class="finding-suggestion">💡 修复建议：对外抛出的异常信息改为固定文案，例如 `throw new RRException(&quot;queryEventCodesByIds failed&quot;)`；将详细异常仅保留在服务端日志中，并避免把底层 `e.getMessage()` 直接返回给调用方。</div>
             </div>
-            <p class="more-note">... 还有 10 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 13 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
