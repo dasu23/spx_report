@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-api &nbsp;|&nbsp; 2026-04-24 22:23:05</div>
+      <div class="meta">pos-api &nbsp;|&nbsp; 2026-04-26 11:39:16</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:18</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:14</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,7 +83,7 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube analysis timed out after 1 minutes</li>
-<li>AI Review: 18 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 14 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,44 +94,44 @@
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">backend-common/src/main/java/com/miq/backendcommon/dto/rps/CustomerUpdateReq.java:10-18</code>
+                    <code class="finding-loc">pos-api/src/main/java/com/miq/posapi/controller/LabelController.java:117-123</code>
                 </div>
-                <div class="finding-desc">新增的请求 DTO 仅用注释声明了字段约束，但代码中未加入任何可执行校验。`status` 被说明为仅允许 &quot;A&quot;/&quot;I&quot;，`name`、`code` 也没有长度/格式限制；如果该 DTO 直接用于 Spring 请求绑定，任意状态值或超长字符串都能进入后续更新流程，导致接口契约失效，并可能把非法主数据写入下游系统。</div>
-                <div class="finding-suggestion">💡 修复建议：在 DTO 上补充 Bean Validation 约束，并在接收端配合 `@Valid` 强制校验，例如：`status` 使用 `@Pattern(regexp = &quot;A|I&quot;)`，`name`/`code` 使用合适的 `@Size`（必要时加白名单字符集约束）；对“全字段可选”的语义保留为 nullable，但非空时必须满足格式约束。</div>
+                <div class="finding-desc">`enableShipment=true` 分支直接改为调用 `shipmentService.processTEMUData(...)`，但移除了原先“先保证落库”的 `pushLogService.saveBatchUpdateLabelFromRps(...)`。如果 `processTEMUData` 未承担同等持久化职责，接口在 shipment 场景下将不再保存请求数据，失败后也缺少可重放/追踪记录，存在数据丢失与业务链路不可恢复的回归风险。</div>
+                <div class="finding-suggestion">💡 修复建议：保留 shipment 分支的落库动作，或在进入 shipment 处理前显式持久化请求，再执行后续处理。例如先统一调用 `pushLogService.saveBatchUpdateLabelFromRps(batchUpdateLabelDto)`，然后根据 `enableShipment` 决定走 shipment 逻辑；如果确实由 `processTEMUData` 完成持久化，需要在该处补充明确注释并增加失败重试/幂等保障。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-api/src/main/java/com/miq/posapi/controller/LabelController.java:118-127</code>
+                    <code class="finding-loc">pos-api/src/main/java/com/miq/posapi/controller/LabelController.java:121</code>
                 </div>
-                <div class="finding-desc">`enableShipment=true` 分支不再执行原先的 `pushLogService.saveBatchUpdateLabelFromRps(...)` 落库逻辑，导致该类请求在进入 `shipmentService.processTEMUData(...)` 前没有任何持久化记录。一旦 shipment 处理或后续 `genOperationLog(...)` 中途失败，请求既无法回放也无法审计，相比旧逻辑会直接引入批次级数据丢失/不可追踪问题。</div>
-                <div class="finding-suggestion">💡 修复建议：保留“先落库再处理”的顺序，对 `enableShipment=true` 分支也先执行持久化，再调用 shipment 处理；若确实不应写原表，也至少在进入 shipment 前落一份等价的请求记录。示例：先 `pushLogService.saveBatchUpdateLabelFromRps(batchUpdateLabelDto);`，再执行 `shipmentService.processTEMUData(...)` 和 `genOperationLog(...)`，并将整个流程放在统一异常处理内。</div>
+                <div class="finding-desc">新增的 `enableShipment` 分支会直接同步调用 `shipmentService.processTEMUData(...)`，但这里没有像 `enableSync` 分支那样对 `batchUpdateLabelDto.getList()` 做数量上限校验。攻击者可构造超大批量请求触发长时间同步处理，放大 CPU/DB/下游调用占用，带来接口级拒绝服务风险。</div>
+                <div class="finding-suggestion">💡 修复建议：在进入 `enableShipment` 分支前增加与业务容量匹配的批量上限校验，并为同步 shipment 处理设置明确的单次条数阈值；超过阈值时拒绝请求或改为异步入队处理。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-api/src/main/java/com/miq/posapi/controller/LabelController.java:121-124</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/api/TrkApi.java:279</code>
                 </div>
-                <div class="finding-desc">新增的 `enableShipment` 分支直接调用 `shipmentService.processTEMUData(...)`，但当前唯一的批量上限校验仍然只绑定在 `enableSync` 条件上。结果是只要请求设置 `enableShipment=true` 且 `enableSync=false`，就可以提交任意大 `list` 进入重处理逻辑，单次请求即可放大 CPU/DB/日志写入压力，形成可被利用的资源消耗型拒绝服务风险。</div>
-                <div class="finding-suggestion">💡 修复建议：在进入 `enableShipment` 分支前增加独立且严格的 `list` 大小上限校验，不要复用 `enableSync` 条件；同时建议将超大批次拆分为分片异步处理，并对 `processTEMUData`/`genOperationLog` 增加请求级限流与超时保护。</div>
+                <div class="finding-desc">新增异常处理将底层异常消息直接拼接到 `RRException` 返回：`&quot;queryEventCodesByIds error:&quot; + e.getMessage()`。如果下游 HTTP 客户端、JSON 解析或网络层异常消息包含内部 URL、协议细节或实现信息，会被透传给上层调用方，形成非必要的内部信息泄露。</div>
+                <div class="finding-suggestion">💡 修复建议：对外返回固定的通用错误信息，例如 `throw new RRException(&quot;queryEventCodesByIds failed&quot;)`；仅在服务端日志中保留详细异常，并避免将底层异常消息直接暴露到业务异常文本。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/api/TrkApi.java:269</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerImplService.java:1204-1404</code>
                 </div>
-                <div class="finding-desc">成功码判断直接对 `resObj.getCode()` 做 `!=` 比较；如果下游返回体存在但 `code` 字段为 `null`，这里会发生自动拆箱空指针，方法会落入通用异常分支，表现为接口异常而不是可控的业务失败。</div>
-                <div class="finding-suggestion">💡 修复建议：先对 `code` 做空值判断，再比较成功码，例如：`Integer code = resObj.getCode(); if (resObj == null || code == null || !ResponseCode.SUCCESS.equals(code)) { ... }`；如果 `SUCCESS` 是基本类型常量，则改为 `code == null || code.intValue() != ResponseCode.SUCCESS`。</div>
+                <div class="finding-desc">新增的 PtC 事件上报分支直接访问 `checkResult.getEventCode()`，但 `baseFacilityService.checkPoe(...)` 没有空值保护；一旦该方法在异常场景下返回 `null`，这里会触发空指针，导致本次扫描流程进入异常分支。</div>
+                <div class="finding-suggestion">💡 修复建议：对 `checkResult` 做非空校验后再读取事件码，例如：`CheckCrossPoeBo checkResult = baseFacilityService.checkPoe(...); if (checkResult != null &amp;&amp; StringUtils.isNotEmpty(checkResult.getEventCode())) { ... }`。另一种更稳妥的方式是让 `checkPoe` 保证返回非空对象。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/api/TrkApi.java:278</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/impl/ShipmentServiceImpl.java:531-537</code>
                 </div>
-                <div class="finding-desc">新增异常处理将底层异常原始消息直接拼接到 `RRException` 返回值中。若底层 HTTP 客户端、JSON 解析或上游服务错误消息包含内部地址、实现细节或响应片段，这些信息可能继续向上暴露，形成错误信息泄露。</div>
-                <div class="finding-suggestion">💡 修复建议：对外抛出的异常信息改为固定文案，例如 `throw new RRException(&quot;queryEventCodesByIds failed&quot;)`；将详细异常仅保留在服务端日志中，并避免把底层 `e.getMessage()` 直接返回给调用方。</div>
+                <div class="finding-desc">新增的 TEMU 批处理在读取 `existingShipment` 后直接基于当前 `qty` 做内存累加并回写，代码注释也已明确提示并发风险。若同一 `mawb/orgId` 的两批任务并发执行，两个事务可能读取到相同旧值并发生丢失更新，导致 `qty`/后续 `receptacleQty` 与实际包裹数不一致。</div>
+                <div class="finding-suggestion">💡 修复建议：对 `Shipment` 增加乐观锁字段（`@Version`）并处理重试，或改为数据库侧原子更新/`SELECT ... FOR UPDATE` 锁定同一 `mawb/orgId` 的 shipment 后再累加。</div>
             </div>
-            <p class="more-note">... 还有 13 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 9 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
