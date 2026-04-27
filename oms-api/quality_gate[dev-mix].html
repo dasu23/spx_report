@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">oms-api &nbsp;|&nbsp; 2026-04-24 14:05:09</div>
+      <div class="meta">oms-api &nbsp;|&nbsp; 2026-04-27 10:37:16</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -56,13 +56,13 @@
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#4caf50">37.4%</div>
+      <div class="metric-value" style="color:#4caf50">38.0%</div>
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#4caf50">55.6%</div>
+            <div class="metric-value" style="color:#ff9800">48.1%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:6</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:2 &nbsp; 主要:33</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,55 +83,72 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 6 Major finding(s) &gt;= threshold 5</li></ul>
+<li>AI Review: 2 Critical finding(s)</li>
+<li>AI Review: 33 Major finding(s) &gt;= threshold 5</li></ul>
         </div>
         
   
         <div class="findings-section">
             <h3>AI 代码审查发现</h3>
             
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillRecalculationService.java:130-147</code>
+                </div>
+                <div class="finding-desc">`matchSourceSettlements` 通过 `trackingNo|billingType` 分组后，仅依赖两张表各自按 `id` 排序后的“相同下标”来建立 `ApLmBillSettlement -&gt; ApLmSettlement` 映射。若同一 `trackingNo + billingType` 存在多条记录，且两张表的自增 `id` 生成顺序不一致，就会把重算结果写回错误的 source settlement，导致账单与源结算记录错配，属于直接的资金数据篡改风险。</div>
+                <div class="finding-suggestion">💡 修复建议：不要用列表下标推断两张表的对应关系。应在复制/生成账单明细时持久化明确的 source settlement 主键映射，重算时按该稳定外键回查并更新；若当前模型缺少该字段，至少在查询阶段构造唯一业务键并在不唯一时直接失败回滚。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/batchtask/processor/ApLmBillRateChangeProcessor.java:174</code>
+                </div>
+                <div class="finding-desc">新增日志直接输出 `batch.getFileUrl()`。该字段通常指向导入 Excel 的对象存储地址；若实际承载的是带签名参数的临时下载链接（如 SAS/预签名 URL），则会把访问令牌写入普通业务日志，形成敏感凭证泄露风险。</div>
+                <div class="finding-suggestion">💡 修复建议：不要记录完整 `fileUrl`。改为仅记录 batchId、文件名或脱敏后的 URL（去掉 query string，例如 `?sig=`、`token=` 等签名参数）。如确需排障，增加专门的脱敏工具后再输出。</div>
+            </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArAdjustmentImportService.java:539-541</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/batchtask/processor/ApLmBillRateChangeProcessor.java:164</code>
                 </div>
-                <div class="finding-desc">这里直接使用默认的 `TransactionTemplate.execute(...)`，若调用方当前已经处于事务中且该事务后续被标记为回滚，进度更新会加入同一事务并一并回滚，导致任务实际已处理但 `processed/success/failed` 不落库。该改动看起来是想保证进度独立提交，但当前实现并不能保证这一点。</div>
-                <div class="finding-suggestion">💡 修复建议：将进度更新放到独立事务中提交，例如注入一个 `PROPAGATION_REQUIRES_NEW` 的 `TransactionTemplate`，或拆到单独的 Spring Bean 方法上并使用 `@Transactional(propagation = Propagation.REQUIRES_NEW)`：`requiresNewTx.execute(status -&gt; { batchQueryTaskRepository.updateProgress(...); return null; });`。</div>
+                <div class="finding-desc">新增的 `logPrefix` 使用 `String.format(&quot;...%d&quot;, referenceId)` 构造，发生在 `try` 之外；当 `batchTask.getReferenceId()` 为 `null` 时会直接抛出格式化异常，后续错误通知、执行日志更新和解锁逻辑都不会执行。此前使用日志占位符是空值安全的，这次改动引入了新的前置崩溃点。</div>
+                <div class="finding-suggestion">💡 修复建议：将 `logPrefix` 的构造移入 `try` 内，或改为空值安全的拼接方式，例如：`String logPrefix = String.format(&quot;[AP_LM_BILL_RATECHG][billId=%s]&quot;, String.valueOf(referenceId));`。同时补一个 `referenceId == null` 的失败分支，确保任务能返回明确错误并进入 finally。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/BalanceService.java:269-274</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillRateChangeService.java:263-265</code>
                 </div>
-                <div class="finding-desc">`queryBalanceRecords` 已改为只查询 `customer_balance_account_record`，但同一变更中 `addBalanceRecord` 对 `PARCEL/PARCEL_REFUND` 仍然继续写入原 `customer_balance_record` 表。这样查询页会漏掉这两类交易记录，产生账变记录“写得进去但查不出来”的功能回归。</div>
-                <div class="finding-suggestion">💡 修复建议：统一读写模型：要么所有交易类型都同步写入并查询 `customer_balance_account_record`，要么查询时合并 `customer_balance_record` 与 `customer_balance_account_record` 两个来源。至少需要补齐 parcel 类记录的查询分支。</div>
+                <div class="finding-desc">`billingDate != null` 分支里，代码在更新 candidate 和 `ap_lm_settlement` 后，仅通过 `findByTrackingNoAndApLmBillId(...).ifPresent(...)` 尝试创建 `ApLmBillSettlement`。如果前置更新已成功，但这里未查到 candidate，方法会直接返回并保留已落库的 rate change / settlement 关联，当前账单却缺少对应的 `ApLmBillSettlement`，会造成账单明细不完整且数据状态不一致。</div>
+                <div class="finding-suggestion">💡 修复建议：不要用 `ifPresent` 静默跳过。应在查询不到 candidate 时显式抛错回滚事务，或补充兜底创建逻辑。例如改为 `orElseThrow(() -&gt; new BizException(&quot;...&quot;) )` 后再调用 `createApLmBillSettlementFromCandidate(...)`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/BalanceService.java:272</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmSettlementService.java:130-139</code>
                 </div>
-                <div class="finding-desc">`queryBalanceRecords` 改为只查询 `CustomerBalanceAccountRecord` 表，但同一变更中 `addBalanceRecord` 仍会将 `PARCEL` / `PARCEL_REFUND` 交易写入旧的 `CustomerBalanceRecord` 表。结果是这两类历史/新增流水将无法再被该接口返回，形成破坏性契约变更，并削弱对账/审计可见性。对于资金类流水，这会直接影响异常交易排查和风控审计。</div>
-                <div class="finding-suggestion">💡 修复建议：保持查询与写入口径一致：要么统一所有交易类型都落到 `CustomerBalanceAccountRecord` 并从该表查询，要么在 `queryBalanceRecords` 中同时合并旧表中的 `PARCEL` / `PARCEL_REFUND` 记录；同时补充兼容性测试，覆盖混合数据场景。</div>
+                <div class="finding-desc">`CREATE_LABEL` 事件处理采用“先查 `existing`、后 `save`”的非原子流程。Kafka 重复投递或多消费者并发处理同一 `trackingNo` 时，多个线程都可能在检查阶段看到“未存在”，随后各自执行 `createSettlementPlaceholder(parcel)`，生成重复占位 settlement。该重复记录会进一步污染后续计费/结算数据。</div>
+                <div class="finding-suggestion">💡 修复建议：为 `(tracking_no, billing_type)` 增加唯一约束，并将占位创建改为数据库层幂等写入（如 upsert / insert-ignore）；同时在代码中捕获唯一键冲突并按已存在处理，避免重复事件造成脏数据。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-facade-impl/src/main/java/io/speedx/oms/facade/impl/PickupTranslationFacadeImpl.java:22-23</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmSettlementService.java:313-320</code>
                 </div>
-                <div class="finding-desc">`pickupTranslationService.findByCustomerAccountId(customerAccountId)` 的返回值未做空判，若服务层在无数据场景返回 `null`，这里直接调用 `mappings.stream()` 会触发空指针，接口返回 500。</div>
-                <div class="finding-suggestion">💡 修复建议：在流处理前将结果兜底为空集合，例如：`List&lt;OmsPickupTranslationMapping&gt; mappings = Optional.ofNullable(pickupTranslationService.findByCustomerAccountId(customerAccountId)).orElse(Collections.emptyList());`，再执行 `stream()`。同时补充无数据返回 `null` 的单测。</div>
+                <div class="finding-desc">这里新增了“已入账单则直接跳过更新”的分支，会在同月更新场景下阻断已 billing 的 `ApLmSettlement` 后续事件处理。与本次 `ApLmRateCalcService` 中明确移除 already-billed guard 的设计相矛盾，实际效果是账单快照表保持不变的同时，源 `ap_lm_settlement` 也不再接收后续妥投/D-scan 修正，容易留下陈旧结算数据。</div>
+                <div class="finding-suggestion">💡 修复建议：不要在这里直接 `return`。如果目标是保护账单快照，应该只禁止改写 `ap_lm_bill_settlement`，而允许 `ap_lm_settlement`/候选表继续按最新事件更新；或者至少按事件类型细分，仅拦截会影响账单快照的数据回写。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-infrastructure/src/main/java/io/speedx/oms/infrastructure/db/spec/AccountBalanceRecordSpecification.java:89-150</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/BalanceService.java:269-284</code>
                 </div>
-                <div class="finding-desc">这里直接对请求中的 `filter.getValues()` 执行 `CustomerBalanceRecord.TransactionType.valueOf(...)`。当调用方传入未知枚举值时会抛出 `IllegalArgumentException`，最终把一次普通查询请求升级为 500 异常。该接口新增了基于前端过滤条件的动态解析路径，缺少输入兜底会让攻击者用低成本畸形参数持续触发异常，形成可利用的可用性风险。</div>
-                <div class="finding-suggestion">💡 修复建议：在枚举转换前做白名单校验，或使用安全的解析方法并捕获 `IllegalArgumentException`，将非法过滤值转换为 4xx 参数错误而不是服务端异常。</div>
+                <div class="finding-desc">`queryBalanceRecords` 改为只查询 `CustomerBalanceAccountRecord`，但同一变更中 `saveBalanceTransaction` 仍将 `PARCEL`/`PARCEL_REFUND` 写入旧表 `CustomerBalanceRecord`。结果是包裹类余额流水创建成功后，在该查询接口中会完全查不到，形成明显的数据缺失。</div>
+                <div class="finding-suggestion">💡 修复建议：保持读写模型一致：要么查询时同时合并 `CustomerBalanceRecord` 与 `CustomerBalanceAccountRecord`，要么将 `PARCEL`/`PARCEL_REFUND` 也迁移为写入新表。至少补一层兼容查询，例如先查新表，再补查旧表中的 parcel 类型记录并统一转换为 `BalanceRecordGridResponse`。</div>
             </div>
-            <p class="more-note">... 还有 1 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 28 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
