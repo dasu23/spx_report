@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pus-xls-api &nbsp;|&nbsp; 2026-04-20 22:55:14</div>
+      <div class="meta">pus-xls-api &nbsp;|&nbsp; 2026-04-27 15:06:06</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,16 +73,17 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:1</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:12</div>
       <div class="metric-threshold">已抑制: 0</div>
-      <div class="metric-note">已检测到问题，但当前配置未阻断流水线</div>
+      
     </div>
   </div>
 
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube quality gate status: ERROR</li></ul>
+            <ul><li>SonarQube quality gate status: ERROR</li>
+<li>AI Review: 12 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -93,12 +94,44 @@
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/bo/web/PickupWebPageBo.java:27-30</code>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/bo/web/PickupWebPageBo.java:115-176</code>
                 </div>
-                <div class="finding-desc">`PickupWebPageBo` 新增了 `pickupAccountId`、`latitude`、`longitude` 字段，但代码中未见任何脱敏或序列化限制。该类名和使用场景都表明它会作为 Web/导出层 BO 传播；一旦被现有 JSON/XLS 序列化链路复用，这次变更会把内部账户标识和精确地理坐标直接暴露到下游，形成新增的数据泄露面。</div>
-                <div class="finding-suggestion">💡 修复建议：如果这些字段仅用于服务内部分组，避免挂在对外 BO 上；改为使用内部专用 DTO/Wrapper 传递，或至少对 `pickupAccountId`、`latitude`、`longitude` 增加 `@JsonIgnore`/导出忽略配置，并确认所有序列化链路不会输出这些字段。</div>
+                <div class="finding-desc">这里新增的 write-mode 导出字段 `exportParcelQty`、`exportGrossWeight`、`pickupLocation`、`pickupStartTime`、`pickupEndTime`、`exportCreatedAt` 与原有业务字段完全分离，类内没有任何派生/兜底逻辑；同时 `createdAtStr` 已被 `@ExcelIgnore` 排除。若现有数据组装仍只填充原始字段（如 `pickupParcelQty`、`gnd/air*`、地址分段字段、`pickupDate/pickupReadyTime/pickupLatestTime`、`createdAt/createdAtStr`），这些新增导出列会直接导出为空，造成 Staging Sheet 关键列缺失。</div>
+                <div class="finding-suggestion">💡 修复建议：不要让导出字段依赖调用方额外记忆赋值。可在导出组装阶段显式回填，或直接改为派生 getter/统一转换逻辑，例如：`exportParcelQty = getParcelQty(); exportGrossWeight = getGrossWeight(); pickupLocation = ...; pickupStartTime = ...; pickupEndTime = ...; exportCreatedAt = createdAt;`。同时补充空值兜底，避免部分字段缺失时出现整列空白。</div>
             </div>
-            
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/WebPickupService.java:82-85</code>
+                </div>
+                <div class="finding-desc">`export` 接口被改为由调用方传入 `ExcelWriter` 和多个 `WriteSheet`，同时删除了原注释中“最多 3000 条”的规模约束。这样会把导出目标和资源生命周期暴露给外部调用方，而服务层本身不再体现任何行数上限或资源边界；一旦后续实现按条件执行大批量流式导出，容易被大查询触发长时间 CPU/IO 占用，形成可用性风险。</div>
+                <div class="finding-suggestion">💡 修复建议：在服务接口层保留并明确服务端防护契约：继续在实现中强制最大导出行数/分页窗口，并在方法注释或参数对象中声明上限；如果必须传入 `ExcelWriter`，需补充对 writer 生命周期、单次请求唯一性和关闭责任的约束，避免外部复用导致资源耗尽。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/impl/WebPickupServiceImpl.java:299-302</code>
+                </div>
+                <div class="finding-desc">`export` 方法签名从返回 `PickupExportOrderBo` 改为直接接收 `ExcelWriter/WriteSheet` 并返回 `void`，这是破坏性 API 契约变更。若调用方仍按旧契约编译或通过反射/接口方式调用，将在发布后直接失效，导出链路可被一次普通请求触发为服务不可用。</div>
+                <div class="finding-suggestion">💡 修复建议：保持向后兼容：保留原有 `export(PickupSo)` 方法并在内部委托到新实现，或同步在同一变更中确保所有接口/Facade/调用方全部完成升级并补充兼容性说明。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/impl/WebPickupStagingServiceImpl.java:152-160</code>
+                </div>
+                <div class="finding-desc">这里改为直接信任 `exportStagingData.getZoneId()`，随后立即传给 `ZoneId.of(zoneId)` 使用，但新增代码没有保留之前的显式空值/无效值校验。只要 `getExportStagingData` 未能填充 zoneId，当前逻辑就会在这里抛出 `NullPointerException`/`DateTimeException`，并丢失原先更明确的 `Facility not found` 业务异常。</div>
+                <div class="finding-suggestion">💡 修复建议：在使用 `zoneId` 前恢复显式校验，并给出可定位的业务异常，例如：`if (CharSequenceUtil.isBlank(zoneId)) { throw new BizException(&quot;Facility not found: &quot; + facilityCode); }`，再执行 `ZoneId.of(zoneId)`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-facade-impl/pus-facade-impl-xls/src/main/java/io/speedx/pus/facade/impl/xls/controller/XlsPickupController.java:109-119</code>
+                </div>
+                <div class="finding-desc">`ExcelWriter` 的关闭依赖正常执行路径；一旦 `webPickupService.export(...)` 中抛出异常，`excelWriter.finish()` 不会执行。EasyExcel 在未 `finish()` 的情况下通常不会完整刷出 XLSX 结构，前端会拿到损坏/无法打开的导出文件，同时底层写出资源也得不到正确释放。</div>
+                <div class="finding-suggestion">💡 修复建议：将 `ExcelWriter` 放入 `try/finally` 中保证始终执行 `finish()`，例如：`ExcelWriter excelWriter = null; try { excelWriter = EasyExcelFactory.write(response.getOutputStream()).registerWriteHandler(new ExportHeaderStyleHandler()).build(); ... webPickupService.export(...); } finally { if (excelWriter != null) { excelWriter.finish(); } }`。</div>
+            </div>
+            <p class="more-note">... 还有 7 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
