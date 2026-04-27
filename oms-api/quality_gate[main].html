@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">oms-api &nbsp;|&nbsp; 2026-04-24 15:26:07</div>
+      <div class="meta">oms-api &nbsp;|&nbsp; 2026-04-27 21:18:23</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -56,13 +56,13 @@
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#4caf50">37.4%</div>
+      <div class="metric-value" style="color:#4caf50">37.8%</div>
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#4caf50">55.6%</div>
+            <div class="metric-value" style="color:#4caf50">50.1%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:6 &nbsp; 主要:33</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:4 &nbsp; 主要:48</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,8 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 6 Critical finding(s)</li>
-<li>AI Review: 33 Major finding(s) &gt;= threshold 5</li></ul>
+<li>AI Review: 4 Critical finding(s)</li>
+<li>AI Review: 48 Major finding(s) &gt;= threshold 5</li></ul>
         </div>
         
   
@@ -94,85 +94,77 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArAdjustmentService.java:260-343</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/datasource/RateCardDataSource.java:163-709</code>
                 </div>
-                <div class="finding-desc">这里先读取 `oldTotalFeeAmount`，后续在 286-299 行基于该快照做增量金额计算并提交重算，但新增代码没有任何行级锁、版本号校验或串行化控制。并发更新同一 settlement 下多个 adjustment 时，第二个事务可能基于过期总额计算 `newTotalFeeAmount`，导致应收金额被覆盖为错误值，属于资金计算错误。</div>
-                <div class="finding-suggestion">💡 修复建议：对同一 `settlementId` 的 adjustment 变更引入并发控制：例如对 settlement/receivable 行加 `SELECT ... FOR UPDATE`，或使用乐观锁版本字段并在冲突时重试；增量重算前应保证 `oldTotalFeeAmount` 与 adjustment 变更处于同一受保护的事务快照内。</div>
+                <div class="finding-desc">邮编费率过滤逻辑同步改为左闭右开：`endDate == dateToQuery` 时会被过滤掉。这里返回的 `RateCardDto` 直接参与费率卡选择，边界时刻可能从“命中唯一费率”变成“返回空列表”，造成报价/结算金额缺失或错误。该风险与 `isVersionEffectiveOnDate` 一起会在实际计费链路上放大。</div>
+                <div class="finding-suggestion">💡 修复建议：在确认所有费率有效期数据均已迁移到左闭右开语义前，不要直接切换过滤条件；建议增加兼容分支，或在新语义开关下同时校验旧数据格式并拒绝未迁移数据上线。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillRecalculationService.java:140-152</code>
+                </div>
+                <div class="finding-desc">`matchSourceSettlements` 在 `trackingNo|billingType` 存在重复记录时，按 `ApLmBillSettlement.id` 和 `ApLmSettlement.id` 各自排序后再用相同下标配对。两张表的主键序列彼此独立，排序后的相对顺序没有业务保证，重复组内很容易把重算结果写回到错误的源 settlement，直接造成账单费率/金额串写。</div>
+                <div class="finding-suggestion">💡 修复建议：不要依赖两张表各自主键排序后的下标对齐。为重算匹配引入稳定且双方共享的业务键，例如复制 settlement 时保存 sourceSettlementId，并在此处按 sourceSettlementId 精确关联；若无法补字段，至少使用创建复制关系时生成的唯一映射键。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArAdjustmentService.java:279-302</code>
+                </div>
+                <div class="finding-desc">这里改为基于快照做增量金额计算：先读取 `oldTotalFeeAmount`，再用 `request.getAdjustedAmount().subtract(originalAdjustedAmount)` 推导 `newTotalFeeAmount` 并直接传给 `recalculateReceivableIncremental(...)`。新增代码没有体现任何 settlement 级别的锁或版本校验；如果同一 settlement 上有并发的 adjustment 新增/修改/删除事务，多个事务会基于同一个旧总额各自推导新值，最终把 receivable 重算到错误金额，属于资金计算错误。</div>
+                <div class="finding-suggestion">💡 修复建议：不要用应用层快照推导最终总额。改为在同一事务内对 settlement/adjustment 相关记录加行锁后重新汇总，或引入乐观锁版本字段并在版本冲突时重试；`recalculateReceivableIncremental(...)` 也应基于数据库中的最新已提交总额做校验，检测到基线已变化时回退到全量重算。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
                     <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArRateCalcService.java:46-67</code>
                 </div>
-                <div class="finding-desc">新增逻辑在 `parcelService.calculateAR(...)` 抛异常后仅记录异常并继续执行结算事件发送分支，最后才重新抛出异常。这样会在 AR 金额计算失败时仍触发 `sendArSettlementGenerateRequest(...)`，把未成功计算/未落库的账单送入后续结算链路，形成资金数据不一致或重复补偿风险。</div>
-                <div class="finding-suggestion">💡 修复建议：在发送结算事件前显式校验 `arCalcException == null`，或在 `calculateAR` 失败时直接中止方法，不允许任何结算侧副作用先于成功的 AR 计算发生。若需要进入死信队列，应先保证不发送结算消息。</div>
-            </div>
-            <div class="finding-card finding-critical">
-                <div class="finding-header">
-                    <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArSettlementInternationalDetailService.java:174-618</code>
-                </div>
-                <div class="finding-desc">新增的 adjustment 聚合逻辑对同一 `settlementId + chargeCode` 仅保留最后一次 `put` 的金额，且未定义重复记录的处理规则。若数据库存在重复 adjustment，最终导出金额将取决于查询返回顺序，导致结算金额不确定，属于资金计算错误。对比同批次的 Shein 实现已显式处理重复值，这里行为不一致，风险更高。</div>
-                <div class="finding-suggestion">💡 修复建议：在聚合 adjustment 时显式定义重复键策略，例如使用 `Collectors.toMap(..., mergeFunction)` 或在 `put` 前检测重复并直接报错/记录告警；同时补充重复 adjustment 的单测，确保金额结果稳定且符合业务规则。</div>
-            </div>
-            <div class="finding-card finding-critical">
-                <div class="finding-header">
-                    <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArSettlementSfDetailService.java:174-636</code>
-                </div>
-                <div class="finding-desc">SF 明细导出中新增的 adjustment Map 构建同样直接 `put` 覆盖重复 `chargeCode`，未定义冲突解决策略。重复 adjustment 时，最终金额由底层查询顺序决定，可能导出错误账单金额，属于资金计算错误。</div>
-                <div class="finding-suggestion">💡 修复建议：与 Shein 实现保持一致，改为显式 merge/拒绝重复键，并在发现重复 adjustment 时中断导出或按业务规则合并，避免金额被静默覆盖。</div>
-            </div>
-            <div class="finding-card finding-critical">
-                <div class="finding-header">
-                    <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/RateService.java:173-174</code>
-                </div>
-                <div class="finding-desc">新版本表开关路径下，`findFirstEffectiveVersion(...)` 查不到记录时直接返回空列表，和旧逻辑相比属于破坏性行为变更。只要 `rate_card_version` 回填不完整、导入后的版本记录写入失败，或新维度暂未生成版本行，计费侧就会拿到“无价卡”结果，存在错计/漏计费用的资金风险。</div>
-                <div class="finding-suggestion">💡 修复建议：不要在缺少版本行时静默返回空列表。至少应回退到旧版 `rate_card` 查询；如果业务要求强依赖版本表，则应抛出显式异常并阻断开关切换，同时补充版本表完整性校验。</div>
+                <div class="finding-desc">`parcelService.calculateAR(req, parcel)` 异常后，代码仍继续执行 `sendArSettlementGenerateRequest(...)`，最后才重新抛异常。这样会在 AR 金额未成功计算的情况下继续触发结算生成，形成“计算失败但下游已入账/已生成结算”的资金链路不一致，属于新增的资金计算/事务边界缺陷。</div>
+                <div class="finding-suggestion">💡 修复建议：将结算事件发送放到 `calculateAR` 成功之后；如果 AR 计算失败，应立即终止当前流程，不得发送结算生成请求。可改为在 `catch` 中直接抛出，或用成功标记显式保护后续结算逻辑。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillRecalculationService.java:133-156</code>
+                </div>
+                <div class="finding-desc">`matchSourceSettlements` 在同一 `matchKey` 下通过“分别按各自表的 `id` 排序后按索引位置对应”来匹配 `ApLmBillSettlement` 和 `ApLmSettlement`。两张表的主键生成顺序并不保证一致，出现同 trackingNo + billingType 的多条记录时，重算结果可能写回到错误的 source settlement，造成两表数据错配。</div>
+                <div class="finding-suggestion">💡 修复建议：改为使用稳定的一对一关联键进行匹配，例如在复制/生成 bill settlement 时保存 source settlement id，并在这里按该外键直接映射；如果当前模型没有该字段，至少应在查询阶段带出并使用可唯一标识来源的业务键。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
                     <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArRateCalcService.java:46-68</code>
                 </div>
-                <div class="finding-desc">这里在 `calculateAR` 异常后仍继续发送 `sendArSettlementGenerateRequest(...)`，随后再把异常重新抛出。对消息消费场景来说，这会让本次处理被判定失败并进入重试/死信，但结算生成请求已经发出一次，重试后可能再次发出，导致 AR settlement 重复生成或下游幂等压力显著增大。</div>
-                <div class="finding-suggestion">💡 修复建议：将“发送结算生成请求”和“抛出异常进入重试”二选一处理，避免部分成功后再失败。可选修复：1）若 `calculateAR` 失败则直接返回/抛出，不发送 settlement；2）若业务要求 settlement 必须继续，则不要再向上抛异常，而是记录补偿任务；3）至少为 `sendArSettlementGenerateRequest` 引入基于 `trackingNo + event` 的幂等键。示例：`parcelService.calculateAR(req, parcel); sendArSettlementGenerateRequest(...);`，异常时直接 `throw`，不要先发送再抛。</div>
+                <div class="finding-desc">`calculateAR` 失败后仍继续发送 AR settlement 事件，随后再把异常重新抛出。这样一次失败会同时产生“已发送下游事件”和“当前消息失败待重试/进死信”两种结果；如果上游重试同一消息，`sendArSettlementGenerateRequest(...)` 会被再次执行，形成重复结算或重复异步任务。</div>
+                <div class="finding-suggestion">💡 修复建议：把发送 settlement 事件放到 `calculateAR` 成功之后，失败时直接返回/抛错，不要在同一次处理里同时产生副作用和失败状态。例如：`parcelService.calculateAR(...); sendArSettlementGenerateRequest(...);`；如果确实要保留发送动作，需增加幂等校验或持久化去重标记，确保重试不会重复发送。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-infrastructure/src/main/java/io/speedx/oms/infrastructure/db/repository/RateCardRepository.java:174-181</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillExportService.java:214</code>
                 </div>
-                <div class="finding-desc">新方法 `findByVersionAndZone` 将 `zone` 参数声明为 `String`，但同一仓库内其余 `zone` 条件查询均使用 `Integer`。如果 `RateCard.zone` 实体字段仍为数值类型，这个 JPQL 在运行时会因参数类型不匹配抛出异常，导致费卡查询直接失败。</div>
-                <div class="finding-suggestion">💡 修复建议：将方法参数改为与实体字段一致的类型，例如 `@Param(&quot;zone&quot;) Integer zone`；若数据库列已改为字符串，也需要同步检查并统一该仓库内所有 `zone` 相关方法签名，避免同一字段存在两套类型定义。</div>
+                <div class="finding-desc">分页查询从 `findByApLmBillIdAndDeletedOrderById(..., 0, pageable)` 改成了 `findByApLmBillIdAfterIdOrderById(...)`，新增调用里看不到 `deleted=0` 条件。若仓储方法未内置过滤，导出会把逻辑删除的 settlement 一并带出，导致账单明细错误。</div>
+                <div class="finding-suggestion">💡 修复建议：保持游标分页的同时补回删除条件，例如新增仓储方法 `findByApLmBillIdAndDeletedAndIdGreaterThanOrderById(...)`，调用时显式传入 `deleted=0`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/datasource/RateCardDataSource.java:706-709</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillOperationService.java:136</code>
                 </div>
-                <div class="finding-desc">`isVersionEffective` 的生效区间从原来的 `startDate &lt;= targetDate &lt;= endDate` 改成了 `startDate &lt;= targetDate &lt; endDate`。如果当前费率版本表中的 `endDate` 仍按“最后生效日”存储，那么在 `targetDate == endDate` 当天会直接判定为失效，导致版本查询、费率匹配在边界日返回空结果或命中错误版本。这个变更会影响既有数据语义，属于明显的业务回归风险。</div>
-                <div class="finding-suggestion">💡 修复建议：先确认 `rate_card` / `rate_card_version` 中 `endDate` 的存储语义是否已同步切换为“右开区间上界”。如果数据库仍是闭区间最后一天，应保持原判断：`boolean endValid = (endDate == null) || !endDate.before(targetDate);`。如果确实要改成左闭右开，需要同时完成历史数据迁移（例如将原 `2026-04-21 23:59:59` 或自然日结束值转换为下一天零点），并补充 `targetDate == endDate` 的回归测试。</div>
+                <div class="finding-desc">`managerConfirmRequired` 的判定从 hub 配置切换为账单字段 `requireManagerConfirm`，并在为空时直接按 `false` 处理。对于历史账单或未回填该字段的数据，即使 hub 配置要求经理确认，也会被错误地流转到无需确认的状态。</div>
+                <div class="finding-suggestion">💡 修复建议：保留字段优先级的同时增加配置兜底，例如 `Optional.ofNullable(apLmBill.getRequireManagerConfirm()).orElseGet(() -&gt; apLmBillConfig.isManagerConfirmRequired(hub))`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillOperationService.java:140</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillService.java:357-359</code>
                 </div>
-                <div class="finding-desc">确认流转改为直接读取 `apLmBill.getRequireManagerConfirm()`，对历史账单兼容性不足。旧数据大概率没有回填该字段，此处会落到 `false`，从而把原本需要经理确认的 hub 账单直接推进到后续状态，造成状态机行为回归。</div>
-                <div class="finding-suggestion">💡 修复建议：对空值保留配置兜底，而不是直接按 `false` 处理，例如：`boolean managerConfirmRequired = Optional.ofNullable(apLmBill.getRequireManagerConfirm()).orElseGet(() -&gt; apLmBillConfig.isManagerConfirmRequired(apLmBill.getHub()));`；同时补充历史数据为空时的提交流转测试。</div>
+                <div class="finding-desc">`updateApLmBillAuditPercentage(ApLmBill, Long)` 现在只把结果写回数据库，不再同步更新传入的 `apLmBill` 对象。调用方如果在同一流程里继续使用该对象的 `auditPercentage`，会读到旧值，导致后续日志、状态判断或返回结果与数据库不一致。</div>
+                <div class="finding-suggestion">💡 修复建议：在委托调用后把返回值回填到内存对象，例如：`BigDecimal auditPercentage = updateApLmBillAuditPercentage(...); apLmBill.setAuditPercentage(auditPercentage);`，保持方法对调用方的语义不变。</div>
             </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmSettlementService.java:261-266</code>
-                </div>
-                <div class="finding-desc">这里在 `localDeliveryTime` 或 `billingDate` 缺失时仅记录日志后直接 `return`，会把本应落到分表中的首次 bill candidate 静默跳过。调用方拿不到异常，后续也没有补偿信号，容易形成永久性漏数。</div>
-                <div class="finding-suggestion">💡 修复建议：不要静默返回。至少抛出业务异常或进入明确的失败/待补偿队列，确保调用链可感知；如果确需跳过，也应同步写入可重试状态表。示例：`throw new BizException(&quot;Missing sharding fields for bill candidate insert: trackingNo=&quot; + request.getTrackingNo());`。</div>
-            </div>
-            <p class="more-note">... 还有 29 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 43 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
