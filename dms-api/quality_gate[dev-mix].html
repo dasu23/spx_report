@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">dms-api &nbsp;|&nbsp; 2026-04-28 11:19:51</div>
+      <div class="meta">dms-api &nbsp;|&nbsp; 2026-04-28 13:50:43</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -96,40 +96,40 @@
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">bruce-prepare.md:4</code>
                 </div>
-                <div class="finding-desc">新增的建表脚本包含 `default null null`，这是非法的 MySQL 列定义语法。按当前文档执行 `alter table route` 会直接失败，导致后续 `distance` 字段回填无法落地。</div>
-                <div class="finding-suggestion">💡 修复建议：将列定义改为合法语法，例如：`add distance decimal(20, 2) default null comment &#x27;路线包裹投递总距离&#x27;;`，或直接省略 `default null`：`add distance decimal(20, 2) comment &#x27;路线包裹投递总距离&#x27;;`。</div>
+                <div class="finding-desc">新增的 DDL 语句 `add distance decimal(20, 2) default null null` 包含重复的 `null` 关键字，在 MySQL 8.0 下会直接语法报错，导致 `route.distance` 字段无法创建，后续的 `UPDATE route` 回填语句也无法执行。</div>
+                <div class="finding-suggestion">💡 修复建议：将语句改为合法的列定义，例如：`alter table route add distance decimal(20, 2) default null comment &#x27;路线包裹投递总距离&#x27;;`，并在发布前用目标版本 MySQL 实际执行整段脚本验证。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/biz/DashboardBizService.java:172</code>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/biz/LoadingScanBizService.java:555-555</code>
                 </div>
-                <div class="finding-desc">这里把 `route.getDistance()` 直接拼接成 `&quot; m&quot;` 返回，但本次另一个改动把优化结果中的 `result.getDistanceM()` 原样写入了 `Route.distance`。同一个来源值此前按 miles 输出，现在改成固定按米展示，容易把原始距离值错误标注为米，导致司机端/运营端看到的路线距离成倍失真。</div>
-                <div class="finding-suggestion">💡 修复建议：统一距离字段的存储单位与展示单位，不要在展示层硬编码 `&quot; m&quot;`。例如先确认 `Route.distance` 的标准单位，再在赋值前做显式转换：`summaryResp.setTotalDistance(Optional.ofNullable(route.getDistance()).map(dis -&gt; dis + &quot; miles&quot;).orElse(null));`，或增加独立的 unit 字段并由前端按 unit 展示。</div>
+                <div class="finding-desc">首次扫描成功后只更新了当前 `trackingNo` 对应 Parcel 的状态为 `OUT_FOR_DELIVERY`，但同一批次前面刚通过 `deliverRepository.saveAll(otherDelivers)` 批量创建的 `otherDelivers` 没有同步更新 Parcel 状态。若一次扫描会联动多个运单，这些附带创建的 Deliver 与 Parcel 状态将不一致，后续看板/轨迹/回调可能仍把它们视为未出车。</div>
+                <div class="finding-suggestion">💡 修复建议：将 Parcel 状态更新范围与 Deliver 创建范围保持一致，按本次实际生效的全部 trackingNo 批量更新。例如先收集 `trackingNo` 与 `otherDelivers` 的单号，再统一 `findByTrackingNoIn(...).forEach(p -&gt; p.setStatus(...).setStatusUpdatedAt(...).setDriverId(driverId))`，最后 `parcelRepository.saveAll(...)`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/biz/RouteMgmtBizService.java:818</code>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/service/InternalService.java:102</code>
                 </div>
-                <div class="finding-desc">`sourceRouteId` 的返回语义发生了破坏性变化。旧逻辑仅在 `sourceRouteId` 能查到对应 Route 时才返回该值；新逻辑直接回传原始 ID。这样会把原本应为 `null` 的无效/脏数据主键暴露给下游调用方，可能导致调用方基于不存在的路由 ID 继续发起后续查询或状态流转，形成可利用的错误对象引用，属于非越权类 API 契约回归。</div>
-                <div class="finding-suggestion">💡 修复建议：保持原有契约：仅当 `routeRepository.findById(route.getSourceRouteId())` 命中时再返回该值；若出于性能考虑不想二次查询，则至少在写入 `sourceRouteId` 时保证引用完整性，并在接口文档中显式声明该字段可能返回悬空 ID。</div>
+                <div class="finding-desc">批量返回分拣中心时，新增代码先查出整批 Parcel，再对每条记录逐个调用 `save(...)`。这会把一次批处理放大为 N 次独立写库操作，显著拉长事务/连接占用时间；当 `trackingNos` 很大时，容易把数据库连接池和应用工作线程拖满，形成可触发的可用性风险。相同模式在同文件另一处新增逻辑中也重复出现。</div>
+                <div class="finding-suggestion">💡 修复建议：改为先在内存中批量修改实体，再统一 `saveAll(...)`，或直接增加 repository 批量更新 SQL（按 trackingNo 集合一次性更新状态和时间），避免逐条写库。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/service/PickupService.java:455-457</code>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/service/RouteImportService.java:171-172</code>
                 </div>
-                <div class="finding-desc">`listStopParcels` 直接调用 `parcel.getStatus().name()`，当历史 `PickupStopParcel` 记录状态为空时会在列表接口中触发空指针，导致整页查询失败。该方法是新加查询路径，缺少对旧数据/未初始化数据的兜底。</div>
-                <div class="finding-suggestion">💡 修复建议：对状态做空值保护，再决定返回 `null`、空串或默认状态，例如：`setStatus(Optional.ofNullable(parcel.getStatus()).map(Enum::name).orElse(null))`。</div>
+                <div class="finding-desc">这里对 `allTrackingNos` 中的每个元素都线性扫描一次 `parcels` 列表来做匹配，时间复杂度退化为 O(n^2)。导入/同步路由的输入规模直接受请求内容影响，较大的 trackingNo 列表会明显放大 CPU 消耗并长时间占用工作线程，形成可被外部触发的应用层拒绝服务风险。相同模式在本次变更的更新单条导入与 `sync(...)` 新增代码中也再次出现。</div>
+                <div class="finding-suggestion">💡 修复建议：先将已查询到的 `parcels` 预构建为 `Map&lt;String, Parcel&gt;`，随后用 O(1) 查表生成 `upsertParcels`；同步替换同文件其余两处相同写法，避免导入/同步接口在大批量输入下出现平方级退化。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/service/RouteImportService.java:531-538</code>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/service/RouteImportService.java:375-536</code>
                 </div>
-                <div class="finding-desc">单路线更新分支里已经构造了 `upsertParcels`，但实际仍把旧的 `parcels` 传给 `saveRouteData(...)`。这样当导入包含新的 trackingNo、库里尚无对应 `Parcel` 记录时，这些新包裹不会被保存，也不会写入 `sourceRouteId`，会造成导入后路线与包裹数据不一致。</div>
-                <div class="finding-suggestion">💡 修复建议：将调用改为传入 `upsertParcels`：`saveRouteData(Collections.emptyList(), Collections.singletonList(new RouteInfoBo(route, routeInfoBo.getRouteItems())), upsertParcels);`，并补充回归测试覆盖“更新路线时新增 trackingNo”的场景。</div>
+                <div class="finding-desc">全量导入时这里会先删除旧 `source_route` 记录，但本次仅对当前导入批次的 `parcels` 重新写 `sourceRouteId`。若旧 route 上有包裹未出现在新导入文件中，这些 `parcel` 仍会保留已被删除的 `sourceRouteId`，形成悬空关联。</div>
+                <div class="finding-suggestion">💡 修复建议：删除 `source_route` 前，先处理旧 route 关联的所有 `parcel`：要么统一清空其 `sourceRouteId`，要么把这些 trackingNo 一并纳入待更新集合后再删除 `source_route`。至少应保证 `parcel.sourceRouteId` 不再指向已删除记录。</div>
             </div>
             <p class="more-note">... 还有 7 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
