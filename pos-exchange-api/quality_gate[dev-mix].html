@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-exchange-api &nbsp;|&nbsp; 2026-04-27 23:46:20</div>
+      <div class="meta">pos-exchange-api &nbsp;|&nbsp; 2026-04-28 16:18:39</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -62,7 +62,7 @@
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#f44336">17.4%</div>
+            <div class="metric-value" style="color:#f44336">17.3%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:0</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:20</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -82,10 +82,58 @@
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube analysis timed out after 1 minutes</li></ul>
+            <ul><li>SonarQube analysis timed out after 1 minutes</li>
+<li>AI Review: 20 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
+        <div class="findings-section">
+            <h3>AI 代码审查发现</h3>
+            
+            
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/sorter/DamonController.java:443-517</code>
+                </div>
+                <div class="finding-desc">`handleFirstStop` 先查询当前 chute 是否存在 ACTIVE/CLOSED 的 A 类容器，再调用 `createContainerWithParcels` 创建新容器；这两个步骤之间没有任何锁或事务隔离。并发的首次 Stop 请求可同时通过 `hasExisting` 检查，最终重复创建多个 ACTIVE 容器并打印多张标签，形成竞态条件。</div>
+                <div class="finding-suggestion">💡 修复建议：将“查重 + 创建”下沉到单个事务中，并对 chute 维度加行锁/唯一约束；至少为 `(facilityCode, sortId, scanType, active-like status)` 建立唯一性保护，或在服务层引入幂等键避免重复创建。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/sorter/DamonController.java:491-492</code>
+                </div>
+                <div class="finding-desc">这里直接假设容器号一定满足 `CTN-...-{date}-...-{seq}` 格式，并且最后一段一定可转为整数。当前方法只通过 `isScanTypeA()` 校验了 `parts.length &gt; 3`，如果库里存在历史容器号、脏数据或其他格式变体，`parts[4]` 会触发数组越界，`Integer.parseInt(parts[parts.length - 1])` 会抛 `NumberFormatException`，导致第二次 Stop 直接失败。</div>
+                <div class="finding-suggestion">💡 修复建议：在解析前补充格式校验，并对异常格式返回明确业务错误而不是依赖异常兜底。例如：`String[] parts = targetContainer.getContainerNum().split(&quot;-&quot;); if (parts.length &lt; 6 || !NumberUtils.isDigits(parts[parts.length - 1])) { return BaseResponse.&lt;String&gt;builder().code(HttpStatus.HTTP_INTERNAL_ERROR).msg(&quot;Invalid container number format: &quot; + targetContainer.getContainerNum()).build(); }`；同时再读取 `parts[4]`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/web/WebDispatchController.java:193-203</code>
+                </div>
+                <div class="finding-desc">`batchSubmit` 在循环内吞掉单条提交异常后仍固定返回 `success(true)`。只要部分 `id` 提交失败，接口仍会向前端宣称整批成功，调用方无法感知失败项，容易导致批量提交结果与用户认知不一致。</div>
+                <div class="finding-suggestion">💡 修复建议：至少汇总失败结果并返回给调用方，或在存在失败时返回失败状态。例如收集失败 `id` 后：`List&lt;Long&gt; failedIds = new ArrayList&lt;&gt;(); ... catch (Exception e) { failedIds.add(id); } if (!failedIds.isEmpty()) { return ResponseObject.fail(&quot;submit failed: &quot; + failedIds); } return ResponseObject.success(true);`。如果产品要求部分成功，也应返回成功/失败明细而不是固定 `true`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/web/WebDispatchController.java:249-260</code>
+                </div>
+                <div class="finding-desc">新增的异步批量打印接口直接接收 `List&lt;Long&gt; dispatchIds` 并原样序列化入任务请求，未见任何数量上限、去重或请求体大小约束。攻击者可构造超大 ID 列表反复创建报表任务，放大数据库/队列/报表生成侧的资源消耗，导致后台任务堆积甚至服务不可用。</div>
+                <div class="finding-suggestion">💡 修复建议：在控制器或 `ReportTaskService.createAndValidateTask(...)` 前增加硬性校验：限制 `dispatchIds` 最大数量、拒绝空/重复/异常长度请求，并结合任务创建频率限制与任务体积限制，避免超大任务进入异步链路。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/config/PusApiProperties.java:38</code>
+                </div>
+                <div class="finding-desc">`getPickupCoverageUrl(String zipCode)` 直接将 `zipCode` 拼接到 URL 路径中，未做字符白名单或 URL path segment 编码。若上游传入包含 `/`、`?`、`#` 等特殊字符的值，会改变实际请求路径或附带查询串，导致内部 API 被请求到非预期资源，属于下游接口路径注入风险。</div>
+                <div class="finding-suggestion">💡 修复建议：对 `zipCode` 先做严格格式校验（例如仅允许邮编合法字符集），再按 path segment 进行编码后拼接；更稳妥的方式是使用 URI builder 按路径段构造 URL，避免手工字符串拼接。</div>
+            </div>
+            <p class="more-note">... 还有 15 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+        </div>
+        
 
   <div class="footer">
     由质量门禁引擎生成 &nbsp;|&nbsp; SpeedX CI/CD
