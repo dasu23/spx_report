@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pus-web-api &nbsp;|&nbsp; 2026-04-27 12:07:29</div>
+      <div class="meta">pus-web-api &nbsp;|&nbsp; 2026-04-28 10:37:30</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:22</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:30</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,55 +83,64 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 22 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 1 Critical finding(s)</li>
+<li>AI Review: 30 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
         <div class="findings-section">
             <h3>AI 代码审查发现</h3>
             
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/factory/AbstractReportTaskProcessor.java:74-80</code>
+                </div>
+                <div class="finding-desc">这里直接对 `task.getBusinessData()` 执行 `new URL(...).openStream()`，未限制协议、域名、重定向目标或内网地址。若 `businessData` 可被外部提交，攻击者可构造任意 URL 触发 SSRF，访问内网服务或云元数据接口。相同模式在 `loadFromExcel` 中也重复出现。</div>
+                <div class="finding-suggestion">💡 修复建议：不要直接请求调用方提供的任意 URL。将输入改为受控的对象存储 key / fileId，再在服务端拼接可信下载地址；如果必须接收 URL，至少校验仅允许 `https`、限定白名单域名，并显式拒绝回环、本地链路和 RFC1918 私网地址，同时关闭或校验重定向。</div>
+            </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">docs/ddl-alter.sql:52-59</code>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/factory/AbstractReportTaskProcessor.java:171-188</code>
                 </div>
-                <div class="finding-desc">`pickup_mode` 以 `NOT NULL DEFAULT &#x27;STANDARD&#x27;` 直接加到 `pus_pickup_staging` 和 `pus_pickup`，但脚本没有任何历史数据回填。若上线时库里已存在 Vinted/PUDO 的在途数据，这些记录会被统一标成 `STANDARD`；后续新加的 rollover/consolidate 按 `pickup_mode=&#x27;PUDO&#x27;` 分流时，会漏掉这批旧记录，导致走错处理路径。</div>
-                <div class="finding-suggestion">💡 修复建议：在 DDL 后补充一次性回填或明确灰度顺序，确保存量 PUDO 数据被正确标记。例如基于已落库的来源字段回填：`UPDATE pus_pickup_staging SET pickup_mode=&#x27;PUDO&#x27; WHERE partner_location_code IS NOT NULL AND partner_location_code &lt;&gt; &#x27;&#x27;;`。`pus_pickup` 也需要提供等价回填规则，或保证新 Job 启用前不存在存量 PUDO 记录。</div>
+                <div class="finding-desc">异步处理链路在 `future.get()` 失败后仅记录日志并返回 `null`，随后又通过 `filter(Objects::nonNull)` 直接丢弃失败记录，最终任务会以“成功”结束但结果数据不完整，属于静默数据丢失。</div>
+                <div class="finding-suggestion">💡 修复建议：不要吞掉异步失败，应在任一子任务失败时中断整批处理并抛出异常，例如在 `future.get()` 的 `catch` 中抛出 `BizException`/`CompletionException`，或在汇总前使用 `CompletableFuture.allOf(...)` 统一失败处理。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/enums/PickupRouteStatusEnum.java:9-10</code>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/factory/AbstractReportTaskProcessor.java:85-93</code>
                 </div>
-                <div class="finding-desc">现有枚举成员 `ROUTED` 与 `SYNCED` 的声明顺序被调整了。若项目中有任何地方按 `enum.ordinal()` 持久化、排序或与外部系统约定数值状态，这次变更会把历史数据的状态含义重映射，导致已存量记录被错误解释。</div>
-                <div class="finding-suggestion">💡 修复建议：不要调整已有枚举成员的相对顺序；仅在末尾追加新状态，例如保持 `PENDING, COMPLETED, SYNCED, ROUTED, SYNC_FAILED`。如果必须变更顺序，应同时将持久化/传输协议改为显式 code 字段，并补充迁移脚本与兼容逻辑。</div>
+                <div class="finding-desc">JSON 校验分支里主动抛出的 `BizException(400, ...)` 会被后面的 `catch (Exception e)` 统一捕获并重新包装成 500，导致用户输入错误被错误上报为服务端异常。相同模式也会吞掉后续可能抛出的业务异常。</div>
+                <div class="finding-suggestion">💡 修复建议：先单独透传 `BizException`，只对未知异常包装为 500，例如：`catch (BizException e) { throw e; } catch (Exception e) { ... throw new BizException(500, ...); }`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/PickupCoverageService.java:12</code>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/config/ReportTaskProperties.java:25</code>
                 </div>
-                <div class="finding-desc">新增方法 `getZipCode` 直接使用了 `PickupCoverageResultBo`，但本 diff 中没有同步引入该类型，当前文件已有的 import 片段只包含 `java.util.List`。如果这里没有使用全限定名，代码将出现 `cannot find symbol` 编译错误。</div>
-                <div class="finding-suggestion">💡 修复建议：为该接口补充正确的 import，例如：`import io.speedx.pus.domain.bo.exchange.PickupCoverageResultBo;`，或改为使用全限定类名声明返回值。提交前执行一次模块编译，确认接口与实现类都能通过。</div>
+                <div class="finding-desc">`limitFor` 直接对 `limit.entrySet()` 取值，`report.task.limit` 未配置、配置中心刷新时缺失该节点，或绑定失败时会触发 `NullPointerException`。该类带有 `@RefreshScope`，运行期配置变更即可把报表任务查询路径打成 500，形成可被错误配置触发的服务不可用风险。</div>
+                <div class="finding-suggestion">💡 修复建议：为 `limit` 提供安全默认值并在读取前判空，例如将字段初始化为 `Collections.emptyMap()`，或在 `limitFor` 中先判断 `limit == null || limit.isEmpty()` 时直接返回 `type.getMaxSize()`；同时增加配置绑定校验，避免刷新后进入空配置状态。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/PickupCreateService.java:22-37</code>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/config/ReportTaskProperties.java:26-29</code>
                 </div>
-                <div class="finding-desc">`PickupCreateService` 在新增行中移除了原有 `consolidate(...)` / `rollover(...)` 契约，改为拆分成 `fetch*` + `process*` 两阶段接口，并直接暴露 `PickupStaging`/`PickupDto` 基础设施对象。该接口位于 `pus-domain` 公共模块，且项目依赖显示其会被多个 facade/job 子模块复用；这属于破坏性契约变更。若有未同步升级的调用方，可能出现运行时 `NoSuchMethodError`/反序列化失败，导致定时任务或批量处理链路不可用，属于安全维度中的服务可用性风险。</div>
-                <div class="finding-suggestion">💡 修复建议：保留旧方法并在实现层做兼容转发，至少经历一个兼容版本周期；若必须重构，新增版本化接口（例如 `consolidateV2`/`rolloverV2`）并避免在 domain service 契约中直接暴露基础设施层实体。发布前补充跨模块兼容性验证，确保所有依赖模块已同时升级。</div>
+                <div class="finding-desc">`limitFor` 直接对 `limit` 做 `entrySet()` 遍历，并将配置值直接拆箱为 `int`。当未配置 `report.task.limit`，或某个任务类型被配置为空值时，这里会触发 `NullPointerException`，导致原本应回退到 `type.getMaxSize()` 的逻辑失效。</div>
+                <div class="finding-suggestion">💡 修复建议：在读取配置前补充空值保护，并对命中的 value 判空后再返回，例如：`if (limit == null || limit.isEmpty()) { return type.getMaxSize(); } return limit.entrySet().stream().filter(i -&gt; key.equalsIgnoreCase(i.getKey())).map(Map.Entry::getValue).filter(Objects::nonNull).findFirst().orElse(type.getMaxSize());`</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/PickupService.java:150</code>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/core/ThreadPoolOrchestrator.java:146-150</code>
                 </div>
-                <div class="finding-desc">`findRolloverPickups` 在公共 service 接口中由 3 个参数扩展为 5 个参数，属于破坏性方法签名变更。该接口位于被多个模块依赖的 `pus-domain`，若存在未同步重编译或灰度发布场景，旧调用方会在运行时直接失效，影响 rollover 任务可用性。</div>
-                <div class="finding-suggestion">💡 修复建议：通过重载保留旧签名，并在内部提供默认 `pickupMode` 与 `maxSlaRolloverTimes` 处理；待所有调用方完成迁移后再移除旧方法。发布前执行跨模块二进制兼容检查。</div>
+                <div class="finding-desc">`submitTask(String, Runnable, String, boolean)` 在任务执行阶段捕获了 `Exception` 后仅记录日志，不再重新抛出。这样 `ExecutorService.submit` 返回的 `Future` 会表现为正常完成，调用方无法通过 `Future.get()` 感知任务失败，容易把实际执行失败误判为成功。</div>
+                <div class="finding-suggestion">💡 修复建议：在记录日志后继续抛出异常，例如将 `catch (Exception e)` 改为记录后 `throw e;`；若需要统一包装，可抛出 `new BizException(&quot;Task execution failed&quot;, e)`，但不要吞掉异常。</div>
             </div>
-            <p class="more-note">... 还有 17 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 25 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
