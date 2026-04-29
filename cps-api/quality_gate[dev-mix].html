@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">cps-api &nbsp;|&nbsp; 2026-04-29 08:58:48</div>
+      <div class="meta">cps-api &nbsp;|&nbsp; 2026-04-29 17:37:19</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:16</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:3 &nbsp; 主要:18</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,8 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 1 Critical finding(s)</li>
-<li>AI Review: 16 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 3 Critical finding(s)</li>
+<li>AI Review: 18 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -96,51 +96,67 @@
                     <span class="finding-badge">严重</span>
                     <code class="finding-loc">cps-test/src/test/java/com/speedx/orders/service/OrderServiceTest.java:67</code>
                 </div>
-                <div class="finding-desc">新增测试代码中硬编码了 `API_KEY` 常量（`&quot;SECRET-API-KEY&quot;`），命中 [SEC-002]。即使位于测试代码，硬编码密钥模式也容易被复制到生产代码、进入日志/制品，或在后续联调中被误替换为真实凭证，形成敏感信息泄露风险。</div>
-                <div class="finding-suggestion">💡 修复建议：移除硬编码密钥，改为使用明确的非凭证占位值并通过测试构造器/fixture 注入，例如从测试专用配置读取 `test.api-key=dummy`，或使用 `&quot;DUMMY_API_KEY&quot;` 这类不具备真实凭证语义的占位常量，避免在代码中出现 `apiKey/secret/token` 实值。</div>
+                <div class="finding-desc">新增测试代码中将 API Key 以字符串字面量硬编码为 `SECRET-API-KEY`，命中 [SEC-002]。即使位于测试源码，仍可能随仓库、测试报告或构建产物扩散，形成敏感信息泄露面，并固化不安全示例。</div>
+                <div class="finding-suggestion">💡 修复建议：移除源码中的 key 字面量，改为在测试中通过环境变量、测试配置或运行时生成的占位值注入；如果仅用于 mock，下游断言应校验“存在非空值”而不是依赖固定密钥内容。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">shippers-portal/src/main/java/com/speedx/orders/service/OrderService.java:101-113</code>
+                </div>
+                <div class="finding-desc">`create` 方法先调用外部 RPS `createLabel` 产生真实面单，再在本地事务中保存 `OrderShipment`/`OrderItem`。如果外部调用成功后，本地 `shipmentRepository.save(...)` 或 `itemRepository.saveAll(...)` 失败，数据库事务会回滚，但外部面单不会回滚，形成不可追踪的已创建面单，带来资费损失和账实不一致。</div>
+                <div class="finding-suggestion">💡 修复建议：将外部调用与本地持久化拆分为可补偿流程：先落库为 `PENDING` 状态并提交，再调用 RPS 成功后更新状态；或在本地持久化失败时显式调用 RPS void 接口执行补偿。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">shippers-portal/src/main/java/com/speedx/orders/service/assembler/RpsLabelFormAssembler.java:89-220</code>
+                </div>
+                <div class="finding-desc">这里将 `req.getItems()` 中所有 `unitValue * units` 直接累加到 `totalDeclareValue`，同时仅使用首个商品的币种作为 `totalDeclareCurrency`。如果请求中混入不同 `currency` 的商品，本实现会把不同币种金额错误求和，并以首币种对外发送，导致报关/计费金额失真。</div>
+                <div class="finding-suggestion">💡 修复建议：在组装前强制校验所有 `OrderItemReq.currency` 与订单级币种一致，或按币种分组后分别计算；发现多币种时直接拒绝请求并返回明确错误，禁止继续下发标签请求。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
+                    <code class="finding-loc">shippers-portal/src/main/java/com/speedx/orders/service/OrderService.java:112</code>
+                </div>
+                <div class="finding-desc">异常处理直接将上游异常消息拼接到业务异常中返回：`&quot;rps createLabel error: &quot; + e.getMessage()`。如果上游异常消息包含接口地址、请求参数、第三方返回内容或内部实现细节，会造成错误信息泄露。相同模式在 `voidOrder` 和 `downloadLabel` 中也存在。</div>
+                <div class="finding-suggestion">💡 修复建议：对外返回固定的通用错误码/错误文案，仅在服务端日志中记录完整异常细节；如需排障，可记录脱敏后的上下文并附带内部 traceId。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">shippers-portal/src/main/java/com/speedx/orders/service/OrderService.java:116-185</code>
+                </div>
+                <div class="finding-desc">`detail` 里直接调用 `user.getAccountDto().getPortalAccountId()`，只校验了登录态，没有校验 `accountDto` 或 `portalAccountId` 是否为空。对账号上下文不完整的已登录用户，这里会直接触发空指针，接口返回 500。</div>
+                <div class="finding-suggestion">💡 修复建议：复用 `create` 中的账号校验逻辑，先取 `PortalAccountDto account = user.getAccountDto();`，再判断 `account == null || account.getPortalAccountId() == null` 并抛出业务异常，例如：`if (account == null || account.getPortalAccountId() == null) { throw new BizException(&quot;login user has no portalAccountId&quot;); }`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">shippers-portal/src/main/java/com/speedx/orders/service/assembler/RpsLabelFormAssembler.java:79-96</code>
+                </div>
+                <div class="finding-desc">`req.getItems()` 只判空了列表本身，没有处理列表元素为 `null` 的情况。只要请求里的 items 数组包含一个 `null` 元素，`item.getItemName()` 等访问就会直接触发 `NullPointerException`，导致建单/打单流程失败。</div>
+                <div class="finding-suggestion">💡 修复建议：在遍历时对元素做非空校验，或在进入组装前统一做参数校验并明确抛出业务异常。例如：`for (OrderItemReq item : req.getItems()) { if (item == null) { throw new BizException(&quot;items contains null element&quot;); } ... }`；如果允许忽略空元素，则至少 `continue` 跳过。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
                     <code class="finding-loc">cps-facade-impl/src/main/java/com/speedx/cps/facade/impl/web/CommonFileController.java:30-31</code>
                 </div>
-                <div class="finding-desc">这里把 `SpxAzureBlobUtil` 从纯静态调用改成了 Spring 注入，但当前变更中没有任何证据表明 `io.speedx.azure.blob.SpxAzureBlobUtil` 已声明为 Spring Bean。若该类仍是普通工具类，应用启动时会直接因 `NoSuchBeanDefinitionException` 失败，影响整个文件接口可用性。</div>
-                <div class="finding-suggestion">💡 修复建议：确认 `SpxAzureBlobUtil` 已通过 `@Component`/`@Bean` 纳入 Spring 容器；如果没有，应继续保留静态调用，或新增显式配置，例如在配置类中提供 `@Bean public SpxAzureBlobUtil spxAzureBlobUtil() { return new SpxAzureBlobUtil(...); }`。</div>
+                <div class="finding-desc">这里把 `SpxAzureBlobUtil` 从静态调用改成了 Spring 注入，但当前 diff 没有同步展示该类型被声明为 `@Component`/`@Bean`。如果它仍是普通工具类，`CommonFileController` 在容器启动时会因 `NoSuchBeanDefinitionException` 直接创建失败，相关上传/下载接口全部不可用。</div>
+                <div class="finding-suggestion">💡 修复建议：确认 `io.speedx.azure.blob.SpxAzureBlobUtil` 已被 Spring 管理；若没有，优先恢复静态调用，或在配置类中显式声明 Bean 后再注入。例如：`@Bean public SpxAzureBlobUtil spxAzureBlobUtil(...) { return new SpxAzureBlobUtil(...); }`，并改为构造器注入以便启动期尽早暴露问题。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">cps-infrastructure/src/main/java/com/speedx/cps/integration/OmsClient.java:132</code>
+                    <code class="finding-loc">cps-infrastructure/src/main/java/com/speedx/cps/integration/OmsClient.java:113</code>
                 </div>
-                <div class="finding-desc">新增的异常处理将底层异常原始信息直接拼接到 RRException 返回值中。若上层将该异常消息透传给前端或调用方，可能泄露内部集成细节，如 OMS 地址、请求参数格式、反序列化失败原因或网络栈信息，形成信息泄露面。</div>
-                <div class="finding-suggestion">💡 修复建议：对外抛出固定且不含内部细节的错误消息，例如 `request oms listAvailablePickups error`；具体异常原因仅记录在服务端日志中。如需区分错误类型，可定义受控错误码而不是拼接 `e.getMessage()`。</div>
+                <div class="finding-desc">新增逻辑直接将下游返回的 `msg` 透传为 `RRException` 文本。该字段来自外部 OMS，缺少长度、内容和敏感信息控制，属于未过滤的跨系统错误透传；若下游返回内部实现细节、调试信息或异常栈摘要，会被本服务原样暴露。</div>
+                <div class="finding-suggestion">💡 修复建议：不要直接向上游调用方暴露外部系统错误文本。改为记录下游 `code/msg` 到服务端日志，并对外统一返回受控错误码/错误文案；如需保留诊断能力，可增加内部 traceId。</div>
             </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">cps-infrastructure/src/main/java/com/speedx/cps/integration/OmsClient.java:34-35</code>
-                </div>
-                <div class="finding-desc">`getAccountByPickupId` 新增缓存后直接将 `pickupAccountId` 传给 `accountCache.getIfPresent(...)`。Caffeine 不接受 `null` key，调用方一旦传入 `null`，这里会先抛出 `NullPointerException`，比原先的远程调用路径更早失败，属于新增的空值边界回归。</div>
-                <div class="finding-suggestion">💡 修复建议：在访问缓存前显式处理空参数，避免把 `null` 传入 Caffeine。例如：`if (pickupAccountId == null) { return null; }`，或按业务约定抛出更明确的 `IllegalArgumentException/RRException`，然后再执行缓存读取和远程查询。</div>
-            </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">cps-test/src/test/java/com/speedx/shippers/BatchTrackingEventsTest.java:271-349</code>
-                </div>
-                <div class="finding-desc">这里把桩从 `uploadAndReturnSasUrl(...)` 改成了 `upload(...)`，但同一文件前后的相邻用例此前一直针对 `uploadAndReturnSasUrl(...)` 打桩，说明 `processBatch(...)` 的导出路径大概率仍会调用前者。若生产代码未同步改为 `upload(...)`，该测试将拿不到桩返回值，轻则断言失效，重则在执行真实静态逻辑时触发异常，造成测试回归。</div>
-                <div class="finding-suggestion">💡 修复建议：确认 `TrackTraceService.processBatch(...)` 实际调用的方法名，并与测试保持一致；如果生产代码仍调用 `uploadAndReturnSasUrl(...)`，这里应恢复为：`when(spxAzureBlobUtil.uploadAndReturnSasUrl(anyString(), any(InputStream.class), anyLong())).thenReturn(...)`。</div>
-            </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">shippers-portal/src/main/java/com/speedx/orders/entity/OrderShipment.java:43-49</code>
-                </div>
-                <div class="finding-desc">`OrderShipment` 继承 `BaseEntity` 的同时又新增了 `createdBy`/`updatedBy` 字段并映射到 `created_by`、`updated_by` 列。若 `BaseEntity` 已包含常见审计字段映射（该命名和继承方式强烈暗示如此），JPA 启动时会出现重复列映射或属性覆盖，导致实体管理器初始化失败。</div>
-                <div class="finding-suggestion">💡 修复建议：确认 `BaseEntity` 中是否已定义审计字段；如果已定义，删除这里重复的两个属性，直接复用父类字段。若确需子类自定义，请改用未冲突的列名，或在父类/子类中通过 `@AttributeOverride` 明确覆盖关系，例如仅保留父类字段并在父类统一维护 `created_by`/`updated_by` 映射。</div>
-            </div>
-            <p class="more-note">... 还有 11 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 13 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
