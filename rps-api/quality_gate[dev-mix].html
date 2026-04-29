@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">rps-api &nbsp;|&nbsp; 2026-04-29 15:35:16</div>
+      <div class="meta">rps-api &nbsp;|&nbsp; 2026-04-29 22:36:50</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -56,7 +56,7 @@
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#4caf50">5.8%</div>
+      <div class="metric-value" style="color:#4caf50">5.7%</div>
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:0</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:5</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -82,10 +82,58 @@
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube analysis timed out after 1 minutes</li></ul>
+            <ul><li>SonarQube analysis timed out after 1 minutes</li>
+<li>AI Review: 5 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
+        <div class="findings-section">
+            <h3>AI 代码审查发现</h3>
+            
+            
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">rps-service/src/main/java/com/miq/rpsservice/config/AzureBlobStorageConfig.java:23-53</code>
+                </div>
+                <div class="finding-desc">新增块注释将该 `@Configuration` 类中的全部 `@Bean`/依赖注入定义整体失效，类本身仍会被 Spring 扫描但不再提供任何 Azure Blob 相关 Bean。若当前工程中仍有代码依赖 `BlobServiceClient`、`BlobContainerClient` 或 `SpxAzureBlobUtil`，应用会在启动阶段出现 `NoSuchBeanDefinitionException`，属于直接的功能回归风险。</div>
+                <div class="finding-suggestion">💡 修复建议：不要用块注释直接停用整段配置。若已切换到新的自动配置方案，应同步删除该配置类并确认替代 Bean 已由新方案提供；若仍需兼容现有注入点，保留等价的 `@Bean` 定义，或通过 `@ConditionalOnMissingBean`/配置开关显式控制启停。例如保留 `spxAzureBlobUtil(...)` 等关键 Bean，或新增自动化测试覆盖 Spring 上下文启动。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">rps-service/src/main/java/com/miq/rpsservice/service/impl/LabelFileServiceImpl.java:173-188</code>
+                </div>
+                <div class="finding-desc">这里删除了对本地文件路径的分支处理，`labelUrlPath` 只要非空就统一走 `fetchPdfFromUrl`/`fetchStreamFromUrl`。旧逻辑明确支持非 `http` 的本地路径；如果库里仍有历史数据保存的是文件系统路径，这次改动会把它们当成 Azure URL 读取，直接导致标签下载/预览失败。</div>
+                <div class="finding-suggestion">💡 修复建议：保留协议判定或增加兼容兜底，例如先判断 `labelUrlPath.startsWith(&quot;http&quot;)`/Blob URL，再走 Azure；否则继续按本地文件读取。若计划彻底移除本地路径支持，需要同时补充数据迁移并在代码中对旧数据给出兼容过渡逻辑。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">rps-service/src/main/java/com/miq/rpsservice/service/impl/LabelFileServiceImpl.java:208-218</code>
+                </div>
+                <div class="finding-desc">新增的异常日志将 `labelUrlPath` 原样写入日志。若该 URL 携带 Azure SAS、签名参数或其他临时访问令牌，异常时会被持久化到日志中，造成凭证泄露风险。该问题在 `fetchPdfFromUrl` 与 `fetchStreamFromUrl` 两处新增日志中均存在。</div>
+                <div class="finding-suggestion">💡 修复建议：不要记录完整下载 URL。记录前应去除 query string / 签名参数，或仅记录 blob 路径、trackingNumber 等非敏感标识；同时保留异常堆栈用于排障。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">rps-service/src/main/java/com/miq/rpsservice/service/impl/ManifestFileServiceImpl.java:57-69</code>
+                </div>
+                <div class="finding-desc">`doUrlPath` 的读取逻辑同样移除了本地文件分支，非空时一律按 Blob URL 打开。原实现支持本地路径与远端 URL 双格式；若历史 manifest 记录的是文件路径，这里会在读取 PDF 流和 PDF Base64 时同时回归失败。</div>
+                <div class="finding-suggestion">💡 修复建议：恢复双分支兼容处理，至少在过渡期内对本地路径和 Blob URL 分开读取；或者在切换前完成历史 `doUrlPath` 数据清洗，并在代码中对不符合 URL 格式的值做显式兜底/报错。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">rps-service/src/main/java/com/miq/rpsservice/utils/AzureBlobUtil.java:25-83</code>
+                </div>
+                <div class="finding-desc">通过块注释把 `blobContainerClient` 字段和全部公开方法一起屏蔽后，这个公开工具类实际上变成了空壳。任何仍然依赖 `uploadFile/getUrl/upload/downloadFile` 的调用方都会直接编译失败，属于破坏性 API 变更。</div>
+                <div class="finding-suggestion">💡 修复建议：不要用块注释下线整个实现。若要废弃该类，应保留原有方法签名并在方法内委托到新的 `SpxAzureBlobUtil`，例如 `return spxAzureBlobUtil.upload(...);`；如果确定删除，则需要在同一变更中同步清理全部调用方并补充编译/回归验证。</div>
+            </div>
+            
+        </div>
+        
 
   <div class="footer">
     由质量门禁引擎生成 &nbsp;|&nbsp; SpeedX CI/CD
