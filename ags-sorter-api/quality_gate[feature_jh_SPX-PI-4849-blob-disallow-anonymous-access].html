@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">ags-sorter-api &nbsp;|&nbsp; 2026-04-30 13:12:15</div>
+      <div class="meta">ags-sorter-api &nbsp;|&nbsp; 2026-05-04 23:09:20</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:0</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:4</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -82,10 +82,50 @@
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube quality gate status: ERROR</li></ul>
+            <ul><li>SonarQube quality gate status: ERROR</li>
+<li>AI Review: 4 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
+        <div class="findings-section">
+            <h3>AI 代码审查发现</h3>
+            
+            
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">ags-sorter-domain/src/main/java/com/speedx/agssorter/domain/config/AzureBlobStorageConfig.java:41-44</code>
+                </div>
+                <div class="finding-desc">这里把 `azure.storage.blob-domain` 直接传给 `BlobServiceClientBuilder.endpoint(...)`，随后又调用 `getBlobContainerClient(containerName)`。但同一批改动里的 `BlobSasUtil` 注释和测试都把该配置解释为“包含容器名的完整容器 URL”。如果线上配置也按这个语义填写，SDK 会在已有容器 URL 后再次拼接 `containerName`，最终把 client 指向错误路径，导致上传/生成 SAS URL 失败。</div>
+                <div class="finding-suggestion">💡 修复建议：统一配置语义并按 SDK 契约构建客户端：如果 `blob-domain` 是容器 URL，就应直接用 `new BlobContainerClientBuilder().endpoint(blobDomain).credential(...).buildClient()`；如果它只是账号级 endpoint，就保留 `BlobServiceClientBuilder`，但需把配置名/注释改成账号级地址并补充校验，避免把容器 URL 误传进来。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">ags-sorter-domain/src/main/java/com/speedx/agssorter/domain/service/AzureFileService.java:96</code>
+                </div>
+                <div class="finding-desc">日志直接打印 `uploadAndReturnSasUrl(...)` 返回的完整下载链接。SAS URL 含签名/令牌参数，写入 `info` 日志后会把临时访问凭证暴露给日志平台、运维人员或其他日志消费者。</div>
+                <div class="finding-suggestion">💡 修复建议：禁止记录完整 SAS URL。日志中仅保留 blob 路径或做脱敏处理，例如移除查询串后再记录；如确需排障，单独记录对象 key、过期时间等非敏感信息。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">ags-sorter-domain/src/main/java/com/speedx/agssorter/domain/service/BatchService.java:145</code>
+                </div>
+                <div class="finding-desc">这里直接对 `request.getFileUrl()` 执行 `new URL(...).openStream()`，把前端可控 URL 作为服务端出站请求目标，形成 SSRF 面。攻击者可构造指向内网地址、云元数据地址或其他非 Azure 目标的 URL，借助服务端网络权限发起访问。</div>
+                <div class="finding-suggestion">💡 修复建议：不要直接打开任意外部 URL。应在下载前严格校验 `fileUrl` 仅允许命中配置的 Azure Blob 域名/容器前缀，或改为只接收 blob 相对路径并通过受控 SDK/Blob 客户端读取对象。对协议、主机、端口和路径都要做白名单校验。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">ags-sorter-domain/src/main/java/com/speedx/agssorter/domain/utils/BlobSasUtil.java:36-37</code>
+                </div>
+                <div class="finding-desc">`toRelativePath` 在 `stripped.equals(blobDomain)` 时也会进入该分支，但返回语句固定执行 `substring(blobDomain.length() + 1)`。当输入正好是容器根 URL 时，起始下标越过字符串末尾，直接抛出 `StringIndexOutOfBoundsException`。这是新增的边界条件缺陷。</div>
+                <div class="finding-suggestion">💡 修复建议：把“刚好等于容器 URL”单独处理，例如：`if (stripped.equals(blobDomain)) { return &quot;&quot;; } if (stripped.startsWith(blobDomain + &quot;/&quot;)) { return stripped.substring(blobDomain.length() + 1); }`，并补一条该场景的单测。</div>
+            </div>
+            
+        </div>
+        
 
   <div class="footer">
     由质量门禁引擎生成 &nbsp;|&nbsp; SpeedX CI/CD
