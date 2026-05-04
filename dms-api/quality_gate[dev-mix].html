@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">dms-api &nbsp;|&nbsp; 2026-05-04 09:12:33</div>
+      <div class="meta">dms-api &nbsp;|&nbsp; 2026-05-04 16:21:13</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -56,13 +56,13 @@
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#4caf50">24.5%</div>
+      <div class="metric-value" style="color:#4caf50">25.0%</div>
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#4caf50">54.4%</div>
+            <div class="metric-value" style="color:#4caf50">53.6%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:2 &nbsp; 主要:21</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:3 &nbsp; 主要:29</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,8 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 2 Critical finding(s)</li>
-<li>AI Review: 21 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 3 Critical finding(s)</li>
+<li>AI Review: 29 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,61 +94,69 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">drivermgmt-infrastructure/src/main/java/io/speedx/drivermgmt/integration/TrackingClient.java:60</code>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/biz/MgmtDashboardBizService.java:597-690</code>
                 </div>
-                <div class="finding-desc">新增的 info 日志直接打印序列化后的 `params`。根据同一变更中的注释，这里记录的是经过 `@BlobOutbound` 处理后的出站 body，实际会包含带 SAS query 的 Blob 临时访问 URL。SAS token 属于可直接复用的访问凭证，写入日志后会在日志平台、链路追踪或运维导出中扩散，造成敏感凭证泄露。</div>
-                <div class="finding-suggestion">💡 修复建议：不要记录完整请求体；至少对 Blob URL 的 query 部分做脱敏，移除 `sig`/`se`/`sp` 等 SAS 参数，或仅记录业务主键与 blob 相对路径。</div>
+                <div class="finding-desc">这里将 `AzureFileUtil.generateSignedUrl(...)` 的返回值直接作为结果返回。SAS URL 本身携带可用的访问凭证（通常在查询串中含 `sig` 等签名参数）；结合相邻注释“异步路径写入 Task.result”，意味着该凭证会被持久化到任务结果或向外透传。相较于原先的裸 URL/对象路径，这会把短期访问令牌暴露给日志、缓存、数据库导出或下游转发链路，属于新增的敏感凭证泄露风险。</div>
+                <div class="finding-suggestion">💡 修复建议：不要在生成文件时持久化或直接返回带签名的 URL。应仅保存 blob 路径/对象 key，在最终下载接口或展示边界按需即时签发 SAS，并将 TTL 缩短到最小可接受值；同时确认日志、审计和 Task.result 序列化中不会落库 `sig` 等签名参数。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">drivermgmt-web/src/main/resources/application-local.yml:200-202</code>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/biz/RouteMgmtBizService.java:1168</code>
                 </div>
-                <div class="finding-desc">新增的注释配置里仍然保留了完整的 `auth-token` 凭据。即使该段当前被注释，敏感信息一旦进入仓库历史仍会造成泄漏风险，并且命中了 `SEC-002`。</div>
-                <div class="finding-suggestion">💡 修复建议：立即从仓库中移除明文凭据，改为占位符或环境变量引用，例如：`smartyStreets: ${SMARTY_STREETS_URL}`；同时轮换当前已暴露的 `auth-id/auth-token`。</div>
+                <div class="finding-desc">这里新增了对上传结果的 `generateSignedUrl`，并由注释明确说明该值会用于同步返回和异步 `Task.result`。SAS URL 属于实际访问凭证，进入任务结果/响应后会在系统边界外长期流转；一旦被日志、埋点、工单或前端缓存捕获，在 1 天有效期内即可直接读取私有 blob。</div>
+                <div class="finding-suggestion">💡 修复建议：改为仅在下载出口生成签名 URL，不要把 SAS URL 写入任务结果或其它持久化字段；同时将有效期从固定 1 天改为按场景最小化，并增加统一脱敏，禁止记录完整查询串。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">drivermgmt-web/src/main/resources/application-local.yml:200-201</code>
+                </div>
+                <div class="finding-desc">新增的注释行仍包含 SmartyStreets `auth-id` 和 `auth-token` 明文凭证。即使配置被注释，凭证依然进入代码库和变更历史，属于可直接泄露第三方 API 访问能力的硬编码密钥问题。</div>
+                <div class="finding-suggestion">💡 修复建议：立即从仓库中彻底删除该 URL 及其中的明文凭证，改为通过环境变量或受管配置中心注入；同时轮换该 SmartyStreets 凭证，避免历史提交中的泄露继续有效。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/biz/MgmtDashboardBizService.java:595-596</code>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/biz/RouteMgmtBizService.java:684</code>
                 </div>
-                <div class="finding-desc">这里把导出结果统一改成了 1 天有效期的 SAS URL，但注释已说明同一返回值还会被异步写入 `Task.result`。这会把原本可长期访问的任务结果变成 24 小时后失效，历史报表/延迟下载场景会直接失败，属于明显功能回退。</div>
-                <div class="finding-suggestion">💡 修复建议：区分同步下载链路和异步任务落库链路：同步返回给前端时再签短期 SAS，持久化到 `Task.result` 时保存稳定的 blob key/裸路径，并在读取任务结果时动态换签。例如保留 `url` 入库，新增单独的 `generateSignedUrl(...)` 仅用于接口出参。</div>
+                <div class="finding-desc">`readDispatchData` 从通用的 `new URL(fileUrl).openStream()` 改成了 `AzureFileUtil.openInputStream(fileUrl)`，把可接受的入参从任意可访问 URL 收窄为 Azure 文件地址。若现有调用方仍传入历史上的公网 HTTP/HTTPS 文件链接，导入会在这里直接失败，属于行为回归。</div>
+                <div class="finding-suggestion">💡 修复建议：在这里保留兼容分支：先判断 `fileUrl` 是否为 Azure Blob/SAS 链接，只有匹配时才走 `AzureFileUtil.openInputStream(fileUrl)`，否则回退到 `new URL(fileUrl).openStream()`。例如：`InputStream inputStream = isAzureBlobUrl(fileUrl) ? AzureFileUtil.openInputStream(fileUrl) : new URL(fileUrl).openStream();`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/biz/MgmtDashboardBizService.java:596-597</code>
+                    <code class="finding-loc">docs/jt/后端技术栈.md:48-49</code>
                 </div>
-                <div class="finding-desc">新增逻辑将带 SAS 的 Blob 签名 URL 直接作为返回值使用。SAS URL 本质上是 bearer token，放入同步返回值且按注释会进入 `Task.result`，容易经数据库持久化、日志、审计链路或前端埋点泄露，形成临时凭证外泄风险。</div>
-                <div class="finding-suggestion">💡 修复建议：不要持久化或长期传播完整 SAS URL。改为仅保存裸 blob 路径/对象键，在最终下载入口按需短时签名；同时将签名有效期从 1 天收紧到满足业务的最小时间窗口，并确保相关日志/审计中对查询串做脱敏。</div>
+                <div class="finding-desc">新增文档直接披露了 Kafka 真实连接配置所在的 Nacos 共享配置名及 Broker 托管区域。这类基础设施定位信息会显著降低攻击者枚举配置中心、消息链路和云侧资产的成本，属于不必要的敏感实现细节暴露。</div>
+                <div class="finding-suggestion">💡 修复建议：从仓库文档中移除具体配置文件名、配置分组和云区域等可用于资产枚举的信息，仅保留“由配置中心统一下发”“托管消息服务”这类非敏感描述；如确需保留，迁移到受控的内部知识库。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/biz/RouteMgmtBizService.java:1165-1168</code>
+                    <code class="finding-loc">docs/jt/第三方依赖.md:13-17</code>
                 </div>
-                <div class="finding-desc">新增逻辑把上传结果显式转换为 1 天有效的 SAS URL 并向外返回。该 URL 含访问签名，属于临时凭证；一旦被前端缓存、错误上报、消息队列或任务结果表持久化，攻击者可在有效期内直接访问私有 Blob。</div>
-                <div class="finding-suggestion">💡 修复建议：避免在服务出口返回可复用的一天期 SAS URL。建议返回资源标识，由专门下载接口在访问瞬间生成分钟级签名；若必须返回 URL，至少缩短 TTL、限制权限为只读，并统一对 URL 查询参数做脱敏存储与输出。</div>
+                <div class="finding-desc">新增依赖清单公开了中间件协议、配置入口以及监控暴露路径，尤其包含 `/dms-api/actuator/prometheus`、Nacos 配置键和 Kafka 接入方式。这会为攻击者提供较完整的侦察面，便于针对监控端点、配置中心和消息系统开展后续探测。</div>
+                <div class="finding-suggestion">💡 修复建议：删除或脱敏仓库中的具体监控路径、配置前缀、协议细节和中间件接入说明；文档中仅保留系统能力级别描述。对必须保留的运维信息，放入受访问控制的运维文档系统。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/biz/RouteMgmtBizService.java:687</code>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/helper/Cheating.java:8-1009</code>
                 </div>
-                <div class="finding-desc">`readDispatchData` 原来通过 `new URL(fileUrl).openStream()` 支持任意标准 URL；改为 `AzureFileUtil.openInputStream(fileUrl)` 后，方法契约被收窄为 Azure 相关地址的风险很高。只要现网还存在 http/https 的非 Azure 导入地址，这里就会在读取阶段直接失败，属于兼容性回退。</div>
-                <div class="finding-suggestion">💡 修复建议：确认 `AzureFileUtil.openInputStream` 是否完整兼容标准 URL。若不能，建议保留协议分支处理，例如 Azure blob URL 走 `AzureFileUtil.openInputStream(fileUrl)`，其他 URL 继续走 `new URL(fileUrl).openStream()`。</div>
+                <div class="finding-desc">`coverageDummyMethodV1()` 被一次性扩展到超大方法体（该 hunk 显示新版本单方法已覆盖约 1000 行）。Java 单个方法的字节码存在 64KB 上限，这类大量字符串拼接、条件分支和局部变量堆积非常容易触发 `code too large` 编译失败；即使勉强通过，也会显著降低 JIT 优化和后续维护稳定性。</div>
+                <div class="finding-suggestion">💡 修复建议：将该方法拆分为多个私有小方法，或改为循环/数据驱动生成，避免在单一方法内堆积数百行顺序语句。例如把 `aa/bb/cc...` 段分别提取为 `buildAa() / buildBb(...) / buildCc(...)`，由主流程串联调用，确保每个方法只承担单一阶段逻辑。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/helper/Cheating.java:7-95</code>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/job/NotifyExpireDriverToOpJob.java:120</code>
                 </div>
-                <div class="finding-desc">`coverageDummyMethodV1()` 在本次变更中被扩展为超长的顺序赋值方法；从 hunk 头 `+5,1009` 可见该方法所在代码块已膨胀到上千行。Java 单个方法的字节码存在 64KB 上限，这类大量局部变量、字符串常量和链式操作很容易在编译期触发 `code too large`，导致类无法编译或加载。</div>
-                <div class="finding-suggestion">💡 修复建议：将该方法拆分为多个私有辅助方法，或用数组/循环生成测试数据，避免在单个方法中堆积数百行顺序语句。例如把 `cov_aa*`、`cov_bb*`、`cov_cc*` 等阶段分别提取为独立方法，由主方法串联调用。</div>
+                <div class="finding-desc">新增的签名链接将驾驶员证照到期报表直接暴露为可分享 URL，且有效期被设置为 30 天。该类报表通常包含司机身份/合规信息，一旦邮件被转发、误投或邮箱被入侵，攻击者可在较长时间窗口内持续下载敏感文件，扩大数据泄露面。</div>
+                <div class="finding-suggestion">💡 修复建议：将签名 URL 的有效期收缩到满足通知场景的最小值（例如数小时到 1 天），并优先改为跳转到受控后台页面后再按需签发短时下载链接；同时补充对过期后访问失败的校验。</div>
             </div>
-            <p class="more-note">... 还有 16 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 24 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
