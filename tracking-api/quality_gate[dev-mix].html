@@ -45,11 +45,11 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">tracking-api &nbsp;|&nbsp; 2026-05-05 10:09:19</div>
+      <div class="meta">tracking-api &nbsp;|&nbsp; 2026-05-05 15:22:57</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
-      <span style="background:#4caf50;color:#fff;padding:4px 12px;border-radius:4px;font-weight:bold;">PASSED</span>
+      <span style="background:#f44336;color:#fff;padding:4px 12px;border-radius:4px;font-weight:bold;">FAILED</span>
     </div>
   </div>
 
@@ -62,7 +62,7 @@
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#4caf50">64.3%</div>
+            <div class="metric-value" style="color:#4caf50">64.4%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:0</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:14</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -82,10 +82,67 @@
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube quality gate status: ERROR</li></ul>
+            <ul><li>SonarQube quality gate status: ERROR</li>
+<li>AI Review: 1 Critical finding(s)</li>
+<li>AI Review: 14 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
+        <div class="findings-section">
+            <h3>AI 代码审查发现</h3>
+            
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/config/AzureBlobStorageConfig.java:39</code>
+                </div>
+                <div class="finding-desc">新增实现将 `blobDomain` 配置直接作为 Blob SDK 的 endpoint 使用，并继续附带 `StorageSharedKeyCredential(accountName, accountKey)` 访问。这里不再强制使用固定的 `https://&lt;account&gt;.blob.core.windows.net`，如果配置中心或环境变量被误配/污染为攻击者控制的域名或 `http` 地址，存储账号密钥会随请求发往非预期主机，导致高敏感凭证泄露。</div>
+                <div class="finding-suggestion">💡 修复建议：对 `azure.storage.blob-domain` 做严格校验：仅允许 `https` 协议，且主机名必须匹配受信任的 Azure Blob 域名白名单（例如 `*.blob.core.windows.net`）；校验失败时应用启动直接拒绝。若无跨域名需求，优先恢复为根据 `accountName` 拼接固定 Azure 官方 endpoint。</div>
+            </div>
+            
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/config/AzureBlobStorageConfig.java:35-43</code>
+                </div>
+                <div class="finding-desc">这里将原来的 `BlobContainerClient` Bean 直接替换成了 `SpxAzureBlobUtil` Bean，配置类中不再暴露 `BlobContainerClient`。如果当前分支里仍有未同步修改的组件按类型注入 `BlobContainerClient`，应用会在启动时出现 `NoSuchBeanDefinitionException`，属于典型的兼容性回归风险。</div>
+                <div class="finding-suggestion">💡 修复建议：保留原有 `BlobContainerClient` Bean，再基于它组装 `SpxAzureBlobUtil`，避免破坏已有注入契约。例如新增一个 `blobContainerClient(...)` 方法返回 `BlobContainerClient`，`spxAzureBlobUtil(...)` 再复用该 Bean。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">tracking-api/src/main/java/com/miq/trackingapi/controller/internal/InnerApiController.java:48-49</code>
+                </div>
+                <div class="finding-desc">新增接口直接将 `@RequestBody List&lt;Long&gt; ids` 透传给 service，未对 `null`/空数组做边界校验。请求体为 `null` 或 `[]` 时，若 `newEventService.queryEventCodesByIds(ids)` 内部未做非空保护，容易触发空指针或生成无意义查询，导致接口异常。</div>
+                <div class="finding-suggestion">💡 修复建议：在 controller 层先做参数校验并对空输入快速返回，例如：`if (CollectionUtil.isEmpty(ids)) { return ResponseObject.success(Collections.emptyMap()); }`；若 `null`/空数组属于非法请求，则显式返回参数错误，避免将异常传播到 service 层。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">tracking-api/src/main/java/com/miq/trackingapi/controller/internal/InnerApiController.java:50-51</code>
+                </div>
+                <div class="finding-desc">新增接口直接接收 `@RequestBody List&lt;Long&gt; ids` 并原样传入服务层，未对列表长度、空值或空请求做任何边界校验。调用方可提交超大 ID 数组，放大下游查询规模和响应序列化开销，导致内部接口被单次请求拖垮，形成可利用的资源消耗风险。</div>
+                <div class="finding-suggestion">💡 修复建议：为请求体增加显式约束与快速失败逻辑，例如限制 `ids` 非空且数量上限可控（如 `@Size(max=500)`），同时校验元素非空并在进入服务层前拒绝异常输入；必要时配合统一限流或分页式查询，避免一次性查询/返回超大结果集。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">tracking-api/src/main/java/com/miq/trackingapi/controller/web/CacheController.java:112</code>
+                </div>
+                <div class="finding-desc">新增的缓存查询分支直接对 `params.get(&quot;key&quot;)` 调用 `toString()` 并执行 `Long.valueOf(...)`，缺少空值和格式校验。请求未携带 `key`、`key=null` 或传入非数字字符串时会触发 `NullPointerException`/`NumberFormatException`，导致接口返回 500，可被反复利用造成稳定性风险。</div>
+                <div class="finding-suggestion">💡 修复建议：在调用 `orgFeatureConfigService.getFeatures(...)` 前显式校验 `params` 中 `key` 是否存在且为合法 Long；校验失败时返回明确的 4xx 错误，而不是让运行时异常向外冒泡。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">tracking-api/src/test/java/com/miq/trackingapi/service/BasePodServiceTest.java:210-211</code>
+                </div>
+                <div class="finding-desc">`testGetPodInfoFromBase64_UploadAli` 里的新增断言行在 diff 中显示为 `assertEquals(&quot;https:/`，字符串字面量明显未闭合，会直接导致测试源码编译失败。即使这是截断前的真实提交内容的一部分，这一行本身也已经构成确定性的编译风险。</div>
+                <div class="finding-suggestion">💡 修复建议：补全该断言语句，保证字符串和方法调用完整闭合，例如：`assertEquals(&quot;https://oss.example/b64.jpg&quot;, result.getPodUrl());`，并补上对应的 `podUrlBak` / `labelFileType` 断言。</div>
+            </div>
+            <p class="more-note">... 还有 9 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+        </div>
+        
 
   <div class="footer">
     由质量门禁引擎生成 &nbsp;|&nbsp; SpeedX CI/CD
