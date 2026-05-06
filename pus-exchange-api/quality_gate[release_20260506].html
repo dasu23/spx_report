@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pus-exchange-api &nbsp;|&nbsp; 2026-05-07 01:03:09</div>
+      <div class="meta">pus-exchange-api &nbsp;|&nbsp; 2026-05-07 01:50:12</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:5</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:5</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,6 +83,7 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
+<li>AI Review: 1 Critical finding(s)</li>
 <li>AI Review: 5 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
@@ -90,46 +91,54 @@
         <div class="findings-section">
             <h3>AI 代码审查发现</h3>
             
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/utils/BlobRefreshUtil.java:21</code>
+                </div>
+                <div class="finding-desc">在组件初始化时将整个 `blobConfig` 序列化后写入 `info` 日志。该配置对象高概率包含 Azure Blob 访问凭证、账号标识或 SAS 相关敏感参数，一旦进入常规日志链路，会造成敏感信息泄露，符合敏感数据泄露高风险场景。</div>
+                <div class="finding-suggestion">💡 修复建议：禁止直接序列化完整配置对象到日志。删除该日志，或改为仅记录脱敏后的非敏感字段（如是否启用、域名、容器名），并明确屏蔽账号密钥、连接串、SAS 策略等敏感属性。</div>
+            </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/impl/PickupSuccessEventRepushServiceImpl.java:117-135</code>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/utils/BlobRefreshUtil.java:37-57</code>
                 </div>
-                <div class="finding-desc">`posApiAdapter.getValidInRedisByFacilityCode(row.getFacilityCode())` 的返回值未判空，后续直接访问 `facility.getFacilityCode()` 和 `facility.getZoneId()`。当门店编码无效、缓存未命中或下游返回空时，这里会直接触发 NPE，中断当前运单的补推流程。</div>
-                <div class="finding-suggestion">💡 修复建议：在构建 `InsertEventForm` 前先校验 `facility`，为空时记录告警并跳过，避免补推任务因脏数据崩溃，例如：`if (facility == null) { log.warn(&quot;... facility not found, trackingNumber={}&quot;, trackingNumber); return; }`。</div>
+                <div class="finding-desc">`refresh` 在 URL 以 `http://` 或 `https://` 开头时直接原样返回，导致已经带有过期 SAS 的完整 Blob URL 无法刷新。该工具类的职责是“重新生成 SAS token”，但对最常见的完整访问链接分支提前返回，会直接造成链接过期后仍返回不可用地址。</div>
+                <div class="finding-suggestion">💡 修复建议：不要仅凭 scheme 判断为“可直接访问链接”。应先解析出 host/path，再仅对白名单直链域名放行，或对白名单之外的 Blob URL 重新生成 token。例如：`URI uri = URI.create(url); String path = uri.getPath(); String host = uri.getHost(); boolean directDomain = host != null &amp;&amp; host.endsWith(&quot;speedx.io&quot;); if (directDomain) { return url; }`，其余带 path 的 Blob URL 继续走 SAS 刷新逻辑。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/impl/PickupSuccessEventRepushServiceImpl.java:95-103</code>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/config/AzureBlobStorageConfig.java:32-33</code>
                 </div>
-                <div class="finding-desc">这里虽然加了分布式锁，但拿到锁后没有重新校验 `pickup_time` 是否已被其他线程/任务更新。当前代码先基于旧快照 `row.getPickupTime()==null` 通过前置判断，再在锁内直接 `doRepush(row)`；如果两个补推任务处理同一运单，第二个任务会在第一个任务释放锁后继续用陈旧数据重复推送事件，造成重复事件写入。</div>
-                <div class="finding-suggestion">💡 修复建议：在获取锁成功后基于数据库最新状态做二次校验，再决定是否补推。例如重新查询 `pickup_time`，已存在则直接返回；或者将 `updatePickupTimeByTrackingNumber` 改为带条件更新（`where pickup_time is null`），仅在更新成功时才调用 `trkAdapter.pushEventPod`。</div>
+                <div class="finding-desc">这里新增了强依赖配置 `azure.storage.blob-domain`，但没有提供默认值或降级处理。对于尚未同步该配置的环境，Spring 在创建 `AzureBlobStorageConfig` 时会因占位符无法解析而直接启动失败，属于发布兼容性回归。</div>
+                <div class="finding-suggestion">💡 修复建议：如果该配置不是所有环境都必需，建议提供默认值或改为 `@ConfigurationProperties` 并在实际使用处做非空校验，例如：`@Value(&quot;${azure.storage.blob-domain:}&quot;)`。如果该配置确实必填，则需同时补齐配置发布说明和启动期校验，避免运行时以占位符解析异常的形式失败。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/utils/BlobRefreshUtil.java:21</code>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/impl/PickupSuccessEventRepushServiceImpl.java:118-135</code>
                 </div>
-                <div class="finding-desc">构造函数在 `info` 级别序列化并打印整个 `SpxAzureBlobConfig`。这类存储配置通常包含账号名、访问域名，且高概率含有连接串、Access Key 或其他可用于推导存储访问能力的敏感字段；一旦进入集中日志，将扩大凭证泄露面。</div>
-                <div class="finding-suggestion">💡 修复建议：禁止直接打印完整配置对象。改为只记录脱敏后的非敏感字段（如容器名、是否启用、域名摘要），或移除此日志；如确需排障，增加显式脱敏逻辑，确保 `key`、`secret`、`token`、连接串等字段永不落日志。</div>
+                <div class="finding-desc">`posApiAdapter.getValidInRedisByFacilityCode(row.getFacilityCode())` 的返回值未做空值校验，随后直接调用 `facility.getFacilityCode()` 和 `facility.getZoneId()`。当门店编码不存在、缓存未命中或适配层异常返回 `null` 时，这里会触发空指针，导致整条补推流程失败。</div>
+                <div class="finding-suggestion">💡 修复建议：在构建 `InsertEventForm` 前增加空值保护，例如：`if (facility == null) { log.warn(&quot;...facility not found...&quot;); return; }`，或让适配层在查不到门店时抛出明确业务异常并在上层单独处理。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/utils/BlobRefreshUtil.java:38-40</code>
+                    <code class="finding-loc">pus-facade-impl/pus-facade-impl-exchange/src/main/java/io/speedx/pus/facade/impl/exchange/controller/PickupController.java:200-203</code>
                 </div>
-                <div class="finding-desc">这里的分支条件与方法注释和实现目标相反。当前代码对 `http://`、`https://` 或 `speedx.io` 域名的 URL 直接原样返回，导致这类完整 Blob 地址不会重新生成 SAS token，也不会替换为配置的 `blobDomain`，刷新逻辑实际失效。</div>
-                <div class="finding-suggestion">💡 修复建议：将条件改为“非目标 URL 才直接返回”，例如：`if (!isHttp &amp;&amp; !isSpeedxDomain) { return url; }`。随后再对命中的完整 URL 解析 path 并重建新链接，避免已过期的完整 Blob URL 被直接透传。</div>
+                <div class="finding-desc">新增的 `repushPickupSuccessEvent` 直接调用服务后返回成功，未像同类控制器方法一样做异常转换。若 `pickupSuccessEventRepushService` 抛出业务异常或下游调用异常，请求会直接冒泡为 500，接口无法返回统一的 `ResponseObject.failure(...)`，会导致前端/调用方拿不到约定的错误结构。</div>
+                <div class="finding-suggestion">💡 修复建议：对服务调用增加与现有控制器一致的异常处理，至少捕获可预期的业务异常并转换为统一响应，例如：`try { pickupSuccessEventRepushService.repushPickupSuccessEvent(...); return ResponseObject.success(); } catch (Exception e) { log.error(&quot;repush pickup success event failed&quot;, e); return ResponseObject.failure(e.getMessage()); }`。如果项目已有全局异常映射，也应确认该接口覆盖到对应异常类型并能返回约定结构。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-infrastructure/src/main/java/io/speedx/pus/infrastructure/repository/PickupParcelRepository.java:80-99</code>
+                    <code class="finding-loc">pus-infrastructure/src/main/java/io/speedx/pus/infrastructure/repository/PickupParcelRepository.java:95-101</code>
                 </div>
-                <div class="finding-desc">这里新增的是 `nativeQuery = true` 的原生 SQL，并直接把 `List&lt;String&gt;` 作为位置参数用于 `IN (?1)`。Spring Data JPA 对集合参数的自动展开在 JPQL 中更稳定，但在原生 SQL + 位置参数场景下经常出现绑定失败或被当成单个值处理，最终在批量补推时触发 SQL 语法错误或查不到数据。</div>
-                <div class="finding-suggestion">💡 修复建议：将集合参数改为命名参数并确认框架版本对 native query 集合展开的支持；如果当前版本不支持，改为分批单值查询或自定义实现动态拼接占位符。例如：`WHERE ppp.tracking_number IN (:trackingNumbers) AND pp.pickup_date = :pickupDate`，方法签名改为 `findRepushDataByTrackingNumbers(@Param(&quot;trackingNumbers&quot;) List&lt;String&gt; trackingNumbers, @Param(&quot;pickupDate&quot;) LocalDate pickupDate)`；若仍不支持，则使用自定义 Repository 通过 `EntityManager` 构造占位符列表。</div>
+                <div class="finding-desc">新增的 native query 直接对 `trackingNumbers` 使用 `IN (?1)`，但方法签名没有约束入参非空。调用方一旦传入空集合，JPA/数据库侧通常会生成非法 `IN ()` 或直接抛出参数绑定异常，导致补推接口在边界输入下失败。</div>
+                <div class="finding-suggestion">💡 修复建议：在进入 Repository 前显式拦截空集合，空入参时直接返回空结果；或改为由 Service 层先做 `CollectionUtil.isEmpty(trackingNumbers)` 判断后短路返回。例如：`if (CollectionUtil.isEmpty(trackingNumbers)) { return Collections.emptyList(); }`。若必须在 SQL 层兜底，则需改造查询拼装方式，避免生成空 `IN` 条件。</div>
             </div>
             
         </div>
