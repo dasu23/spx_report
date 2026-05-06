@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pus-web-api &nbsp;|&nbsp; 2026-05-06 21:56:08</div>
+      <div class="meta">pus-web-api &nbsp;|&nbsp; 2026-05-07 00:12:38</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:1</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:2</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -93,19 +93,27 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/utils/BlobRefreshUtil.java:31-38</code>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/utils/BlobRefreshUtil.java:21</code>
                 </div>
-                <div class="finding-desc">`refresh` 将任意以 `http://` 或 `https://` 开头的字符串都视为可刷新 Blob URL，仅按路径部分生成新的 SAS token，而不校验原始 host、容器前缀或 blob 名是否属于允许范围。若上游 `doUrl/pickupPopUrl` 可被污染为如 `https://attacker.example/private/blob.pdf`，这里会对 `/private/blob.pdf` 重新签发本存储账号的 SAS，形成未授权的存储对象访问令牌泄露风险。</div>
-                <div class="finding-suggestion">💡 修复建议：在签发 SAS 前增加严格白名单校验：仅允许预期的 Blob 域名/CNAME，校验路径必须命中指定容器前缀，并拒绝包含 `..`、重复斜杠、编码绕过等异常 blob 名。更稳妥的做法是仅接受内部存储的 blob key/对象名，不接受完整外部 URL 作为签名输入。</div>
+                <div class="finding-desc">构造函数将 `blobConfig` 整体序列化后写入 `info` 日志。该配置对象来源于 `azure.storage`，高概率包含存储账号密钥、SAS 策略等敏感字段，属于明文凭证泄露风险。</div>
+                <div class="finding-suggestion">💡 修复建议：禁止记录完整配置对象；改为仅记录非敏感标识字段（如 accountName/containerName），或对密钥、token、签名相关字段做统一脱敏后再输出。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/utils/BlobRefreshUtil.java:65-69</code>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/utils/BlobRefreshUtil.java:38-40</code>
                 </div>
-                <div class="finding-desc">这里的实现与注释不一致：注释说明 CDN URL 路径如果包含容器名前缀，需要先剥掉容器名再生成 SAS，但实际直接把 `path.substring(1)` 作为 `blobName` 传给 `generateBlobSasToken(...)`。当输入是 `https://&lt;domain&gt;/&lt;container&gt;/dms/file.jpg` 这类常见 CDN 地址时，会把 `&lt;container&gt;/dms/file.jpg` 当成 blob name，生成的 canonical resource 多一层容器名，最终返回的 URL 签名失效。</div>
-                <div class="finding-suggestion">💡 修复建议：生成 token 前先移除容器名前缀，再调用 `generateBlobSasToken`。示例：`String blobName = path.startsWith(&quot;/&quot;) ? path.substring(1) : path; if (blobName.startsWith(containerName + &quot;/&quot;)) { blobName = blobName.substring(containerName.length() + 1); }`。如果 `SpxAzureBlobConfig` 不直接提供容器名，需要显式注入该配置项。</div>
+                <div class="finding-desc">`refresh` 在遇到 `http://` 或 `https://` 开头的 URL 时直接原样返回，导致已有完整 Blob URL（最常见的存储形态）不会重新生成 SAS，也不会切换到新配置的 `blob-domain`。如果库里保存的是带过期 SAS 的完整链接，这次改动实际上无法完成“刷新 URL”的目标，前端仍会拿到失效地址。</div>
+                <div class="finding-suggestion">💡 修复建议：不要按是否为绝对 URL 直接返回，而应统一解析出 path 后重签名。例如先保存 `originalUrl`，再对绝对 URL 提取 pathname，最后用 `blob-domain + pathname + ?token` 重建结果。示例：`URI uri = URI.create(url); String blobFilePath = uri.getPath();`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/utils/BlobRefreshUtil.java:44-57</code>
+                </div>
+                <div class="finding-desc">方法先删除了原 URL 的 query string，再在 `blob-domain` 为空时返回当前变量 `url`。这会把原本可用的完整链接降级成不带 SAS 的裸路径/裸 URL，与日志中的“returning original url”不一致；一旦配置缺失或动态刷新失败，调用方会直接拿到不可访问地址。</div>
+                <div class="finding-suggestion">💡 修复建议：保留原始入参，配置校验应早于 URL 变形，或在回退时显式返回 `originalUrl`。例如：`String originalUrl = url; ... if (StringUtils.isBlank(domain)) { return originalUrl; }`。</div>
             </div>
             
         </div>
