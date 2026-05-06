@@ -45,11 +45,11 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">tracking-api &nbsp;|&nbsp; 2026-05-06 12:19:48</div>
+      <div class="meta">tracking-api &nbsp;|&nbsp; 2026-05-06 22:17:28</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
-      <span style="background:#4caf50;color:#fff;padding:4px 12px;border-radius:4px;font-weight:bold;">PASSED</span>
+      <span style="background:#f44336;color:#fff;padding:4px 12px;border-radius:4px;font-weight:bold;">FAILED</span>
     </div>
   </div>
 
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:0</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:13</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -82,10 +82,67 @@
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube quality gate status: ERROR</li></ul>
+            <ul><li>SonarQube quality gate status: ERROR</li>
+<li>AI Review: 1 Critical finding(s)</li>
+<li>AI Review: 13 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
+        <div class="findings-section">
+            <h3>AI 代码审查发现</h3>
+            
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/service/impl/PlDmsGen57411ServiceImpl.java:86</code>
+                </div>
+                <div class="finding-desc">将 `bean.getUrl()` 转换为带签名参数的 SAS URL 后直接写入 `dto.remark`，会把存储访问凭证随 DTO 一并下发。SAS URL 通常包含 `sig` 等敏感查询参数，一旦该字段被前端展示、日志记录、缓存或二次转发，会形成凭证泄露风险。</div>
+                <div class="finding-suggestion">💡 修复建议：不要在通用备注字段中返回携带凭证的完整 SAS URL。改为返回不含签名的对象标识/路径，并在真正下载时通过专用接口按需生成短时效 SAS；若业务必须返回下载链接，使用独立字段明确语义，并确保最小权限、极短过期时间且禁止落日志。</div>
+            </div>
+            
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/cmd/GlsEventCmd.java:150-153</code>
+                </div>
+                <div class="finding-desc">这里将 `SpxAzureBlobUtil.upload(...)` 的所有异常都捕获后仅记录日志，循环继续执行。相比原实现直接抛错，这会把上传失败降级为静默丢失：单张或全部 POD 图片上传失败时，当前流程仍可能继续落库或结束，调用方也拿不到失败信号，容易造成 POD 数据缺失且难以及时发现。</div>
+                <div class="finding-suggestion">💡 修复建议：不要在这里吞掉上传异常。至少应在记录上下文后重新抛出异常，保证事件处理失败可感知；如果确实允许部分成功，也应显式统计失败数量并在 `urls` 为空时抛出业务异常。例如：`try (...) { ... } catch (Exception e) { log.error(&quot;Failed to upload GLS POD image, path={}&quot;, path, e); throw new RRException(&quot;GLS POD image upload failed&quot;); }`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/cmd/PodCmd.java:49-51</code>
+                </div>
+                <div class="finding-desc">`labelFileDao.findPopByEventId(eventId)` 之前是直接返回，现在新增了 `.stream()` 处理；一旦 DAO 在无数据场景下返回 `null`，这里会立即触发 `NullPointerException`，导致查询 POP 直接失败。该改动引入了新的空值边界风险。</div>
+                <div class="finding-suggestion">💡 修复建议：在流处理前先做空值兜底，避免对 DAO 返回值做隐式非空假设。例如：`List&lt;String&gt; urls = labelFileDao.findPopByEventId(eventId); return CollectionUtils.isEmpty(urls) ? Collections.emptyList() : urls.stream().map(BlobSasUtil::toSasUrl).collect(Collectors.toList());`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/cmd/queryEvent/EventRoConverter.java:83</code>
+                </div>
+                <div class="finding-desc">这里把 `fileUrl` 直接传给 `BlobSasUtil.toSasUrl(...)`，但当前流里没有对 `f.getFileUrl()` 做空值/空串保护。若历史脏数据或未上传完成的 POD 记录存在空 URL，这里会把原本可容忍的 `null` 列表项升级为运行时异常，导致整次事件详情转换失败。</div>
+                <div class="finding-suggestion">💡 修复建议：在转换前增加空值保护，避免单条坏数据打断整个列表构建，例如：`map(LabelFileQueryDto::getFileUrl).filter(StringUtils::isNotBlank).map(BlobSasUtil::toSasUrl)`；如果业务上需要保留占位，可改为 `map(f -&gt; StringUtils.isBlank(f.getFileUrl()) ? null : BlobSasUtil.toSasUrl(f.getFileUrl()))`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/cmd/queryEvent/EventRoConverter.java:86</code>
+                </div>
+                <div class="finding-desc">这里将原始文件地址直接转换为带 SAS 的签名 URL 并写入返回对象。SAS URL 本质上是可直接访问 Blob 的 bearer token，一旦被前端日志、代理缓存、埋点或下游系统记录，就会扩大敏感凭证泄露面。该变更把原先的资源标识提升成了可用访问凭证，属于新增的敏感数据暴露风险。</div>
+                <div class="finding-suggestion">💡 修复建议：不要在通用查询结果中直接下发完整 SAS URL。改为返回稳定文件标识，由受控下载接口按需、短时生成 SAS；如果必须返回签名链接，至少确保最短有效期、最小权限，并避免该字段进入日志/缓存。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/cmd/queryEvent/QueryEventCmd.java:333</code>
+                </div>
+                <div class="finding-desc">按 trackingNumber 分组时，新增的 `BlobSasUtil.toSasUrl(f.getFileUrl())` 同样缺少对 `fileUrl` 的判空/合法性保护。只要某一条 POD 文件记录 URL 为空或格式异常，整个 `Collectors.groupingBy(...)` 流都会失败，导致查询结果整体不可用，而不是仅跳过坏数据。</div>
+                <div class="finding-suggestion">💡 修复建议：在 `Collectors.mapping(...)` 前先做 URL 兜底处理，例如：`Collectors.mapping(f -&gt; StringUtils.isBlank(f.getFileUrl()) ? null : BlobSasUtil.toSasUrl(f.getFileUrl()), Collectors.filtering(Objects::nonNull, Collectors.toList()))`；若项目未使用 `Collectors.filtering`，可先 `filter(f -&gt; StringUtils.isNotBlank(f.getFileUrl()))` 再分组。</div>
+            </div>
+            <p class="more-note">... 还有 8 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+        </div>
+        
 
   <div class="footer">
     由质量门禁引擎生成 &nbsp;|&nbsp; SpeedX CI/CD
