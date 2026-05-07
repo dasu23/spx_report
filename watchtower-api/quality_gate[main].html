@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">watchtower-api &nbsp;|&nbsp; 2026-04-16 16:58:23</div>
+      <div class="meta">watchtower-api &nbsp;|&nbsp; 2026-05-07 15:55:41</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:0</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:2 &nbsp; 主要:19</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -82,10 +82,75 @@
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube quality gate status: ERROR</li></ul>
+            <ul><li>SonarQube quality gate status: ERROR</li>
+<li>AI Review: 2 Critical finding(s)</li>
+<li>AI Review: 19 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
+        <div class="findings-section">
+            <h3>AI 代码审查发现</h3>
+            
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">docs/active/rule-level-notification/test-plans/notify-channel-scope.md:12-20</code>
+                </div>
+                <div class="finding-desc">测试计划中直接写入了管理员登录密码 `admin123`。该凭证随代码库传播后会扩大泄露面，并且容易被复用于真实环境或测试环境账号。</div>
+                <div class="finding-suggestion">💡 修复建议：移除明文密码，改为引用受控的测试凭证注入方式（例如环境变量、密码管理器占位符，或文档中使用 `&lt;ADMIN_PASSWORD&gt;` 之类的占位符）。如果该密码已被实际使用，需同步轮换。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">docs/active/slow-sql-monitor/assets/mongo-log.csv:2</code>
+                </div>
+                <div class="finding-desc">新增的示例数据直接提交了生产 Mongo 慢日志明文，包含真实 TenantId、ClientIp、UserId、Azure ResourceId，以及 `PiiCommandText` 中的查询内容。这属于敏感运维/租户标识信息泄露；仓库访问者可据此枚举生产资源、关联内部账号与流量来源，风险已达到敏感数据泄露级别。</div>
+                <div class="finding-suggestion">💡 修复建议：不要在仓库中保留真实生产日志。将该 CSV 替换为脱敏后的样例数据：TenantId/ResourceId/UserId 使用不可逆伪值，ClientIp 改为保留网段示例地址，`PiiCommandText` 改为人工构造的非真实查询；同时在提交链路增加针对 `.csv/.log/.md` 附件的敏感信息扫描，拦截订阅 ID、IP、账号标识和 PII 字段。</div>
+            </div>
+            
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">backend/watchtower-api/src/main/java/com/watchtower/api/common/GlobalExceptionHandler.java:50</code>
+                </div>
+                <div class="finding-desc">`log.warn(&quot;HTTP message not readable: {}&quot;, e.getMessage())` 会把 `HttpMessageNotReadableException` 的消息原样写入日志。该异常消息通常包含客户端提交的非法 JSON 片段、字段值或反序列化失败的原始内容；当请求体中含有口令、Token、邮箱等敏感字段时，会形成服务端日志敏感信息泄露。</div>
+                <div class="finding-suggestion">💡 修复建议：避免记录 `e.getMessage()` 这类可能包含原始请求体内容的异常消息。改为记录固定文案、异常类型和必要的请求标识，例如仅记录 `cause` 类型或字段路径，不输出客户端提交的具体值。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">backend/watchtower-collector/src/main/java/com/watchtower/collector/query/QueryExecutor.java:114-118</code>
+                </div>
+                <div class="finding-desc">这里将所有 `TIMESTAMP`/`DATE` 列统一改为返回 ISO 字符串，而不再返回 JDBC 原生时间对象。该改动会直接改变查询结果的数据类型契约；现有下游若按 `Timestamp`/`Date` 或既有序列化格式处理，可能在运行期解析失败，导致正常查询链路中断，形成服务可用性风险。</div>
+                <div class="finding-suggestion">💡 修复建议：避免在通用查询执行层直接改写返回类型。优先保持原始 JDBC 类型，并在明确的序列化边界做时区规范化；如果必须改为字符串，应通过版本化接口或显式开关灰度发布，并同步修正所有消费者。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">backend/watchtower-collector/src/main/java/com/watchtower/collector/query/QueryExecutor.java:45-47</code>
+                </div>
+                <div class="finding-desc">这里会把所有形如 ISO-8601 时间戳的字符串参数无条件转换为 `Instant` 再绑定 JDBC，占位符本身并不知道目标列是否真的是时间类型。对于查询文本列、JSON 字段或需要按字符串精确匹配的 SQL（例如 `where raw_value = ?`），原本的字符串会被改绑为时间类型，可能触发数据库隐式转换、索引失效或直接查不到数据。</div>
+                <div class="finding-suggestion">💡 修复建议：只在已知目标参数是时间语义时再做转换，不要对所有字符串参数做全局自动识别。可选方案：1）在查询定义里显式标注哪些参数是时间类型；2）仅对 `java.time`/`java.sql` 类型做绑定，不在执行层猜测字符串含义；例如保留 `ps.setObject(i + 1, params.get(i))`，并在上游组装参数时显式传入 `Instant`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">backend/watchtower-collector/src/main/java/com/watchtower/collector/query/TemporalValueParser.java:31-39</code>
+                </div>
+                <div class="finding-desc">`parseIfInstant` 先用正则判断格式，再直接调用 `Instant.parse`/`OffsetDateTime.parse`。该正则允许语义上非法的日期时间字符串通过（如 `2026-02-31T00:00:00Z`），此时解析会抛出 `DateTimeParseException`。新增逻辑没有兜底处理，查询会在参数绑定前以运行时异常失败。</div>
+                <div class="finding-suggestion">💡 修复建议：对解析失败做降级或显式包装，避免未捕获运行时异常直接中断查询。示例：`try { ... } catch (DateTimeParseException ex) { return value; }`；如果业务上必须拦截非法时间字符串，则在这里抛出受检/业务异常并由上层统一转换为明确的请求错误。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">backend/watchtower-common/src/main/java/com/watchtower/common/dailyreport/DailyReportConfigStore.java:30-31</code>
+                </div>
+                <div class="finding-desc">`get()` 直接对 `config_key` 使用 `selectOne`。如果库里因历史脏数据或并发初始化出现多条 `watchtower.daily_report` 记录，MyBatis-Plus 会抛出 `TooManyResultsException`，这里没有兜底，调用方读取配置会直接失败。</div>
+                <div class="finding-suggestion">💡 修复建议：避免在非唯一约束字段上直接使用 `selectOne`。可改为 `selectList` 后显式校验条数并给出稳定处理，例如只取一条并记录错误，或在数据库层补唯一索引。示例：`List&lt;SystemConfig&gt; rows = systemConfigMapper.selectList(...last(&quot;LIMIT 2&quot;)); if (rows.isEmpty()) return new DailyReportConfig(); if (rows.size() &gt; 1) { log.error(&quot;Duplicate config rows for {}&quot;, CONFIG_KEY); return new DailyReportConfig(); }`。</div>
+            </div>
+            <p class="more-note">... 还有 14 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+        </div>
+        
 
   <div class="footer">
     由质量门禁引擎生成 &nbsp;|&nbsp; SpeedX CI/CD
