@@ -45,24 +45,24 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">dms-api &nbsp;|&nbsp; 2026-05-09 09:43:58</div>
+      <div class="meta">dms-api &nbsp;|&nbsp; 2026-05-09 11:21:35</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
-      <span style="background:#4caf50;color:#fff;padding:4px 12px;border-radius:4px;font-weight:bold;">PASSED</span>
+      <span style="background:#f44336;color:#fff;padding:4px 12px;border-radius:4px;font-weight:bold;">FAILED</span>
     </div>
   </div>
 
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#4caf50">24.5%</div>
+      <div class="metric-value" style="color:#4caf50">24.3%</div>
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#4caf50">55.9%</div>
+            <div class="metric-value" style="color:#4caf50">55.8%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:0</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:4</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -82,10 +82,59 @@
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube quality gate status: ERROR</li></ul>
+            <ul><li>SonarQube quality gate status: ERROR</li>
+<li>AI Review: 1 Critical finding(s)</li>
+<li>AI Review: 4 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
+        <div class="findings-section">
+            <h3>AI 代码审查发现</h3>
+            
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">docs/1.json:1</code>
+                </div>
+                <div class="finding-desc">新增的示例响应直接提交了生产数据片段，包含真实运单号、精确经纬度以及 `prod-blob` 下的 POD 图片 URL。这些内容可用于还原用户投递轨迹或直接访问生产对象地址，属于敏感业务数据泄露。</div>
+                <div class="finding-suggestion">💡 修复建议：删除该真实响应样本，改为使用脱敏后的合成数据；不要在仓库中保留任何生产 Blob URL、真实 trackingNo 或精确坐标。如确需示例，使用伪造 ID、模糊坐标和不可访问的占位 URL。</div>
+            </div>
+            
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">bruce-prepare.md:8-10</code>
+                </div>
+                <div class="finding-desc">数据清洗脚本把 `total_distance` 中的英里数直接写入 `route.distance`，但旧脚本会先乘以 `1609.344` 做单位换算。若 `route.distance` 的既有语义仍是米，这次变更会把已清洗数据缩小约 1609 倍，导致距离统计、阈值判断或后续依赖该字段的业务结果异常。</div>
+                <div class="finding-suggestion">💡 修复建议：确认 `route.distance` 的统一单位；如果下游仍按米处理，应恢复换算逻辑，例如：`SET distance = CAST(TRIM(REPLACE(total_distance, &#x27;miles&#x27;, &#x27;&#x27;)) AS DECIMAL(20, 4)) * 1609.344`。如果确实要改为存英里，需要同步修改所有读取方与文档，并补充一次全量兼容性校验。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">drivermgmt-facade/src/main/java/io/speedx/drivermgmt/facade/model/resp/ParcelDetailResp.java:37-58</code>
+                </div>
+                <div class="finding-desc">新增 `recipientPhone` 到对外响应模型，当前看不到任何脱敏、加密或定制序列化处理。收件人手机号属于个人敏感信息，直接透出会扩大 PII 泄露面，尤其该 DTO 后续又被 `QuickSearchResp` 直接聚合返回。</div>
+                <div class="finding-suggestion">💡 修复建议：将手机号改为脱敏展示值（如 `138****1234`），或拆分为内部字段与外部展示字段，确保对外序列化时永不输出完整号码。若业务必须返回完整号码，应至少引入显式的脱敏/加密序列化器并补充审计。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">drivermgmt-infrastructure/src/main/java/io/speedx/drivermgmt/integration/AzureBlobUrlSigner.java:138-143</code>
+                </div>
+                <div class="finding-desc">`resolveContainerClient()` 对非默认 container 直接执行 `crossContainerClients.computeIfAbsent(container, serviceClient::getBlobContainerClient)`，但 `serviceClient` 只在 `init()` 里且仅 `containerClient != null` 时赋值。若该 Bean 在未完成 `init()` 的时机被调用，或纯逻辑单测里传入了 `null containerClient` 后走到跨 container 分支，这里会直接触发 `NullPointerException`，导致签名功能失败。</div>
+                <div class="finding-suggestion">💡 修复建议：在 `resolveContainerClient()` 中显式校验 `serviceClient` 是否已初始化，并给出可控降级或明确异常，例如：`if (serviceClient == null) { throw new IllegalStateException(&quot;BlobServiceClient not initialized&quot;); }`；如果需要兼容测试场景，则应在 `sign()` 进入跨 container 分支前直接回退为原值返回，避免对 `null` client 做方法引用。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">drivermgmt-infrastructure/src/main/java/io/speedx/drivermgmt/integration/AzureBlobUrlSigner.java:140</code>
+                </div>
+                <div class="finding-desc">`crossContainerClients` 是进程级无界缓存，key 直接来自新增解析逻辑中的 `/{container}/{blob}` 输入。只要调用方持续传入不同的 container 名，就会在 `computeIfAbsent` 中永久保留新的 `BlobContainerClient`，造成堆内存持续增长，最终可被利用为应用层 DoS。该风险由本次改动新增，因为旧实现只使用固定注入的 `containerClient`，不会按用户输入扩容缓存。</div>
+                <div class="finding-suggestion">💡 修复建议：不要对外部输入驱动的 container 名做无界缓存。可改为：1. 仅允许白名单中的有限 container；或 2. 使用有上限的缓存并在 miss 时拒绝异常 container；至少需要在写入缓存前校验 container 名格式和数量上限。</div>
+            </div>
+            
+        </div>
+        
 
   <div class="footer">
     由质量门禁引擎生成 &nbsp;|&nbsp; SpeedX CI/CD
