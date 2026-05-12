@@ -216,7 +216,7 @@
             <div class="header-row">
                 <div class="header-left">
                     <h1>Issue 统计报告</h1>
-                    <span class="subtitle">2026-05-12T01:59:18.377121</span>
+                    <span class="subtitle">2026-05-12T02:16:30.833973</span>
                 </div>
                 <div class="stat-cards">
                     <div class="stat-card total">
@@ -1015,6 +1015,27 @@
             return months;
         }
 
+        function getTrendMonths() {
+            // 趋势图月份轴: 跟随日期 picker
+            // - 选了 start/end → start~end 之间所有月份
+            // - 没选 → 最近 12 个月 (fallback)
+            const start = document.getElementById('startDate').value;
+            const end = document.getElementById('endDate').value;
+            if (!start || !end) return getRecentMonths(12);
+            const s = new Date(start + 'T00:00:00');
+            const e = new Date(end + 'T00:00:00');
+            if (isNaN(s.getTime()) || isNaN(e.getTime()) || s > e) return getRecentMonths(12);
+            const months = [];
+            let cur = new Date(s.getFullYear(), s.getMonth(), 1);
+            const stop = new Date(e.getFullYear(), e.getMonth(), 1);
+            while (cur <= stop) {
+                const ym = cur.getFullYear() + '-' + String(cur.getMonth() + 1).padStart(2, '0');
+                months.push(ym);
+                cur = new Date(cur.getFullYear(), cur.getMonth() + 1, 1);
+            }
+            return months;
+        }
+
         function calcMonthlyTrend(data, prodOnly = false) {
             const monthlyData = {};
             data.forEach(item => {
@@ -1332,7 +1353,8 @@
             const OTHER_KEY = restNames.length > 0 ? `其他(${restNames.length}人)` : null;
             const restSet = new Set(restNames);
 
-            const months = getRecentMonths();
+            // 月份轴跟随日期 picker (与饼图共享同一时间窗)
+            const months = getTrendMonths();
             const monthlyData = {};
             months.forEach(m => {
                 monthlyData[m] = {};
@@ -1354,9 +1376,18 @@
                 });
             });
 
+            // X 轴标签: 跨年时带年份,避免 "1月" 不知道是哪一年
+            const yearSet = new Set(months.map(m => m.substring(0, 4)));
+            const showYear = yearSet.size > 1;
+            const labels = months.map(m => {
+                const [y, mm] = m.split('-');
+                return showYear ? (y.substring(2) + '/' + parseInt(mm) + '月') : (parseInt(mm) + '月');
+            });
+
             const orderedAssignees = OTHER_KEY ? [...topAssignees, OTHER_KEY] : topAssignees;
             return {
-                months: months.map(m => parseInt(m.split('-')[1]) + '月'),
+                months: labels,
+                rawMonths: months,
                 assignees: orderedAssignees,
                 series: orderedAssignees.reduce((acc, name) => {
                     acc[name] = months.map(m => monthlyData[m][name] || 0);
@@ -1369,16 +1400,19 @@
         }
 
         function renderAssigneeTrendChart() {
-            const trendSource = buildNonTimeFiltered();
-            const trendData = calcAssigneeMonthlyTrend(trendSource);
+            // 跟饼图共享数据源 (响应所有筛选,包含时间)
+            const trendData = calcAssigneeMonthlyTrend(filteredData);
 
-            // 提示文案: 显示当前显示范围 (含未显示人数)
+            // 提示文案: 显示当前显示范围 (含未显示人数 + 月份跨度)
             const hintEl = document.getElementById('assigneeTrendHint');
             if (hintEl) {
                 const scope = trendData.otherCount > 0
                     ? `TOP ${trendData.topN} + 其他(${trendData.otherCount}人) / 共 ${trendData.total} 人`
                     : `全部 ${trendData.total} 人`;
-                hintEl.textContent = `（最近12个月 · ${scope}）`;
+                const monthSpan = trendData.rawMonths.length > 0
+                    ? `${trendData.rawMonths[0]} ~ ${trendData.rawMonths[trendData.rawMonths.length - 1]}`
+                    : '最近12个月';
+                hintEl.textContent = `（${monthSpan} · ${scope}）`;
             }
 
             // 21 色板 (TOP 20 + 其他用灰色)
