@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-exchange-api &nbsp;|&nbsp; 2026-05-12 12:25:32</div>
+      <div class="meta">pos-exchange-api &nbsp;|&nbsp; 2026-05-12 13:23:46</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,16 +73,17 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:2</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:3</div>
       <div class="metric-threshold">已抑制: 0</div>
-      <div class="metric-note">已检测到问题，但当前配置未阻断流水线</div>
+      
     </div>
   </div>
 
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube analysis timed out after 1 minutes</li></ul>
+            <ul><li>SonarQube analysis timed out after 1 minutes</li>
+<li>AI Review: 3 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -93,18 +94,26 @@
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/web/impl/WebNewReturnParcelServiceImpl.java:168-169</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/web/impl/WebNewReturnParcelServiceImpl.java:110-111</code>
                 </div>
-                <div class="finding-desc">这里在 `returnParcelDao.save(...)`、`pushLogService.saveDmsReturnScan(...)` 和 `fixRouteReturnScan(...)` 已经执行成功后，再把首扫 RDC 拦截/track-end 场景包装成 `buildException(...)` 返回。调用方会收到“失败/红色错误”信号，但实际扫描已落库并已发出后续消息，容易触发前端误判、重复扫描或补偿重试，随后又命中“already returned today”分支，形成明显的业务状态与响应语义不一致。</div>
-                <div class="finding-suggestion">💡 修复建议：把这类首扫场景改成“成功但带红色告警”的返回语义，避免使用异常响应承载已成功落库的结果；如果 `ResponseObject` 不支持告警态，至少新增专门的 warning/result code，而不是复用 `buildException`。例如保留 `result` 的 success 状态，仅补充 warning message/color 字段。</div>
+                <div class="finding-desc">新增的 RDC 预警分支在判断重复扫描之前直接执行 `returnParcelRo.getEventList()`。如果调用方传入的 `returnParcelRo` 为 null，RDC 场景会在这里抛出空指针；而旧逻辑在 `exists=true` 时会直接返回重复扫描提示，不会解引用该对象。这是新增回归，且会导致重复扫描请求直接失败。</div>
+                <div class="finding-suggestion">💡 修复建议：在构建预警信息前先判空，例如 `List&lt;TrackingEventRo&gt; eventList = returnParcelRo == null ? Collections.emptyList() : returnParcelRo.getEventList();`，再传给 `buildRdcWarningMsg`；或者让 `buildRdcWarningMsg` 接收 `ScanReturnParcelRo` 并在方法内统一处理 null。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/web/impl/WebNewReturnParcelServiceImpl.java:181</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/web/impl/WebNewReturnParcelServiceImpl.java:168-169</code>
                 </div>
-                <div class="finding-desc">新增的告警消息将上游可控字段直接拼接进 `remark`：`interceptMsg`、`TrackingEventRo.description` 均未做任何规范化；同时第 175 行主动插入换行符。随后这些内容会在第 279-282 行写入操作日志。若上游文本包含换行、控制字符或伪造前缀，容易造成日志注入/日志伪造，影响审计可信度。</div>
-                <div class="finding-suggestion">💡 修复建议：在写入 `remark` 前对外部文本做规范化处理：至少去除 `\r`/`\n`/制表符等控制字符，并限制最大长度；如需保留多行语义，改为结构化字段存储而不是直接拼接到单条 remark。</div>
+                <div class="finding-desc">首次 RDC 扫描命中 intercept/track-end 时，前面已执行 `returnParcelDao.save(...)`、`saveDmsReturnScan(...)` 和 `fixRouteReturnScan(...)` 等有副作用操作，但这里仍返回 `buildException(...)`。这会把“已成功落库并已下发”的扫描结果伪装成失败，调用方若按失败重试，会重复触发后续流程，造成重复消息、重复扫描记录或状态不一致。</div>
+                <div class="finding-suggestion">💡 修复建议：将该分支改为显式成功响应并携带 warning 字段，或在返回异常前确保不发生任何持久化/下游调用副作用。至少要保证返回语义与实际执行结果一致，避免客户端基于失败码自动重试。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/web/impl/WebNewReturnParcelServiceImpl.java:179-199</code>
+                </div>
+                <div class="finding-desc">`buildRdcWarningMsg` 直接拼接 `label.getInterceptMsg()` 和轨迹事件 `description`，未做 CR/LF 等控制字符过滤。这些内容随后被用于 operation log remark，并作为响应消息返回。若上游标签备注或轨迹描述可被外部数据污染，攻击者可注入换行/伪造字段，污染审计日志，影响日志检索、告警和追溯。</div>
+                <div class="finding-suggestion">💡 修复建议：在组装 `rdcWarningMsg` 前对外部字符串做统一清洗：去除或转义 `\r`、`\n`、制表符等控制字符，并限制最大长度；日志与返回前使用独立的安全格式化方法，不要直接复用原始备注。</div>
             </div>
             
         </div>
