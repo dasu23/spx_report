@@ -45,24 +45,24 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">oms-api &nbsp;|&nbsp; 2026-05-11 10:55:42</div>
+      <div class="meta">oms-api &nbsp;|&nbsp; 2026-05-12 11:01:55</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
-      <span style="background:#4caf50;color:#fff;padding:4px 12px;border-radius:4px;font-weight:bold;">PASSED</span>
+      <span style="background:#f44336;color:#fff;padding:4px 12px;border-radius:4px;font-weight:bold;">FAILED</span>
     </div>
   </div>
 
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#4caf50">38.8%</div>
+      <div class="metric-value" style="color:#4caf50">39.5%</div>
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#4caf50">54.3%</div>
+            <div class="metric-value" style="color:#4caf50">58.1%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:0</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:2 &nbsp; 主要:27</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -82,10 +82,75 @@
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube quality gate status: ERROR</li></ul>
+            <ul><li>SonarQube quality gate status: ERROR</li>
+<li>AI Review: 2 Critical finding(s)</li>
+<li>AI Review: 27 Major finding(s) &gt;= threshold 5</li></ul>
         </div>
         
   
+        <div class="findings-section">
+            <h3>AI 代码审查发现</h3>
+            
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArSettlementGenerateService.java:203-206</code>
+                </div>
+                <div class="finding-desc">新增逻辑在 `feesCarriedInline=true` 时直接信任 MQ 载荷中的 `charges` 作为结算金额来源，并通过后续 `buildRateResultFromInlineCharges(...)` 进入落库流程。这里没有对消息来源完整性、`FREIGHT` 唯一性、金额非负性、费项白名单或 `rateId/rateVersion` 一致性做校验，任意可发该 Topic 的生产者或异常重放消息都可伪造/篡改费用，直接导致 AR settlement 金额被错误入账。</div>
+                <div class="finding-suggestion">💡 修复建议：不要将 MQ 里的费用明细作为无校验的权威金额源。至少增加：1. 严格校验 `charges` 结构，只允许一个 `FREIGHT`，且所有金额必须非负、费项代码必须在白名单内；2. 校验 `rateId/rateVersion` 与当前 parcel 计算上下文一致；3. 校验失败时回退到数据库/重算路径，禁止直接落库；4. 若架构允许，对消息增加签名/来源校验，避免被伪造生产者注入错误费用。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">oms-test/rest/client-claim.http:5</code>
+                </div>
+                <div class="finding-desc">新增/修改的 REST 调试文件中直接提交了多个 Bearer Token（如第 5、15、28、39、47、56 行）。这属于硬编码访问凭证，一旦仓库被扩散、日志被收集或测试文件被复用，可能导致真实环境接口被未授权调用。</div>
+                <div class="finding-suggestion">💡 修复建议：移除文件中的真实 Token，改为使用占位符或环境变量注入，例如 `Authorization: Bearer {{CLIENT_CLAIM_TOKEN}}`；同时确认这些 Token 已失效或立即轮换，避免已泄露凭证继续可用。</div>
+            </div>
+            
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArSettlementDomesticDetailService.java:250-252</code>
+                </div>
+                <div class="finding-desc">这里将 `forwardParcels` 直接用 `Collectors.toMap(Parcel::getTrackingNo, p -&gt; p)` 收集，未提供冲突合并函数。一旦历史脏数据或查询结果中出现重复 trackingNo，导出明细会在运行时抛出 `IllegalStateException`，导致整批详情查询失败。</div>
+                <div class="finding-suggestion">💡 修复建议：为 `toMap` 提供合并策略，避免重复 key 直接打崩流程，例如：`Collectors.toMap(Parcel::getTrackingNo, Function.identity(), (a, b) -&gt; a)`；如果重复数据不应存在，同时补充告警日志以便排查数据质量。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArSettlementInternationalDetailService.java:254-256</code>
+                </div>
+                <div class="finding-desc">与国内明细相同，这里把 `forwardParcels` 收集为 Map 时没有处理重复 key。只要查询结果里出现重复 trackingNo，就会在 `Collectors.toMap` 处抛 `IllegalStateException`，国际明细整批查询直接失败。</div>
+                <div class="finding-suggestion">💡 修复建议：改为带合并函数的收集方式，例如：`Collectors.toMap(Parcel::getTrackingNo, Function.identity(), (a, b) -&gt; a)`，并根据需要增加重复数据日志，避免单条脏数据影响整批导出。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/BatchQueryService.java:1054-1060</code>
+                </div>
+                <div class="finding-desc">`registerLockReleaseAfterTransaction` 在当前线程没有活跃事务时会立刻释放分布式锁。这样 `acquireFleetDashboardExportLock()` 获取到的互斥只覆盖到当前方法调用点，后续“查重任务 + 创建任务”阶段不再受锁保护；一旦该逻辑被非事务入口复用，两个并发请求可能同时通过校验并创建重复的 fleet dashboard export 任务。</div>
+                <div class="finding-suggestion">💡 修复建议：将锁释放时机绑定到任务落库成功之后，而不是 `!isSynchronizationActive()` 时立即释放。可选修复：1. 明确保证 `submit/retry` 入口有事务，并删除“无事务立即释放”分支，改为在事务提交后释放；2. 或者让调用方持有 `lockValue`，在任务创建完成后的 `finally` 中显式释放。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/DspClaimImportConsumer.java:111-116</code>
+                </div>
+                <div class="finding-desc">在 Kafka 消息二次反序列化失败或结果为 null 时，新增代码直接把原始 `message` 写入错误日志。该消息体包含 `fileUrl` 等字段，而上传文件 URL 很可能是带 SAS/签名参数的私有 Blob 地址；一旦落日志，会把可直接访问文件的令牌暴露给日志读取方。</div>
+                <div class="finding-suggestion">💡 修复建议：不要记录原始消息体。仅记录 `batchId` 等最小必要字段，或在日志前对 `fileUrl`/查询串进行脱敏，复用已有的 `sanitizeFileUrlForLog`/专门的消息脱敏方法。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/DspClaimImportConsumer.java:160-169</code>
+                </div>
+                <div class="finding-desc">校验通过后仅以 `batchLog.status == COMPLETED` 作为幂等判断，随后对同一 `batchId` 直接执行 `hardDeleteByBatchId` 再重写。若同一批次消息被并发消费，第二个消费者可能在第一个消费者保存过程中看见“未完成”状态，从而把第一个消费者已写入的数据硬删，最终造成结果被相互覆盖或批次明细不完整。</div>
+                <div class="finding-suggestion">💡 修复建议：在进入“删除旧明细 + 保存新明细”前增加同 `batchId` 级别的互斥控制，例如基于分布式锁/数据库状态原子更新把 batch 标记为 `PROCESSING`，只有抢到处理权的消费者才能继续；删除旧数据前也应再次确认当前实例仍持有处理权。</div>
+            </div>
+            <p class="more-note">... 还有 22 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+        </div>
+        
 
   <div class="footer">
     由质量门禁引擎生成 &nbsp;|&nbsp; SpeedX CI/CD
