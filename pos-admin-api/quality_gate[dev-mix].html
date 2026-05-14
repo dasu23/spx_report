@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-admin-api &nbsp;|&nbsp; 2026-04-30 11:36:32</div>
+      <div class="meta">pos-admin-api &nbsp;|&nbsp; 2026-05-14 10:59:27</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -62,7 +62,7 @@
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#f44336">23.2%</div>
+            <div class="metric-value" style="color:#f44336">19.3%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:0</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:16</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -82,10 +82,58 @@
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube analysis timed out after 1 minutes</li></ul>
+            <ul><li>SonarQube analysis timed out after 1 minutes</li>
+<li>AI Review: 16 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
+        <div class="findings-section">
+            <h3>AI 代码审查发现</h3>
+            
+            
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-admin-api/src/main/java/com/miq/posadminapi/controller/businessdata/PadLabelController.java:141</code>
+                </div>
+                <div class="finding-desc">同一路径 `/download` 的接口语义和返回类型被直接改为异步任务创建：新增方法返回 `ResponseObject&lt;ReportTaskDto&gt;`，而原接口声明的 `produces` 为 `application/octet-stream` 且行为是直接输出文件。现有依赖该接口进行文件下载的客户端若未同步升级，可能继续按二进制流处理响应，导致下载链路失效或出现错误解析。这属于破坏性 API 契约变更。</div>
+                <div class="finding-suggestion">💡 修复建议：保留原 `/download` 文件流接口并新增独立的异步任务创建路径（如 `/download-async`）；若必须切换，同步更新接口版本号、`produces`/文档，并提供兼容期或显式迁移方案。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-admin-api/src/main/java/com/miq/posadminapi/controller/businessdata/PadLabelController.java:165-166</code>
+                </div>
+                <div class="finding-desc">`reportTaskService.queryPage(so)` 的返回值未做空判断，下一行直接调用 `page.getList()`；一旦底层查询在异常分支或空结果场景返回 `null`，这里会直接触发空指针，导致下载任务创建接口返回 500。</div>
+                <div class="finding-suggestion">💡 修复建议：先校验 `page` 再取列表，例如：`PageDto&lt;ReportTaskDto&gt; page = reportTaskService.queryPage(so); if (page == null || page.getList() == null || page.getList().isEmpty()) { throw new RRException(&quot;Failed to retrieve created task&quot;); }`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/bo/LabelDownloadTaskBo.java:10-12</code>
+                </div>
+                <div class="finding-desc">该异步任务载体用于跨线程传递请求上下文，但 `@Data` 会生成公开 setter，且 `labelSo` 以可变对象引用直接保存。若调用方在任务提交后继续复用或修改同一个 `LabelSo`/`LabelDownloadTaskBo` 实例，异步线程将读取到被篡改的查询条件，形成竞态条件，可能导致导出结果错乱或串入其他请求数据。</div>
+                <div class="finding-suggestion">💡 修复建议：将异步任务载体改为不可变对象：去掉 `@Data`，改用仅含 getter 的构造型对象；在构建任务时对 `LabelSo` 做显式深拷贝/字段拷贝，避免跨线程共享可变引用。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/factory/pipeline/AbstractDataProducer.java:44-46</code>
+                </div>
+                <div class="finding-desc">`finally` 中无条件执行 `queue.put(Collections.emptyList())`，在有界队列已满且消费者提前退出/尚未启动时会永久阻塞，导致生产者线程无法结束，原始异常也无法向上抛出。这个场景在下游 `consumeBatch` 抛错或消费者任务提交失败时都可能出现。</div>
+                <div class="finding-suggestion">💡 修复建议：不要在 `finally` 中使用可能无限阻塞的 `put`。可改为限时 `offer`，失败后记录错误并结束，或在放入毒丸前先检测线程中断状态。例如：`if (!queue.offer(Collections.emptyList(), 5, TimeUnit.SECONDS)) { log.error(&quot;Failed to enqueue poison pill&quot;); }`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/factory/pipeline/ProducerConsumerPipeline.java:60-78</code>
+                </div>
+                <div class="finding-desc">这里先阻塞等待 `producerFuture.get()`，再等待 `consumerFuture.get()`。如果消费者先失败，而生产者因为队列已满阻塞在 `queue.put(...)`，当前线程会一直卡在 `producerFuture.get()`，永远无法感知消费者失败并取消另一侧任务，整个流水线会挂死。</div>
+                <div class="finding-suggestion">💡 修复建议：不要顺序等待两个 `Future`。应并行感知任一任务失败并立即取消对端，例如使用 `CompletionService`/`CompletableFuture.anyOf`，或在捕获任一 `ExecutionException` 后立刻 `cancel(true)` 另一个 `Future`。至少需要先检查两个任务是否都已完成，再决定抛异常。</div>
+            </div>
+            <p class="more-note">... 还有 11 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+        </div>
+        
 
   <div class="footer">
     由质量门禁引擎生成 &nbsp;|&nbsp; SpeedX CI/CD
