@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-xls-api &nbsp;|&nbsp; 2026-05-05 13:41:13</div>
+      <div class="meta">pos-xls-api &nbsp;|&nbsp; 2026-05-14 11:22:15</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -56,13 +56,13 @@
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#4caf50">14.4%</div>
+      <div class="metric-value" style="color:#4caf50">14.6%</div>
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#f44336">21.1%</div>
+            <div class="metric-value" style="color:#f44336">20.9%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:50</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:10</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,7 +83,7 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube analysis timed out after 1 minutes</li>
-<li>AI Review: 50 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 10 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,44 +94,44 @@
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/cmd/helper/SubmitDduManifestCmdHelper.java:335-336</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/factory/pipeline/AbstractDataProducer.java:43-47</code>
                 </div>
-                <div class="finding-desc">这里将 `SpxAzureBlobUtil.upload(...)` 返回的下载地址再转换成相对路径后写入 `result.downloadUrl`，与该字段原先保存可直接访问的完整 URL 语义不一致。下游如果直接把 `downloadUrl` 用于页面下载、回调透传或外部系统消费，会从可访问链接退化为对象路径，导致 manifest 下载功能异常。</div>
-                <div class="finding-suggestion">💡 修复建议：保持 `downloadUrl` 返回可直接访问的完整地址；如果确实需要保存相对路径，新增独立字段承载，例如：`String downloadUrl = SpxAzureBlobUtil.upload(uploadName, inputStream); result.setDownloadUrl(downloadUrl); result.setBlobPath(BlobSasUtil.toRelativePath(downloadUrl));`。同时补充调用方契约说明，避免同名字段语义变化。</div>
+                <div class="finding-desc">`finally` 中投递 poison pill 时如果线程已被中断，只记录日志后直接结束，未保证消费者收到结束信号。此时 consumer 可能永久阻塞在 `queue.take()`，上层 `ProducerConsumerPipeline.run()` 也会一直等待 consumer 结束，形成挂死。</div>
+                <div class="finding-suggestion">💡 修复建议：不要吞掉该中断场景。应在失败后向上抛出异常并由调用方取消 consumer，或改用带超时的 `offer(Collections.emptyList(), timeout, unit)` 并在失败时显式中断/取消消费者任务，确保不会留下永远等待的 consumer。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/config/AzureBlobStorageConfig.java:33-41</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/factory/pipeline/ProducerConsumerPipeline.java:62-75</code>
                 </div>
-                <div class="finding-desc">这里将原有的 `BlobContainerClient` Bean 直接替换成了 `SpxAzureBlobUtil`，等同于从 Spring 容器中移除了 `BlobContainerClient` 类型的 Bean。若项目中仍存在按类型注入 `BlobContainerClient` 的旧代码，应用会在启动阶段因 `NoSuchBeanDefinitionException` 失败。</div>
-                <div class="finding-suggestion">💡 修复建议：保留原有 `BlobContainerClient` Bean 以兼容现有依赖，再额外基于它组装 `SpxAzureBlobUtil`。例如继续提供 `@Bean public BlobContainerClient blobContainerClient(...)`，并新增 `@Bean public SpxAzureBlobUtil spxAzureBlobUtil(BlobContainerClient client, ...)`。</div>
+                <div class="finding-desc">这里先阻塞等待 `producerFuture.get()`，再等待 `consumerFuture.get()`。当 consumer 先异常退出时，producer 仍可能阻塞在有界队列的 `queue.put(...)` 上；由于队列已无人消费，producer 不会结束，当前线程会一直卡在 `producerFuture.get()`，导致 consumer 的失败无法被感知，整个流水线死锁。</div>
+                <div class="finding-suggestion">💡 修复建议：改为并发监控两个 Future，任一方失败时立即取消另一方并退出等待。例如使用 `CompletionService`/`CompletableFuture.anyOf(...)`，或先轮询 `isDone()` 检查 consumer 失败后执行 `producerFuture.cancel(true)`。至少要保证 consumer 失败时不会继续无限等待 producer。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/config/AzureBlobStorageConfig.java:38</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/impl/LabelServiceImpl.java:224-225</code>
                 </div>
-                <div class="finding-desc">`BlobServiceClientBuilder.endpoint(blobDomain)` 直接信任外部配置的完整域名，且后续立即附带 `StorageSharedKeyCredential(accountName, accountKey)` 发起请求。相较于原先固定拼接到 `*.blob.core.windows.net`，这里把共享密钥的发送目标放宽为任意主机；一旦配置误填、被污染或指向非 Azure 域名，存储账号密钥可能被发送到非预期服务，形成敏感凭证泄露风险。</div>
-                <div class="finding-suggestion">💡 修复建议：不要直接信任可变的完整 endpoint。至少应校验 `blobDomain` 必须为预期的 Azure Blob Storage 域名白名单（如 `https://&lt;account&gt;.blob.core.windows.net` 或受控私有域名），并在代码中拒绝非 HTTPS、非白名单 host；更稳妥的做法是继续由 `accountName` 组装固定 Azure endpoint，而不是开放任意域名。</div>
+                <div class="finding-desc">当 `LoginUserUtil.getCurrentUser()` 返回 `null` 时，代码改为回退信任 `labelSo.getCompanyCode()`。这会把“缺失/过期登录态”从失败关闭改成继续执行，相当于未正确处理认证上下文失效；攻击者可在无有效会话时继续以请求参数驱动查询。</div>
+                <div class="finding-suggestion">💡 修复建议：在 `currentUser == null` 时直接拒绝请求并抛出明确的认证异常，不要回退到客户端传入的 `companyCode`；同时补充对会话过期/Token 失效场景的统一处理。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/config/PusApiProperties.java:38</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/impl/PoeZoneFacilityMappingServiceImpl.java:80-83</code>
                 </div>
-                <div class="finding-desc">`getPickupCoverageUrl(String zipCode)` 直接将 `zipCode` 拼接进 URL path，未做格式校验或 URL 编码。若上游把可控输入传入此方法，包含 `/`、`?`、`#` 等字符的值可篡改下游请求路径/查询串，导致调用到非预期内部接口，属于路径注入风险。</div>
-                <div class="finding-suggestion">💡 修复建议：对 `zipCode` 做严格白名单校验（例如仅允许邮编格式字符），并使用 `UriComponentsBuilder` 或等价方式按 path segment 编码，避免直接字符串拼接。</div>
+                <div class="finding-desc">这里捕获了所有异常后仅记录日志并返回空列表，会把 `baseFacility` 缺失、缓存异常、空指针等真实故障都降级成“查无结果”。调用方无法区分“确实没有 zone”与“服务执行失败”，容易导致业务静默异常。</div>
+                <div class="finding-suggestion">💡 修复建议：仅捕获可降级处理的明确异常类型；对 `RRException` 或其他运行时异常继续抛出，避免吞没故障。例如：`catch (RRException e) { throw e; } catch (Exception e) { log.error(&quot;getZoneByFacilityCode failed, facilityCode={}&quot;, facilityCode, e); throw new RRException(&quot;query zone failed&quot;); }`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/dao/LabelDao.java:491-603</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/report/impl/LabelBatchDownloader.java:83</code>
                 </div>
-                <div class="finding-desc">`updateLabelByTrackingNo` 直接把 `allTrackingNumbers` 用在 `IN (:allTrackingNo)` 中；当调用方传入空集合时，JPA/Hibernate 通常会生成非法 `IN ()` SQL，运行期抛出查询异常，导致批量更新流程直接失败。</div>
-                <div class="finding-suggestion">💡 修复建议：在进入 DAO 前先判空并短路返回，或改为由 service 层在 `allTrackingNumbers.isEmpty()` 时跳过更新。例如：`if (allTrackingNumbers == null || allTrackingNumbers.isEmpty()) { return; }`。</div>
+                <div class="finding-desc">新增的 info 日志直接输出 `pageResult.getList()`。该列表随后会被导出为面单报表，包含收/寄件姓名、地址、电话、邮箱、tracking number 等敏感业务数据；按当前实现会把整页明文 PII 持久化到日志系统，形成非必要的数据暴露面。</div>
+                <div class="finding-suggestion">💡 修复建议：不要记录完整报表数据；日志只保留分页索引、记录数等元信息。若确需排障，增加脱敏后的字段级摘要（例如 tracking number 仅保留后 4 位）。</div>
             </div>
-            <p class="more-note">... 还有 45 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 5 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
