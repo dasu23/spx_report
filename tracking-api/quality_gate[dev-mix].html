@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">tracking-api &nbsp;|&nbsp; 2026-05-14 11:33:08</div>
+      <div class="meta">tracking-api &nbsp;|&nbsp; 2026-05-14 12:47:30</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,16 +73,17 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:2</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:4</div>
       <div class="metric-threshold">已抑制: 0</div>
-      <div class="metric-note">已检测到问题，但当前配置未阻断流水线</div>
+      
     </div>
   </div>
 
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube quality gate status: ERROR</li></ul>
+            <ul><li>SonarQube quality gate status: ERROR</li>
+<li>AI Review: 4 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -95,16 +96,32 @@
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/service/impl/TrackingManagementServiceImpl.java:175-191</code>
                 </div>
-                <div class="finding-desc">`withPushLog` 分支重新启用并回填 `status`、`tryTimes`、`processInfo`、`pushCreatedAt`、`pushUpdatedAt` 到 `EventAndWebhookBo`。结合同文件 `query(String trackingNo)` 改为传入 `true`，单号查询路径将开始返回此前未暴露的推送日志内部信息。`processInfo` 常见会携带下游 webhook 响应体、异常堆栈或端点细节，这会扩大接口返回面并造成内部集成信息泄露风险。</div>
-                <div class="finding-suggestion">💡 修复建议：不要直接向查询结果透传 `PushLogBo.processInfo` 等内部运维字段。为外部返回对象拆分安全视图，仅保留必要状态枚举；若必须返回调试信息，至少做字段白名单、长度限制和敏感内容脱敏，并确保仅在明确的内部诊断接口中暴露。</div>
+                <div class="finding-desc">这里重新启用了 push log 回填，但查询条件只有 `businessNo`，没有限制 `PushLogType`，循环里还会把同一单号命中的多条日志直接覆盖到同一个 `EventAndWebhookBo`。本次变更又新增了 `TRK_SYNC_LAST_WEB_EVENT` 日志类型，同一 trackingNo 现在更容易同时存在多种 push log，最终页面展示的 `status/tryTimes/processInfo` 将取决于 DAO 返回顺序，可能被同步任务日志覆盖，导致 webhook 状态展示错误。</div>
+                <div class="finding-suggestion">💡 修复建议：查询和回填时按明确的业务类型过滤，只回填真正用于 TrackingManagement 展示的 push log；如果一个单号可能存在多条同类型日志，再显式选择最新一条，例如按 `updatedAt` 或 `id` 取最大值后再赋值。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/service/impl/processJob/ProcessTrkSyncLastWebEventServiceImpl.java:49-87</code>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/service/impl/TrackingManagementServiceImpl.java:55</code>
                 </div>
-                <div class="finding-desc">`processBatch` 只会更新 `pushLog.businessNo` 对应查出来的 `labels`。当新增的 PUBLIC 事件发生在退件单号上时，这里只会更新退件 label 本身；但网页事件查询逻辑会把退件事件合并到原单展示，原单 `last_web_event_id` 也应该同步刷新，否则原单会长期指向过期事件。</div>
-                <div class="finding-suggestion">💡 修复建议：处理退件事件时，除当前 label 外，还应补查 `return_tracking_no = businessNo` 的原单并一并计算更新。例如先按 `trackingNos` 查 label，再额外按这些号码反查原单 `LabelSummary`，把原单和退件单都放入待更新集合。</div>
+                <div class="finding-desc">`query(String trackingNo)` 现在强制以 `withPushLog=true` 调用查询逻辑，新增把 `status`、`tryTimes`、`processInfo`、`pushCreatedAt`、`pushUpdatedAt` 填充到 `EventAndWebhookBo` 的行为。若该方法对应外部可见查询接口，这会把原先未返回的内部推送日志元数据暴露给调用方；其中 `processInfo` 常包含下游失败原因、内部处理细节，属于不必要的运行态信息泄露，同时构成破坏性 API 返回面扩张。</div>
+                <div class="finding-suggestion">💡 修复建议：将推送日志字段限定在内部管理接口或显式调试开关下返回；对外 DTO 默认移除 `processInfo/tryTimes/status/push*At`，或至少对 `processInfo` 做脱敏与白名单映射，不要复用现有公开查询返回结构直接透出。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/service/impl/processJob/ProcessTrkSyncLastWebEventServiceImpl.java:100-119</code>
+                </div>
+                <div class="finding-desc">`computeLastWebEventId` 只在“存在 return 单且成功查到 returnLabel”时才对事件按 `eventTs` 倒序排序；普通单号场景下直接返回 `filtered.get(0)`。`eventDao.findDtoByTrackingNoInAndViewType(...)` 和 `eventFilterHelper.applyFilters(...)` 都没有在这里保证结果已按时间倒序，因此 `last_web_event_id` 可能被写成任意一条过滤后的事件，而不是最新 Web 事件。</div>
+                <div class="finding-suggestion">💡 修复建议：在返回前统一做一次“最新事件”选择，不要依赖上游返回顺序。可改为对 `filtered` 始终取 `max(Comparator.comparing(EventQueryDto::getEventTs).thenComparing(EventQueryDto::getId))`，例如：`return filtered.stream().max(Comparator.comparing(EventQueryDto::getEventTs).thenComparing(EventQueryDto::getId)).map(EventQueryDto::getId).orElse(null);`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/service/impl/processJob/ProcessTrkSyncLastWebEventServiceImpl.java:48-88</code>
+                </div>
+                <div class="finding-desc">该批处理先批量查询事件，再在内存中计算 `lastWebEventId`，最后用 `batchUpdate` 回写 `tb_label_summary`。整个过程没有并发保护或基于版本/时间的条件更新：如果在 `findDtoByTrackingNoInAndViewType(...)` 之后、`batchUpdate(...)` 之前有新的 PUBLIC 事件写入，同一 trackingNo 的 `last_web_event_id` 可能被回写成旧事件 ID，造成公开链路读取到过期结果。</div>
+                <div class="finding-suggestion">💡 修复建议：把“取最新 web event 并更新”收敛到单条 SQL/子查询中完成，或在更新语句增加条件保护（例如仅当当前值为空或当前事件时间/ID 早于待写入值时才更新）。如果必须分步处理，至少为同一 trackingNo 引入乐观锁版本字段或按 trackingNo 串行化更新。</div>
             </div>
             
         </div>
