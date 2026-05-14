@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pus-exchange-api &nbsp;|&nbsp; 2026-05-14 18:13:07</div>
+      <div class="meta">pus-exchange-api &nbsp;|&nbsp; 2026-05-14 20:14:00</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:4 &nbsp; 主要:42</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:6 &nbsp; 主要:38</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,8 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 4 Critical finding(s)</li>
-<li>AI Review: 42 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 6 Critical finding(s)</li>
+<li>AI Review: 38 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,77 +94,85 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/callback/impl/SheinCallbackHandler.java:67-90</code>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/factory/AbstractReportTaskProcessor.java:77-240</code>
                 </div>
-                <div class="finding-desc">成功/失败日志直接打印 `req`。该对象在 `buildRequest` 中已包含 `pickupProofFiles`，其值由 `blobRefreshUtil.toSasUrl` 生成，通常带有可访问 Blob 的签名参数；一旦写入日志，相当于泄露临时访问凭证。</div>
-                <div class="finding-suggestion">💡 修复建议：不要直接记录完整 `req`。改为仅打印业务标识（如 `pickupOrderNo`、`appointmentBatchNo`）和文件数量；对 `pickupProofFiles`、任何签名 URL/Token 字段做脱敏或完全移除日志输出。</div>
+                <div class="finding-desc">`task.getBusinessData()` 被直接当作 URL 打开读取，缺少协议、域名和内网地址限制。攻击者可借此让服务端访问任意地址，形成 SSRF；同类问题在 `loadFromExcel` 中再次出现。</div>
+                <div class="finding-suggestion">💡 修复建议：不要接受任意外部 URL。改为只接收受信对象存储的文件标识，或在读取前对 URL 做白名单校验：仅允许 `https`、限定可信域名/前缀，并显式拒绝 `localhost`、私网网段、链路本地地址和云元数据地址。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">pus-integration/src/test/java/io/speedx/pus/integration/shein/SheinSigningUtilTest.java:9-10</code>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/callback/impl/SheinCallbackHandler.java:68-91</code>
                 </div>
-                <div class="finding-desc">新增内容中硬编码了 `OPEN_KEY_ID` 和 `SECRET_KEY` 示例值。即使当前整段代码被注释，这类密钥样式常量仍容易被复制到可执行代码、测试环境配置或日志中，违反仓库的密钥管理基线。</div>
-                <div class="finding-suggestion">💡 修复建议：删除硬编码密钥示例，改为使用占位符名称或从测试夹具/环境变量读取，例如仅保留 `String secretKey = System.getenv(&quot;SHEIN_TEST_SECRET_KEY&quot;);`，并在测试说明中声明所需变量。</div>
+                <div class="finding-desc">这里将完整的 `req` 对象写入成功/失败日志，而 `buildRequest()` 会在新增逻辑中把 `pickupProofFiles` 转换为 SAS 签名 URL。结果是日志会落出可直接访问 Blob 的签名链接及其查询参数，构成敏感凭证泄露风险。</div>
+                <div class="finding-suggestion">💡 修复建议：禁止记录完整请求对象；改为仅记录 `pickupOrderNo`、`bookingCode`、proof 文件数量等非敏感字段。若必须排障，至少对 URL query string（尤其 `sig`、`se` 等签名参数）做脱敏。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/utils/BlobRefreshUtil.java:76-105</code>
+                </div>
+                <div class="finding-desc">异常处理分支将原始 `rawValue` 连同异常一起输出到 warn 日志。若输入是带 SAS 的 Blob URL，解析异常时会把完整访问 Token 记录下来，导致凭证泄露。</div>
+                <div class="finding-suggestion">💡 修复建议：在进入 `try/catch` 前先对 `rawValue` 做脱敏副本，日志中只输出脱敏后的路径或对象标识；不要在任何日志级别打印包含 SAS/Token 的完整 URL。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pus-domain/src/test/java/io/speedx/pus/domain/service/callback/impl/SheinCallbackHandlerTest.java:150</code>
+                </div>
+                <div class="finding-desc">测试代码将 `secret-key` 的值以明文硬编码到仓库中，命中 [SEC-002]。即使是测试场景，含有密钥语义的固定凭证字符串也会扩大误用和泄露风险，并可能被后续代码/配置复制到非测试环境。</div>
+                <div class="finding-suggestion">💡 修复建议：移除明文密钥字面量，改为从测试夹具或测试环境变量注入，并使用明确的占位值命名（例如 `SECRET_KEY_PLACEHOLDER`）避免被误认为真实凭证；同时确保仓库中不存在任何可直接复用的 secret 字符串。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
                     <code class="finding-loc">pus-start/pus-exchange/src/main/resources/application-dev.yml:11-89</code>
                 </div>
-                <div class="finding-desc">新增开发配置中将主库密码明文写入 `spring.datasource.password`。凭证一旦进入代码库、构建日志或配置分发链路，会造成数据库凭证泄露并扩大横向访问风险，符合 [SEC-001]。</div>
-                <div class="finding-suggestion">💡 修复建议：移除明文密码，改为从环境变量、配置中心或密钥管理服务注入；同时轮换该数据库账号密码，避免已提交凭证继续可用。</div>
-            </div>
-            <div class="finding-card finding-critical">
-                <div class="finding-header">
-                    <span class="finding-badge">严重</span>
-                    <code class="finding-loc">pus-start/pus-job/src/main/resources/application-dev.yml:43-45</code>
-                </div>
-                <div class="finding-desc">任务模块新增 `days.datasource.password: 123456` 明文弱口令配置。除明文存储外，该口令强度极低，进一步放大数据库被猜解和复用的风险，符合 [SEC-001]。</div>
-                <div class="finding-suggestion">💡 修复建议：删除仓库中的明文弱口令，改为通过外部安全配置注入高强度随机密码，并立即轮换当前数据库账号凭证。</div>
+                <div class="finding-desc">`spring.datasource.password` 在开发配置中以明文硬编码为 `pus_user`。一旦配置文件进入代码库、构建产物或日志/备份链路，数据库凭证会直接泄露，符合 [SEC-001]。</div>
+                <div class="finding-suggestion">💡 修复建议：改为从外部密钥管理或环境变量注入数据库密码，例如通过 `${DB_PASSWORD}` 占位，并确保仓库中不提交真实凭证。同步轮换已暴露的数据库密码。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/callback/impl/SheinCallbackHandler.java:46</code>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/factory/AbstractReportTaskProcessor.java:172-180</code>
                 </div>
-                <div class="finding-desc">这里直接执行 `Long.valueOf(supplierIdStr)`，当配置项 `supplier-id` 非数字时会抛出 `NumberFormatException`，且异常发生在后续 `try/catch` 之外，会直接中断整个回传流程。</div>
-                <div class="finding-suggestion">💡 修复建议：在转换前校验格式并单独处理异常，例如：`Long supplierId; try { supplierId = Long.valueOf(supplierIdStr); } catch (NumberFormatException e) { log.error(&quot;[SheinCallback] invalid supplier-id: {}&quot;, supplierIdStr, e); return; }`。</div>
+                <div class="finding-desc">异步拉取结果时，`future.get()` 的异常被吞掉并返回 `null`，随后又被 `filter(Objects::nonNull)` 丢弃。这会在部分子任务失败时静默丢失结果，最终仍继续生成报表，造成数据不完整且调用方无法感知失败。</div>
+                <div class="finding-suggestion">💡 修复建议：不要在这里吞异常并过滤失败结果，应该在任一子任务失败时直接终止流程并抛出异常。例如改为收集 `CompletableFuture` 后统一 `join()`，捕获 `CompletionException` 转换为业务异常；或在 `catch` 中直接 `throw new BizException(500, &quot;Async task failed&quot;, e)`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">docs/feature/SPX-PI-6836-shein-pickup-result-callback-design.md:54-57</code>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/factory/AbstractReportTaskProcessor.java:85-96</code>
                 </div>
-                <div class="finding-desc">设计明确选择先用 `Spring 事件 + @Async`，同时文档自己也注明该方案在容器重启时会丢失事件且没有失败重试。这里承载的是“客户提货结果回传”主业务，一旦进程在事务提交后、异步消费前重启，SHEIN 将永久收不到该次回传，形成不可补偿的业务缺口。</div>
-                <div class="finding-suggestion">💡 修复建议：首期也应采用可持久化的异步方案，至少落一张回传任务表或直接发 MQ，再由独立消费者处理重试。例如：主流程仅持久化 `pickup_result_callback_task(pickup_no, org_code, status, retry_count, next_retry_time)`，异步任务按状态拉取并回传，失败按重试策略更新状态。</div>
+                <div class="finding-desc">JSON 校验分支把主动抛出的 `BizException(400, ...)` 也统一捕获后再次包装成 500，导致前置参数错误被错误上报为服务端异常。`JSONUtil.isTypeJSON(...)` 为 false 时本应返回 400，但当前实现最终会抛出 500。</div>
+                <div class="finding-suggestion">💡 修复建议：对 `BizException` 单独透传，其他异常再包装为 500，例如：`catch (BizException e) { throw e; } catch (Exception e) { ... throw new BizException(500, ...); }`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">docs/superpowers/plans/2026-05-09-pickup-callback-resend.md:46-47</code>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/callback/impl/SheinCallbackHandler.java:43-52</code>
                 </div>
-                <div class="finding-desc">请求体对 `pickupNos` 仅使用 `@NotEmpty` 校验，没有限制列表长度，也没有约束元素必须非空白。该接口又会据此重建数据并触发外部回调，意味着单个请求可以提交超大数组或空白单号，放大数据库查询、对象构造和下游调用开销，形成明显的资源消耗面。</div>
-                <div class="finding-suggestion">💡 修复建议：为集合增加明确上限，例如 `@Size(max = 100)`，并将字段声明为 `List&lt;@NotBlank String&gt; pickupNos`；同时在服务层对去重后的实际处理数量做二次限制。</div>
+                <div class="finding-desc">配置读取只校验了值是否为 `null`，但未处理 `cfg.getExtras()` 本身为 `null`，也未处理 `supplier-id` 非数字的情况。当前代码在这两种场景下会分别抛出 `NullPointerException` 或 `NumberFormatException`，导致回传流程直接中断。</div>
+                <div class="finding-suggestion">💡 修复建议：先判空 `extras`，再对 `supplier-id` 做安全解析，例如：`Map&lt;String, String&gt; extras = cfg.getExtras(); if (extras == null) { log.error(...); return; } try { supplierId = Long.valueOf(extras.get(&quot;supplier-id&quot;)); } catch (NumberFormatException e) { log.error(..., e); return; }`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">docs/superpowers/plans/2026-05-09-pickup-callback-resend.md:7</code>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/bo/exchange/PickupAddressBo.java:38</code>
                 </div>
-                <div class="finding-desc">方案明确要求重发接口“directly calls the listener (bypassing `@TransactionalEventListener`/`@Async`)”。这会把外部 SHEIN 回调链路放到请求线程里同步执行；一旦请求携带较多 `pickupNos` 或下游接口变慢，单次请求就会长时间占用 Web 线程并放大到可利用的应用层 DoS 风险。</div>
-                <div class="finding-suggestion">💡 修复建议：不要在控制器链路中直接同步调用监听器。改为复用异步分发器/事件总线，或在重发服务中增加严格的批量上限、超时和隔离线程池，确保单次请求不会直接占满 Servlet 线程。</div>
+                <div class="finding-desc">新增字段 `private Boolean isStandard;` 存在典型的 JavaBean/Lombok 命名陷阱。对 `Boolean` 包装类型使用 `is` 前缀时，生成的 getter/setter 与 Jackson、BeanUtils、MapStruct 等框架的属性推断容易不一致，实际序列化/反序列化时可能出现字段名被识别成 `standard` 或值无法正确回填，导致该标记在接口或对象拷贝链路中失效。</div>
+                <div class="finding-suggestion">💡 修复建议：避免在包装类型字段名上直接使用 `is` 前缀。建议改为 `private Boolean standard;`，如果对外契约必须保留 `isStandard`，显式声明序列化名，例如：`@JsonProperty(&quot;isStandard&quot;) private Boolean standard;`，并确认对应 getter/setter、Bean 拷贝映射保持一致。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/config/ReportTaskProperties.java:24-28</code>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/config/ReportTaskProperties.java:23-30</code>
                 </div>
-                <div class="finding-desc">`limitFor` 直接对 `limit.entrySet()` 做流式遍历，当配置项 `report.task.limit` 未下发、刷新过程中短暂为空，或绑定失败时，这里会触发 `NullPointerException`，导致报表任务限额读取直接崩溃。</div>
-                <div class="finding-suggestion">💡 修复建议：先对 `limit` 做空保护，再查找配置；例如：`if (limit == null || limit.isEmpty()) { return type.getMaxSize(); }`。进一步可改为 `Integer configured = limit.get(type.name()); return configured != null ? configured : type.getMaxSize();`，避免空指针和不必要遍历。</div>
+                <div class="finding-desc">`limitFor` 直接访问 `limit.entrySet()`，当未配置 `report.task.limit` 或配置中心刷新期间该属性为空时会触发 `NullPointerException`，导致报表任务限额读取直接失败。</div>
+                <div class="finding-suggestion">💡 修复建议：在遍历前先对 `limit` 做空判断，并在缺省场景回退到枚举默认值，例如：`if (limit == null || limit.isEmpty()) { return type.getMaxSize(); }`，之后再执行查找。</div>
             </div>
-            <p class="more-note">... 还有 37 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 34 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
