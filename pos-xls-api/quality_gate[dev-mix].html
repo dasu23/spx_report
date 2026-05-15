@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-xls-api &nbsp;|&nbsp; 2026-05-14 11:22:15</div>
+      <div class="meta">pos-xls-api &nbsp;|&nbsp; 2026-05-15 10:36:33</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -62,7 +62,7 @@
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#f44336">20.9%</div>
+            <div class="metric-value" style="color:#f44336">22.7%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:10</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:10</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,6 +83,7 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube analysis timed out after 1 minutes</li>
+<li>AI Review: 1 Critical finding(s)</li>
 <li>AI Review: 10 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
@@ -90,46 +91,54 @@
         <div class="findings-section">
             <h3>AI 代码审查发现</h3>
             
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/report/impl/LabelBatchDownloader.java:201</code>
+                </div>
+                <div class="finding-desc">上传前通过 `outputStream.toByteArray()` 一次性复制整份 Excel 到内存，再包装成 `ByteArrayInputStream` 上传。该实现使导出文件至少在堆内保留两份副本；批量导出接近上限或并发执行时，容易被大任务触发堆内存暴涨，导致 OOM 和导出服务不可用。</div>
+                <div class="finding-suggestion">💡 修复建议：改为基于临时文件或真正的流式上传实现，避免 `ByteArrayOutputStream` + `toByteArray()` 的全量内存缓冲；同时为导出任务增加更严格的大小上限和并发配额。</div>
+            </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/factory/pipeline/AbstractDataProducer.java:43-47</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/report/impl/LabelBatchDownloader.java:69-71</code>
                 </div>
-                <div class="finding-desc">`finally` 中投递 poison pill 时如果线程已被中断，只记录日志后直接结束，未保证消费者收到结束信号。此时 consumer 可能永久阻塞在 `queue.take()`，上层 `ProducerConsumerPipeline.run()` 也会一直等待 consumer 结束，形成挂死。</div>
-                <div class="finding-suggestion">💡 修复建议：不要吞掉该中断场景。应在失败后向上抛出异常并由调用方取消 consumer，或改用带超时的 `offer(Collections.emptyList(), timeout, unit)` 并在失败时显式中断/取消消费者任务，确保不会留下永远等待的 consumer。</div>
+                <div class="finding-desc">`ZoneId.of(bo.getZoneId())` 直接依赖外部入参，未处理 `zoneId` 为空或非法时的情况。只要任务里带入空值或未受支持的时区字符串，这里就会抛出 `NullPointerException` 或 `DateTimeException`，导致整批下载任务中断。</div>
+                <div class="finding-suggestion">💡 修复建议：在转换前校验 `bo.getZoneId()`，必要时提供默认时区或抛出明确异常，例如：`if (StringUtils.isBlank(bo.getZoneId())) { throw new RRException(&quot;zoneId is required&quot;, 400); } ZoneId targetZoneId; try { targetZoneId = ZoneId.of(bo.getZoneId()); } catch (DateTimeException ex) { throw new RRException(&quot;invalid zoneId: &quot; + bo.getZoneId(), 400); }`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/factory/pipeline/ProducerConsumerPipeline.java:62-75</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/report/impl/LabelBatchDownloader.java:96</code>
                 </div>
-                <div class="finding-desc">这里先阻塞等待 `producerFuture.get()`，再等待 `consumerFuture.get()`。当 consumer 先异常退出时，producer 仍可能阻塞在有界队列的 `queue.put(...)` 上；由于队列已无人消费，producer 不会结束，当前线程会一直卡在 `producerFuture.get()`，导致 consumer 的失败无法被感知，整个流水线死锁。</div>
-                <div class="finding-suggestion">💡 修复建议：改为并发监控两个 Future，任一方失败时立即取消另一方并退出等待。例如使用 `CompletionService`/`CompletableFuture.anyOf(...)`，或先轮询 `isDone()` 检查 consumer 失败后执行 `producerFuture.cancel(true)`。至少要保证 consumer 失败时不会继续无限等待 producer。</div>
+                <div class="finding-desc">`log.info(&quot;LabelBatchDownload: pageResult:{}&quot;, pageResult.getList())` 会把整页标签明细直接写入 info 日志。该对象在本类后续处理中包含收/寄件地址、电话、邮箱、tracking number 等敏感信息，批量导出场景下会形成可检索的敏感数据落盘泄露面。</div>
+                <div class="finding-suggestion">💡 修复建议：删除该明细日志，或仅记录页码、记录数、businessNo 等非敏感元数据；如确需排障，增加脱敏后再按 debug 级别输出。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/impl/LabelServiceImpl.java:224-225</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/factory/pipeline/AbstractDataProducer.java:43-49</code>
                 </div>
-                <div class="finding-desc">当 `LoginUserUtil.getCurrentUser()` 返回 `null` 时，代码改为回退信任 `labelSo.getCompanyCode()`。这会把“缺失/过期登录态”从失败关闭改成继续执行，相当于未正确处理认证上下文失效；攻击者可在无有效会话时继续以请求参数驱动查询。</div>
-                <div class="finding-suggestion">💡 修复建议：在 `currentUser == null` 时直接拒绝请求并抛出明确的认证异常，不要回退到客户端传入的 `companyCode`；同时补充对会话过期/Token 失效场景的统一处理。</div>
+                <div class="finding-desc">finally 块中无条件执行 `queue.put(Collections.emptyList())`。当消费者已异常退出且队列已满时，这里的阻塞写入会永久挂起生产者线程，导致上层无法完成异常收敛；结合有界 `LinkedBlockingQueue` 使用时，异常路径下存在明显的死锁/线程泄漏风险。</div>
+                <div class="finding-suggestion">💡 修复建议：不要在 finally 中使用无限阻塞的 `put` 发送终止信号；改为 `offer(..., timeout, unit)` 并在失败时记录错误后退出，或在发送前先检查线程中断状态/由上层统一取消另一侧任务。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/impl/PoeZoneFacilityMappingServiceImpl.java:80-83</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/factory/pipeline/ProducerConsumerPipeline.java:61-80</code>
                 </div>
-                <div class="finding-desc">这里捕获了所有异常后仅记录日志并返回空列表，会把 `baseFacility` 缺失、缓存异常、空指针等真实故障都降级成“查无结果”。调用方无法区分“确实没有 zone”与“服务执行失败”，容易导致业务静默异常。</div>
-                <div class="finding-suggestion">💡 修复建议：仅捕获可降级处理的明确异常类型；对 `RRException` 或其他运行时异常继续抛出，避免吞没故障。例如：`catch (RRException e) { throw e; } catch (Exception e) { log.error(&quot;getZoneByFacilityCode failed, facilityCode={}&quot;, facilityCode, e); throw new RRException(&quot;query zone failed&quot;); }`。</div>
+                <div class="finding-desc">这里先 `producerFuture.get()` 再等待 `consumerFuture`。如果消费者先失败退出，生产者在有界队列写满后会阻塞，主线程又一直等待生产者完成，最终整个流水线挂死，无法感知真实的消费者异常。</div>
+                <div class="finding-suggestion">💡 修复建议：不要串行等待两个 `Future` 且忽略对端失败状态。建议使用 `CompletionService`/`CompletableFuture.anyOf` 先感知首个失败任务，并在一侧失败后立即 `cancel(true)` 另一侧；至少在捕获消费者失败时主动取消生产者，避免继续阻塞。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/report/impl/LabelBatchDownloader.java:83</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/impl/LabelServiceImpl.java:226-227</code>
                 </div>
-                <div class="finding-desc">新增的 info 日志直接输出 `pageResult.getList()`。该列表随后会被导出为面单报表，包含收/寄件姓名、地址、电话、邮箱、tracking number 等敏感业务数据；按当前实现会把整页明文 PII 持久化到日志系统，形成非必要的数据暴露面。</div>
-                <div class="finding-suggestion">💡 修复建议：不要记录完整报表数据；日志只保留分页索引、记录数等元信息。若确需排障，增加脱敏后的字段级摘要（例如 tracking number 仅保留后 4 位）。</div>
+                <div class="finding-desc">当 `LoginUserUtil.getCurrentUser()` 返回 `null`（常见于 Token/Session 失效或认证上下文丢失）时，新增逻辑会回退使用请求对象里的 `labelSo.getCompanyCode()` 继续执行，而不是直接拒绝请求。这样会把“必须依赖已认证用户上下文”的服务契约改成“可由入参补齐身份归属”，导致认证失效场景被静默绕过。</div>
+                <div class="finding-suggestion">💡 修复建议：在 `currentUser == null` 时立即抛出认证失效异常或返回统一未登录错误，不要回退到客户端传入的 `companyCode`。只有在明确受信任的内部调用链且有额外鉴别机制时，才应允许该字段生效。</div>
             </div>
             <p class="more-note">... 还有 5 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
