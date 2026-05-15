@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">rps-api &nbsp;|&nbsp; 2026-05-15 01:47:33</div>
+      <div class="meta">rps-api &nbsp;|&nbsp; 2026-05-15 11:21:51</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:2 &nbsp; 主要:1</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:4</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,7 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube analysis timed out after 1 minutes</li>
-<li>AI Review: 2 Critical finding(s)</li></ul>
+<li>AI Review: 1 Critical finding(s)</li>
+<li>AI Review: 4 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -95,25 +96,41 @@
                     <span class="finding-badge">严重</span>
                     <code class="finding-loc">rps-api/src/main/resources/bootstrap-dev.yml:4-5</code>
                 </div>
-                <div class="finding-desc">开发环境配置中新增了 Nacos 明文凭证（`username: dev`、`password: Speedx@123`）。这属于硬编码敏感信息，凭证会随代码库传播，容易通过源码、构建产物或日志侧漏导致配置中心被未授权访问。</div>
-                <div class="finding-suggestion">💡 修复建议：删除仓库中的明文凭证，改为从环境变量、密钥管理服务或外部未入库的本地配置注入，例如 `${NACOS_USERNAME}` / `${NACOS_PASSWORD}`；同时轮换已暴露的 Nacos 密码。</div>
-            </div>
-            <div class="finding-card finding-critical">
-                <div class="finding-header">
-                    <span class="finding-badge">严重</span>
-                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/LookupRateCmd.java:68-72</code>
-                </div>
-                <div class="finding-desc">这里将 `calculateRateCmd.calculateRate(...)` 从显式传入 `createLabelValue.getUser().getCalculateRateType()` 改为仅传入请求对象。按该方法原有调用方式看，费率计算曾依赖用户侧的 `calculateRateType` 参与策略选择；本次变更后若默认分支与原用户配置不一致，可能直接导致运费/成本计算错误，属于资金计算风险。</div>
-                <div class="finding-suggestion">💡 修复建议：保留并显式传递 `calculateRateType`，或在新的 `calculateRate(RpsCalculateRateRequest)` 实现内强制从请求中携带并校验等价的费率类型，避免退化到隐式默认策略。若确需移除该参数，应补充断言和迁移测试，证明所有调用场景下计算结果与旧逻辑一致。</div>
+                <div class="finding-desc">新增的 `password: Speedx@123` 将 Nacos 凭据硬编码到版本库中，命中 [SEC-001]。该凭据会随代码分发到开发机、CI 日志和制品中，后续一旦轮换还需要改代码重新发布。</div>
+                <div class="finding-suggestion">💡 修复建议：将密码改为环境变量或外部配置注入，例如：`password: ${NACOS_PASSWORD}`，并通过部署环境或密钥管理系统提供实际值；同时立即轮换已暴露的现有密码。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/module/rate/GenericRateModule.java:67-220</code>
+                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/LookupRateCmd.java:72</code>
                 </div>
-                <div class="finding-desc">这里把 `req.getWeightUom()` 为空的场景从显式失败改成了静默跳过换算。若 `customerUom` 已设置而计费侧重量单位缺失，`dimWeight` 会继续沿用当前单位写回，导致后续按客户单位解释时数值与单位不一致，可能直接影响计费/面单重量结果。</div>
-                <div class="finding-suggestion">💡 修复建议：不要仅通过 `req.getWeightUom() != null` 跳过转换。应在该分支补齐明确兜底：要么回退到 `customerUom`/系统默认单位后再换算，要么直接抛出可识别异常阻止错误数据继续流转。例如：`if (customerUom != null) { if (req.getWeightUom() == null) { throw new IllegalArgumentException(&quot;weightUom is required when customerUom is set&quot;); } WeightUnitType billingUom = WeightUnitType.valueOf(req.getWeightUom()); ... }`</div>
+                <div class="finding-desc">这里将 `calculateRate(...)` 从显式传入 `createLabelValue.getUser().getCalculateRateType()` 改为只传请求对象，丢失了用户侧费率计算类型这一业务输入。若 `CalculateRateCmd` 的单参数重载使用默认策略或内部无法还原该类型，旧调用链会按错误的费率模式计费，直接影响运费、rateId 和后续落单结果。</div>
+                <div class="finding-suggestion">💡 修复建议：保留并继续传递 `calculateRateType`，或确认 `RpsCalculateRateRequest` 已完整承载该字段并由单参数方法消费。例如恢复为 `calculateRateCmd.calculateRate(rpsCalculateRateRequest, createLabelValue.getUser().getCalculateRateType())`；如果必须使用单参数方法，应在构建 `rpsCalculateRateRequest` 时显式写入 `calculateRateType`，并补充对应断言测试。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/utils/staticUtils/labelBuilder/template/png/FontFactory.java:20-22</code>
+                </div>
+                <div class="finding-desc">将 `initialize()` 放进 `Holder` 的静态初始化块后，只要初始化过程中出现任意运行时异常，`FontFactory` 会在类加载阶段初始化失败。JVM 会把该类标记为错误状态，后续 `getInstance()` 调用可能持续抛出 `NoClassDefFoundError`，且无法像原实现那样在下一次调用时重试初始化。该方法内部依赖 AWT/字体资源，服务端无图形环境或资源异常时存在触发风险。</div>
+                <div class="finding-suggestion">💡 修复建议：将 Holder 仅用于单例对象创建，不要在静态初始化阶段执行可能失败的业务初始化。可恢复为 `getInstance()` 中的惰性初始化，或在实例创建后用同步保护执行一次 `initialize()` 并允许失败后重试，例如：`FontFactory instance = Holder.INSTANCE; if (!instance.initialized) { synchronized (instance) { if (!instance.initialized) { instance.initialize(); } } } return instance;`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/utils/staticUtils/labelBuilder/template/v5/SpxV5PngBuilder.java:93-121</code>
+                </div>
+                <div class="finding-desc">`Graphics2D` 的释放依赖于方法末尾的 `g.dispose()`。当前中间有大量 `draw*` 调用，一旦任一绘制步骤抛异常，`dispose()` 就会被跳过，属于资源释放不完整；该方法还是高频生成标签路径，异常场景下会持续累积图形上下文资源。</div>
+                <div class="finding-suggestion">💡 修复建议：将 `Graphics2D` 包进 `try/finally`，确保无论绘制是否失败都执行 `dispose()`。例如：`Graphics2D g = img.createGraphics(); try { ...所有 draw*... } finally { g.dispose(); }`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/utils/staticUtils/labelBuilder/template/v5/SpxV5ZplBuilder.java:231-240</code>
+                </div>
+                <div class="finding-desc">这里将 `remark1` 限制为 70 字符、`remark2` 限制为 46 字符，但 203dpi 下每行仅按 32 字符拆分，且模板最多只渲染 4 行。合法输入 `70 + 46` 的情况下会被拆成 3 行 + 2 行，共 5 段，最后一段只能写入 `mailer_line_5`，模板不会显示，导致有效业务文案被静默截断。</div>
+                <div class="finding-suggestion">💡 修复建议：在拆分前按模板总容量做总量约束，而不是分别限制两个字段长度。可执行方案之一：先计算剩余可用行数，再为 `remark2` 预留至少 1 行，或在 `putMailerSegments` 内强制只生成 4 段并把剩余内容合并到第 4 段。例如先根据 `mailerMaxChars * 4` 计算总上限，并在 `idx &gt; 4` 时停止继续写入。</div>
             </div>
             
         </div>
