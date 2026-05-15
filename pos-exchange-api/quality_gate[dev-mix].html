@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-exchange-api &nbsp;|&nbsp; 2026-05-15 10:20:41</div>
+      <div class="meta">pos-exchange-api &nbsp;|&nbsp; 2026-05-15 11:20:24</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -56,13 +56,13 @@
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#4caf50">31.0%</div>
+      <div class="metric-value" style="color:#4caf50">31.2%</div>
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#f44336">23.6%</div>
+            <div class="metric-value" style="color:#f44336">24.1%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:13</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:13</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,6 +83,7 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube analysis timed out after 1 minutes</li>
+<li>AI Review: 1 Critical finding(s)</li>
 <li>AI Review: 13 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
@@ -90,46 +91,54 @@
         <div class="findings-section">
             <h3>AI 代码审查发现</h3>
             
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/factory/pipeline/ProducerConsumerPipeline.java:37-55</code>
+                </div>
+                <div class="finding-desc">生产者和消费者被提交到同一个 `poolName` 线程池，但代码未保证该线程池至少有 2 个工作线程。若目标线程池实际并发度为 1，生产者可能在有界队列写满后阻塞于 `queue.put(page)`，而消费者因无空闲线程永远无法启动，形成确定性死锁，最终导致导出/报表任务卡死，属于可触发的服务不可用风险。</div>
+                <div class="finding-suggestion">💡 修复建议：在运行前显式校验目标线程池核心并发度不少于 2，或改为为 producer/consumer 使用独立线程池；同时对阻塞入队改用带超时的 `offer` 并在超时后失败返回，避免无限等待。</div>
+            </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/web/WebLabelController.java:136-137</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/factory/pipeline/ProducerConsumerPipeline.java:82-87</code>
                 </div>
-                <div class="finding-desc">将既有 `POST /download` 从“返回 `application/octet-stream` 的同步文件下载”直接改为“返回 `ReportTaskDto` 的异步任务创建接口”，而原同步下载方法仅保留为 `@Deprecated` 且已失去路由映射。这会对现有调用方形成破坏性契约变更：依赖文件流/响应头语义的客户端会在同一路径上收到 JSON，可能导致下载链路异常、错误处理失效或自动化对接失败。</div>
-                <div class="finding-suggestion">💡 修复建议：保持原 `POST /download` 的文件流契约不变，并将异步能力放到独立路径（如 `/download-async`）；若必须切换，至少引入版本化接口并同步更新 `produces`、Swagger 定义和兼容期降级策略。</div>
+                <div class="finding-desc">最终对 producer/consumer 失败的重新抛出再次拼接 `getCause().getMessage()`。这会把线程内原始异常文本跨线程透传到调用方，放大内部错误细节暴露风险，尤其当底层异常来自数据库、文件导出或外部服务时。</div>
+                <div class="finding-suggestion">💡 修复建议：统一封装为稳定的失败消息，例如“pipeline execution failed”，并把原始 cause 仅保留在服务端日志中；调用方如需区分类型，可通过错误码而非原始消息。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/web/WebLabelController.java:139-142</code>
+                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/web/WebLabelController.java:133-161</code>
                 </div>
-                <div class="finding-desc">这里直接读取 `LoginUserUtil.getCurrentUser().getCompanyCode()`，但同一方法里已经对 `facility` 做了兜底，说明运行时上下文可能不完整；若当前线程未注入登录用户或返回对象为空，会在创建任务前触发空指针，导致下载接口直接失败。</div>
-                <div class="finding-suggestion">💡 修复建议：在组装 `taskBo` 前显式校验当前用户对象，例如：`LoginUserDto currentUser = LoginUserUtil.getCurrentUser(); if (currentUser == null || currentUser.getCompanyCode() == null) { throw new RRException(&quot;current user/companyCode not found&quot;); } taskBo.setCompanyCode(currentUser.getCompanyCode());`，避免依赖隐式上下文必然存在。</div>
+                <div class="finding-desc">原 `/download` 接口被直接改成返回 `ResponseObject&lt;ReportTaskDto&gt;` 的异步建任务接口，而原同步下载方法已失去 `@PostMapping` 映射。对既有调用方来说，请求同一路径后将不再返回文件流，而是返回 JSON，属于接口契约破坏，现有前端或第三方集成会直接下载失败。</div>
+                <div class="finding-suggestion">💡 修复建议：保留原 `/download` 的文件流语义，并为异步能力新增独立路径，例如 `@PostMapping(&quot;/download-async&quot;)`；如果必须切换为异步，请同步升级调用方并显式做版本化（如 `/v2/download`）。示例：`@PostMapping(&quot;/download-async&quot;) public ResponseObject&lt;ReportTaskDto&gt; downloadLabelAsync(...)`，同时恢复原 `downloadLabel` 上的 `@PostMapping(&quot;/download&quot;)`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/factory/pipeline/ProducerConsumerPipeline.java:31-38</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/factory/pipeline/AbstractDataConsumer.java:31-34</code>
                 </div>
-                <div class="finding-desc">`run(...)` 未校验 `pageSize` 和 `queueCapacity` 的边界。`queueCapacity &lt;= 0` 时 `new LinkedBlockingQueue&lt;&gt;(queueCapacity)` 会直接抛 `IllegalArgumentException`；`pageSize &lt;= 0` 时会把非法分页参数透传给生产者，且 `AbstractDataProducer` 中 `page.size() &lt; pageSize` 永远不成立，容易导致分页逻辑失效甚至死循环。</div>
-                <div class="finding-suggestion">💡 修复建议：在入口处显式校验参数并快速失败，例如：`if (pageSize &lt;= 0) throw new IllegalArgumentException(&quot;pageSize must be &gt; 0&quot;); if (queueCapacity &lt;= 0) throw new IllegalArgumentException(&quot;queueCapacity must be &gt; 0&quot;);`。</div>
+                <div class="finding-desc">消费者异常处理同样将 `e.getMessage()` 直接拼接进新的运行时异常中。`consumeBatch()` 常见会执行 Excel/文件/数据库操作，底层异常消息可能包含文件路径、库表信息或业务数据片段；继续透传会扩大信息泄露面。</div>
+                <div class="finding-suggestion">💡 修复建议：改为抛出固定文案的业务异常或统一错误码，保留原始异常作为 cause 供服务端日志排障，不要把底层消息直接暴露到上层。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/factory/pipeline/ProducerConsumerPipeline.java:60-79</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/factory/pipeline/AbstractDataProducer.java:41-47</code>
                 </div>
-                <div class="finding-desc">这里串行等待 `producerFuture.get()` 再等待 `consumerFuture.get()`，会在消费者提前失败时造成整体卡死：消费者退出后不再消费队列，生产者可能阻塞在 `queue.put(...)`，主线程却一直卡在第一个 `producerFuture.get()`，无法感知消费者异常并取消生产者。该场景在有界队列下会直接导致任务无法结束。</div>
-                <div class="finding-suggestion">💡 修复建议：改为并行感知两个 Future 的完成状态，并在任一侧失败时立即取消另一侧，例如使用 `CompletionService`/`CompletableFuture.anyOf(...)`，或先轮询 `isDone()` 检查两个任务；一旦消费者失败，立刻 `producerFuture.cancel(true)`。至少要避免固定先 `get()` 生产者再 `get()` 消费者的等待顺序。</div>
+                <div class="finding-desc">异常分支和 `finally` 中直接拼接/记录底层异常信息（`e.getMessage()`），会把下游查询、文件系统或第三方组件返回的原始错误细节继续向上抛出。若上层将该异常消息返回给前端或写入可见任务结果，可能泄露内部实现、路径、SQL/参数等敏感诊断信息。</div>
+                <div class="finding-suggestion">💡 修复建议：对外抛出的异常使用固定错误码或通用文案，详细堆栈仅写入受控日志；避免在运行时异常消息中直接拼接底层 `getMessage()`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/impl/PoeZoneFacilityMappingServiceImpl.java:76</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/factory/pipeline/AbstractDataProducer.java:43-46</code>
                 </div>
-                <div class="finding-desc">新增的过滤条件直接调用 `baseFacility.getPoe().equals(x.getPoe())`，当基础资料里的 `poe` 为空时会触发空指针，导致该方法依赖异常分支返回空列表，表现为 zone 查询结果异常丢失。</div>
-                <div class="finding-suggestion">💡 修复建议：改为使用空安全比较，例如 `Objects.equals(baseFacility.getPoe(), x.getPoe())`，或先校验 `baseFacility.getPoe()` 非空后再进入流处理。</div>
+                <div class="finding-desc">`finally` 中无条件执行 `queue.put(Collections.emptyList())`。当消费者提前异常退出且队列已满时，这里会永久阻塞，导致生产者任务无法结束；上层 `ProducerConsumerPipeline` 又先等待 `producerFuture.get()`，最终表现为整个调用卡死而不是及时抛出消费者异常。</div>
+                <div class="finding-suggestion">💡 修复建议：不要在 `finally` 里使用可能无限阻塞的 `put` 发送结束信号。可改为 `offer(poisonPill, timeout, unit)` 并在失败时记录错误/中断生产，或者在消费者失败时由协调层取消生产者任务并清理队列。示例：`if (!queue.offer(Collections.emptyList(), 5, TimeUnit.SECONDS)) { throw new IllegalStateException(&quot;failed to enqueue poison pill&quot;); }`。</div>
             </div>
             <p class="more-note">... 还有 8 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
