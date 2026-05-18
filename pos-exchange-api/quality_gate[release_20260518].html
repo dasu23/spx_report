@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-exchange-api &nbsp;|&nbsp; 2026-05-18 11:24:40</div>
+      <div class="meta">pos-exchange-api &nbsp;|&nbsp; 2026-05-18 17:25:06</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -62,7 +62,7 @@
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#f44336">24.5%</div>
+            <div class="metric-value" style="color:#f44336">23.2%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:10</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:2 &nbsp; 主要:30</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,8 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube analysis timed out after 1 minutes</li>
-<li>AI Review: 1 Critical finding(s)</li>
-<li>AI Review: 10 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 2 Critical finding(s)</li>
+<li>AI Review: 30 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,53 +94,61 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/report/impl/LabelBatchDownloader.java:95</code>
+                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/WarmupController.java:43-44</code>
                 </div>
-                <div class="finding-desc">`pageResult.getList()` 被直接以 `info` 级别写入日志。该列表承载整批面单导出数据，后续代码明确会处理收/退件地址、电话、邮箱、tracking number 等敏感字段；一旦对象 `toString()` 输出这些字段，日志系统会形成持久化的敏感数据泄露面。</div>
-                <div class="finding-suggestion">💡 修复建议：不要记录整批业务对象内容；改为仅记录页码、记录数、任务号等最小必要元数据，若确需排障，增加字段级脱敏后再输出。</div>
+                <div class="finding-desc">新增日志将 `sasUrl` 直接打印。SAS URL 通常包含签名参数，可直接作为临时访问凭证；一旦进入应用日志、日志平台或告警链路，会造成凭证泄露并扩大对象存储访问面。</div>
+                <div class="finding-suggestion">💡 修复建议：不要记录完整的 SAS URL。改为仅记录脱敏后的 blob 路径或对象名；如果必须排障，至少移除查询串中的签名参数后再打印。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/convert/FieldCryptoConverter.java:35-51</code>
+                </div>
+                <div class="finding-desc">当加密后密文长度超过限制时，日志直接输出 `attribute` 原文。该转换器用于字段加解密，`attribute` 很可能是敏感业务字段明文；异常/边界路径将把敏感数据写入日志，形成持久化泄露风险。</div>
+                <div class="finding-suggestion">💡 修复建议：不要记录原始字段值。改为仅记录字段名、长度、记录主键或经过脱敏/哈希后的标识，例如记录 `attribute.length()` 与上下文 ID；如需排障，使用受控的审计字段而非明文内容。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/report/impl/LabelBatchDownloader.java:76</code>
+                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/sys/SysUploadController.java:42</code>
                 </div>
-                <div class="finding-desc">这里直接对 `bo.getZoneId()` 调用 `ZoneId.of(...)`，当任务数据缺少 `zoneId` 或值不合法时会抛出 `DateTimeException`/`NullPointerException`，导致整个报表任务以 500 失败。当前处理链路没有在进入下载前做兜底校验。</div>
-                <div class="finding-suggestion">💡 修复建议：在进入下载逻辑前显式校验 `zoneId`，并返回明确的业务异常；如允许缺省值，可回退到系统时区。例如：`if (StrUtil.isBlank(bo.getZoneId())) { throw new RRException(&quot;zoneId is required&quot;, 400); } ZoneId targetZoneId; try { targetZoneId = ZoneId.of(bo.getZoneId()); } catch (DateTimeException ex) { throw new RRException(&quot;invalid zoneId: &quot; + bo.getZoneId(), 400); }`。</div>
+                <div class="finding-desc">上传接口返回值从原先的存储直链切换成 `BlobSasUtil.toSasUrl(relativePath)` 生成的 SAS URL。SAS 链接通常带有效期，若前端或后续流程会持久化该 URL 并在较晚时间再次访问，文件会在过期后不可用，表现为上传成功但后续预览/下载失败。</div>
+                <div class="finding-suggestion">💡 修复建议：确认该接口契约是否允许返回短时效访问链接；如果调用方需要长期可用地址，建议继续返回稳定的相对路径或永久访问 URL，把 SAS URL 生成下沉到真正读取文件的场景。例如返回 `relativePath`，由下载/预览接口按需调用 `BlobSasUtil.toSasUrl(relativePath)`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/web/WebLabelController.java:133-163</code>
+                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/web/WebContainerLabelController.java:211</code>
                 </div>
-                <div class="finding-desc">`POST /download` 的接口语义被直接改成返回 `ResponseObject&lt;ReportTaskDto&gt;` 的异步建任务接口，而原来的文件流下载方法仅保留为 `@Deprecated` 普通方法、已不再暴露为控制器路由。这会让现有调用方在不改路径的情况下，从“下载二进制文件”变成“收到 JSON”，属于明显的接口契约破坏，已有前端/集成方会直接下载失败。</div>
-                <div class="finding-suggestion">💡 修复建议：保留原 `POST /download` 的同步下载契约，并将异步能力放到独立路径，例如恢复旧方法的 `@PostMapping(&quot;/download&quot;)`，新增方法使用 `@PostMapping(&quot;/download-async&quot;)`；如果必须切换为异步，至少新增版本化路径并同步更新所有调用方与接口文档。示例：`@PostMapping(&quot;/download&quot;) public void downloadLabel(...)`，`@PostMapping(&quot;/download-async&quot;) public ResponseObject&lt;ReportTaskDto&gt; downloadLabelAsync(...)`。</div>
+                <div class="finding-desc">新增代码直接将持久化的 `excelUrl` 传入 `BlobSasUtil.openBlobStreamFromUrl(excelUrl)` 打开流，未见对 URL/Blob 路径归属进行校验。若历史记录或上游写入的数据被污染为任意外部 URL，这里会在服务端发起请求并读取内容，形成 SSRF/任意资源读取风险。注释明确兼容“old full URLs (legacy records)”，进一步扩大了可接受输入面。</div>
+                <div class="finding-suggestion">💡 修复建议：在打开流前仅接受受信任的 Blob 相对路径，或对完整 URL 严格校验协议、域名/账号名、容器前缀后再访问；对非预期来源直接拒绝。更稳妥的做法是统一将数据库中的文件定位字段迁移为相对路径，再通过固定存储账号拼接访问。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/factory/pipeline/AbstractDataProducer.java:43-48</code>
+                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/web/WebDispatchController.java:193-200</code>
                 </div>
-                <div class="finding-desc">`finally` 中无条件执行 `queue.put(Collections.emptyList())`，在有界队列已满且消费者未及时消费时会一直阻塞。这样不仅可能掩盖前面真实的生产异常，还会导致 producer 线程无法退出，最终让 `producerFuture.get()`/整条流水线挂死。</div>
-                <div class="finding-suggestion">💡 修复建议：不要在 `finally` 中使用无限阻塞的 `put`。可改为 `offer(Collections.emptyList(), timeout, unit)` 并在失败时记录错误后中断流水线，或在放入 poison pill 前结合取消/清空策略确保不会永久等待。示例：`if (!queue.offer(Collections.emptyList(), 5, TimeUnit.SECONDS)) { throw new IllegalStateException(&quot;failed to signal consumer to stop&quot;); }`。</div>
+                <div class="finding-desc">`batchSubmit` 在循环内捕获并仅记录单条提交异常，但无论是否存在失败项都固定返回 `success(true)`。调用方会被误导为全部提交成功，无法感知部分失败或整体失败，容易导致重复操作或漏处理。</div>
+                <div class="finding-suggestion">💡 修复建议：至少汇总失败结果并返回给前端，或在存在失败时返回失败响应。例如先收集失败的 `id`，循环结束后若失败列表非空则返回 `ResponseObject.error(...)` 或包含成功/失败明细的结果对象。示例：`List&lt;Long&gt; failed = new ArrayList&lt;&gt;(); ... catch (Exception e) { failed.add(id); } if (!failed.isEmpty()) { return ResponseObject.error(&quot;submit failed: &quot; + failed); }`</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/factory/pipeline/AbstractDataProducer.java:45</code>
+                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/web/WebLabelController.java:133-164</code>
                 </div>
-                <div class="finding-desc">`finally` 中无条件执行 `queue.put(Collections.emptyList())` 会在队列已满时阻塞；一旦消费者已异常退出、或 `ProducerConsumerPipeline` 中消费者任务根本未成功提交，就不会再有线程消费该队列，生产者线程会永久卡死。该变更把导出流水线变成可被单次异常触发的线程池资源耗尽点，最终影响服务可用性。</div>
-                <div class="finding-suggestion">💡 修复建议：不要在 `finally` 中使用无限阻塞的 `put` 投递 poison pill。改为使用带超时的 `offer`，并在消费者未启动/已失败时直接放弃投递并退出；同时让上层在消费者提交失败或消费者执行失败后显式关闭/清空队列或使用取消标志，确保生产者不会因收尾逻辑永久阻塞。</div>
+                <div class="finding-desc">`POST /download` 的接口契约被直接改成了“创建异步任务并返回 JSON”，原先同步下载文件的方法同时失去了 `@PostMapping` 映射，只剩 `@Deprecated` 的普通方法。现有调用方如果仍按文件下载方式访问 `/download`，将收到 JSON 而不是二进制流，属于明确的功能回归。</div>
+                <div class="finding-suggestion">💡 修复建议：保留原 `POST /download` 的同步下载契约，并将异步能力放到新路径，例如 `POST /download-async`；如果必须切换为异步，请同步修改路由、Swagger 和调用方，并提供过渡期兼容实现。示例：给异步方法恢复 `@PostMapping(&quot;/download-async&quot;)`，给同步方法保留 `@PostMapping(&quot;/download&quot;)`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/factory/pipeline/ProducerConsumerPipeline.java:39-54</code>
+                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/web/WebLabelController.java:136</code>
                 </div>
-                <div class="finding-desc">生产者和消费者被顺序提交到同一个 `poolName` 线程池，但代码没有校验线程池至少有 2 个可用工作线程。若该线程池实际只有 1 个线程，或已被其他任务占满，生产者可能先运行并阻塞在 `queue.put(page)`，消费者任务则永远得不到调度，整个流水线会卡死。</div>
-                <div class="finding-suggestion">💡 修复建议：在启动前显式校验目标线程池并发度至少为 2，或改为使用专用的双线程/独立线程池执行这两个任务。例如为 pipeline 单独提供固定 2 线程的执行器，或在 `ThreadPoolOrchestrator` 增加 `submitPair` 之类的接口以保证成对任务可并行调度。</div>
+                <div class="finding-desc">将既有 `POST /download` 从同步返回二进制文件的下载接口，直接改为返回 `ReportTaskDto` 的异步建任务接口，同时原同步方法已去掉路由映射。这是破坏性 API 契约变更，现有调用方若仍按文件流下载处理响应，可能出现解析失败、重试风暴或任务堆积，形成可用性层面的安全风险。</div>
+                <div class="finding-suggestion">💡 修复建议：保留原 `POST /download` 的文件流语义不变；将异步能力放到独立路径（如 `/download-async`）或显式版本化接口，并同步更新 `produces` 与 Swagger 定义。若必须迁移，至少增加兼容期和明确的错误码/响应头，避免旧客户端误处理 JSON 响应。</div>
             </div>
-            <p class="more-note">... 还有 5 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 25 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
