@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">oms-api &nbsp;|&nbsp; 2026-05-12 13:55:44</div>
+      <div class="meta">oms-api &nbsp;|&nbsp; 2026-05-18 11:34:10</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -68,12 +68,12 @@
         
     <div class="metric-card">
       <div class="metric-label">SonarQube 质量门</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">质量门未通过</div>
+      <div class="metric-value" style="color:#9e9e9e;font-size:22px;padding-top:6px">等待超时</div>
       <div class="metric-note">已检测到问题，但当前配置未阻断流水线</div>
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:21</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:2 &nbsp; 主要:35</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -82,9 +82,9 @@
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 1 Critical finding(s)</li>
-<li>AI Review: 21 Major finding(s) &gt;= threshold 5</li></ul>
+            <ul><li>SonarQube analysis timed out after 1 minutes</li>
+<li>AI Review: 2 Critical finding(s)</li>
+<li>AI Review: 35 Major finding(s) &gt;= threshold 5</li></ul>
         </div>
         
   
@@ -94,53 +94,61 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-test/rest/client-claim.http:5</code>
+                    <code class="finding-loc">oms-test/rest/client-claim.http:4</code>
                 </div>
-                <div class="finding-desc">新增/修改的 REST 调试文件中直接提交了多个 Bearer Token（如第 5、15、28、39、47、56 行）。这属于硬编码访问凭证，一旦仓库被扩散、日志被收集或测试文件被复用，可能导致真实环境接口被未授权调用。</div>
-                <div class="finding-suggestion">💡 修复建议：移除文件中的真实 Token，改为使用占位符或环境变量注入，例如 `Authorization: Bearer {{CLIENT_CLAIM_TOKEN}}`；同时确认这些 Token 已失效或立即轮换，避免已泄露凭证继续可用。</div>
+                <div class="finding-desc">新增的 HTTP 调试脚本直接写入了 Bearer Token。该文件后续还在多处新增同类令牌（如 15、27、39、44、57、78 行），一旦提交到仓库或被日志/制品系统收集，会导致测试环境凭证泄露并可被复用。</div>
+                <div class="finding-suggestion">💡 修复建议：删除仓库中的明文 Token，改为使用环境变量或 HTTP Client 占位符（如 `@token`）在本地注入；同时轮换这些已暴露的 Token。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">oms-test/rest/oms.spx-5147-dsp-claim-fleet-dashboard.http:3</code>
+                </div>
+                <div class="finding-desc">新建的 HTTP 脚本把认证信息以明文形式写入文件，并在第 6 行把固定 Token 绑定到 `@token` 变量。这会把可用认证凭证长期保存在代码仓库中，属于典型的硬编码 Token 泄露。</div>
+                <div class="finding-suggestion">💡 修复建议：移除文件中的明文认证值，改为要求调用者在本地环境或 IDE 私有配置中注入 `token`；若该 Token 曾真实可用，应立即失效并重新签发。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillExecutionLogService.java:124</code>
+                </div>
+                <div class="finding-desc">新增调试日志直接输出 `azureFileUrl`。如果该 URL 是带 SAS/签名参数的 Azure Blob 下载地址，日志会泄露可复用的访问凭证，导致拿到日志的人可直接下载导出文件。</div>
+                <div class="finding-suggestion">💡 修复建议：不要记录完整文件 URL。改为仅记录文件标识（如 blob key/operationId），或在写日志前剥离查询串中的签名参数。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillOperationService.java:397</code>
+                </div>
+                <div class="finding-desc">当 `AuthUtil.findPrincipal()` 为空时，代码将当前用户强制降级为 `0L` 并继续提交批量导出任务。这样会把认证失效场景静默转成“匿名/伪造用户”执行，既绕过了应有的登录态校验，也会污染审计归属。</div>
+                <div class="finding-suggestion">💡 修复建议：在 `findPrincipal()` 为空时直接拒绝请求并抛出认证异常，不要使用哨兵用户 ID 继续提交任务；同时确保批量任务创建链路统一校验登录态。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillService.java:575-585</code>
+                </div>
+                <div class="finding-desc">`getApLmBillFleets` 在 `billFleets` 非空时无条件调用 `fleetCache.findByCountry(countryCode)`，但上面刚允许 `countryCode` 为 `null` 并仅打印告警。若 hub 在 facility cache 中缺失，这里会直接触发 NPE/非法参数异常，接口从“告警后继续”退化为运行时失败。</div>
+                <div class="finding-suggestion">💡 修复建议：在 Layer 1 与 Layer 2 保持一致的空值兜底：先判断 `countryCode == null`，为空时直接按 `fleetId` 返回 `FleetSimpleDto`，不要调用 `fleetCache.findByCountry(null)`。示例：`if (countryCode == null) { return billFleets.stream()...fleetName(String.valueOf(fleetId))...; }`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillService.java:597-603</code>
+                </div>
+                <div class="finding-desc">Layer 2 只返回 `fleetCache.findByCountry(countryCode)` 中命中的 fleet，`findDistinctFleetIdsByApLmBillId` 查到但缓存里不存在的 fleetId 会被直接丢弃。这样账单实际存在的 fleet 可能在返回结果里消失，前端无法选择这些 fleet，属于数据遗漏回归。</div>
+                <div class="finding-suggestion">💡 修复建议：对缓存未命中的 `dmsFleetIds` 做补齐兜底，而不是直接过滤掉。可先收集缓存命中的 `dmsFleetId`，再把剩余 ID 以 `fleetName=String.valueOf(fid)` 或其他可识别占位名追加到结果中。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
                     <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmRateCalcService.java:737-738</code>
                 </div>
-                <div class="finding-desc">新增的 `log.warn(...)` 会把 `sameAddressKeyword` 原样写入日志。该字段从命名和上下文看是“same address”匹配关键字，极可能包含收件地址片段或其标准化结果；一旦进入集中日志，将形成可检索的地址类敏感信息泄露面。</div>
-                <div class="finding-suggestion">💡 修复建议：避免记录原始地址关键字。改为仅记录脱敏后的摘要值、长度或哈希，例如只输出 routeId 和是否缺失 zipcode/country；如必须定位问题，新增受控的 debug 级脱敏日志。</div>
+                <div class="finding-desc">告警日志输出了 `sameAddressKeyword`。从上下文看该字段用于同址判重，通常包含收件地址文本；在缺少 zipcode/country 时把完整地址写入 warn 日志，会形成可检索的 PII 泄露面。</div>
+                <div class="finding-suggestion">💡 修复建议：日志中不要打印完整地址关键字；可改为只打印 routeId、是否缺少位置字段，或对地址做截断/哈希后再记录。</div>
             </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArSettlementDomesticDetailService.java:244-252</code>
-                </div>
-                <div class="finding-desc">这里将 `netSuitJobName` 按 `trackingNo` 写入 `projectNameByTrackingNo`，后续再用 `settlement.getTrackingNo()` 取值。若同一运单号存在多条 settlement/invoice mapping（重开票、拆分结算等场景），后写入的数据会覆盖前面的值，导出时会把 Project ID 关联到错误的项目名称。</div>
-                <div class="finding-suggestion">💡 修复建议：改为按 `settlementId` 建立映射并读取，避免同一 `trackingNo` 的多条记录互相覆盖。例如：`Map&lt;Long, String&gt; projectNameBySettlementId = invoiceMappings.stream().filter(m -&gt; m.getSettlementId() != null).collect(Collectors.toMap(ArSettlementInvoiceMapping::getSettlementId, ArSettlementInvoiceMapping::getNetSuitJobName, (a,b) -&gt; a));`，随后使用 `projectNameBySettlementId.get(settlement.getId())`。</div>
-            </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArSettlementDomesticDetailService.java:465</code>
-                </div>
-                <div class="finding-desc">`projectId` 字段的赋值语义从结算发票号切换为 `netSuitJobName`，但方法名、字段名和返回 DTO 均未体现该破坏性变更。现有调用方若继续把 `projectId` 当作稳定单据标识使用，会出现对账、幂等或审计链路错配。</div>
-                <div class="finding-suggestion">💡 修复建议：保持向后兼容：继续输出原 `invoiceNo` 到 `projectId`，新增独立字段承载 `projectName`；若必须改语义，需同步升级 DTO/接口文档并提供版本化输出。</div>
-            </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArSettlementInternationalDetailService.java:248-256</code>
-                </div>
-                <div class="finding-desc">国际明细导出同样以 `trackingNo` 作为 invoice mapping 的唯一键。若同一运单号对应多条 settlement mapping，`projectNameByTrackingNo.put(...)` 会发生覆盖，最终 `response.setProjectId(projectName)` 可能写入其他 settlement 的项目名称。</div>
-                <div class="finding-suggestion">💡 修复建议：将映射键改为 `settlementId`，并在构造响应时通过 `settlement.getId()` 读取对应项目名称；如果确实需要按运单号聚合，也应先明确一对多场景的取值规则，避免无序覆盖。</div>
-            </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArSettlementInternationalDetailService.java:517</code>
-                </div>
-                <div class="finding-desc">这里将 `projectId` 从发票号改为项目名，属于无版本保护的返回契约变更。对外导出字段名未变但含义已变化，容易导致消费方继续按“唯一单据号”处理，产生错误归档或审计关联失败。</div>
-                <div class="finding-suggestion">💡 修复建议：保留 `projectId` 的原始语义，新增专用字段返回项目名；或者通过版本化接口/导出模板显式发布该变更。</div>
-            </div>
-            <p class="more-note">... 还有 16 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 30 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
