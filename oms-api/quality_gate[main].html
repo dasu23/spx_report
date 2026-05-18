@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">oms-api &nbsp;|&nbsp; 2026-05-18 15:48:47</div>
+      <div class="meta">oms-api &nbsp;|&nbsp; 2026-05-18 16:12:33</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:2 &nbsp; 主要:35</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:4 &nbsp; 主要:31</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,8 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 2 Critical finding(s)</li>
-<li>AI Review: 35 Major finding(s) &gt;= threshold 5</li></ul>
+<li>AI Review: 4 Critical finding(s)</li>
+<li>AI Review: 31 Major finding(s) &gt;= threshold 5</li></ul>
         </div>
         
   
@@ -94,61 +94,77 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-test/rest/client-claim.http:4</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/impl/ClientClaimModificationImportServiceImpl.java:221</code>
                 </div>
-                <div class="finding-desc">新增的 HTTP 调试脚本直接写入了 Bearer Token。该文件后续还在多处新增同类令牌（如 15、27、39、44、57、78 行），一旦提交到仓库或被日志/制品系统收集，会导致测试环境凭证泄露并可被复用。</div>
-                <div class="finding-suggestion">💡 修复建议：删除仓库中的明文 Token，改为使用环境变量或 HTTP Client 占位符（如 `@token`）在本地注入；同时轮换这些已暴露的 Token。</div>
+                <div class="finding-desc">`readAllRows` 直接将请求提供的 `fileUrl` 传给 `omsAzureBlobUtil.openBlobStreamFromUrl(fileUrl)`。如果该工具方法接受任意 URL，这里会形成服务端请求伪造（SSRF）/任意外部资源读取入口，攻击者可借导入接口探测或访问内网与云元数据地址。</div>
+                <div class="finding-suggestion">💡 修复建议：不要信任上传请求中的完整 URL。改为只接受已落库的 blob key/object key，服务端按受信任的存储账号自行拼接并读取；至少要在此处校验协议、主机名和路径前缀，仅允许受控 Azure Blob 域名与容器。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/impl/DspClaimUploadServiceImpl.java:82</code>
+                </div>
+                <div class="finding-desc">这里将 `req.getFileUrl()` 原样写入 `BatchQueryTask.parameter`。若文件 URL 使用 Azure SAS/签名查询串，持久化后会把可直接访问文件的令牌保存到数据库，扩大泄露面；后续任务查询、日志或导出都可能间接暴露该凭证。</div>
+                <div class="finding-suggestion">💡 修复建议：禁止持久化完整带签名的下载 URL。改为仅保存 blob 标识符/文件键，消费端再基于服务端凭证生成临时访问；若必须保存 URL，先剥离查询串中的签名参数并单独受控存储。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">oms-test/rest/client-claim.http:5</code>
+                </div>
+                <div class="finding-desc">新增的 HTTP 示例中直接提交了 Bearer Token 值（UUID 形式），属于明文凭证暴露。即使该文件用于测试，只要进入仓库或被共享，就可能被复用访问实际环境接口，符合硬编码 Token 泄露风险。</div>
+                <div class="finding-suggestion">💡 修复建议：移除仓库中的明文 Token，改为使用环境变量或 HTTP Client 变量占位符（如 `{{token}}`），并确保真实凭证仅通过本地未纳管配置注入。若这些 Token 曾在真实环境使用过，应立即作废并轮换。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
                     <code class="finding-loc">oms-test/rest/oms.spx-5147-dsp-claim-fleet-dashboard.http:3</code>
                 </div>
-                <div class="finding-desc">新建的 HTTP 脚本把认证信息以明文形式写入文件，并在第 6 行把固定 Token 绑定到 `@token` 变量。这会把可用认证凭证长期保存在代码仓库中，属于典型的硬编码 Token 泄露。</div>
-                <div class="finding-suggestion">💡 修复建议：移除文件中的明文认证值，改为要求调用者在本地环境或 IDE 私有配置中注入 `token`；若该 Token 曾真实可用，应立即失效并重新签发。</div>
+                <div class="finding-desc">新建的接口调试脚本在注释和变量中硬编码了 Bearer Token（`mocktokenmocktoken1`）。即便名称看似测试用途，该模式会鼓励将认证凭证固化到仓库中，后续极易被替换为真实 Token 并泄露。</div>
+                <div class="finding-suggestion">💡 修复建议：删除文件中的硬编码认证信息，统一改为 `@token = {{token}}` 或本地私有变量文件注入；同时避免在注释中给出可直接复用的认证头示例。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillExecutionLogService.java:124</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/impl/ClientClaimModificationImportServiceImpl.java:242-249</code>
                 </div>
-                <div class="finding-desc">新增调试日志直接输出 `azureFileUrl`。如果该 URL 是带 SAS/签名参数的 Azure Blob 下载地址，日志会泄露可复用的访问凭证，导致拿到日志的人可直接下载导出文件。</div>
-                <div class="finding-suggestion">💡 修复建议：不要记录完整文件 URL。改为仅记录文件标识（如 blob key/operationId），或在写日志前剥离查询串中的签名参数。</div>
+                <div class="finding-desc">`findLastDisputeColumns` 实际上对 `headerMap` 执行 `stream().findFirst()`，返回的是遍历遇到的第一个 `Dispute ID ` 列，而不是注释和业务上要求的“最后一个 dispute group”。当导出文件存在多个 dispute 分组时，这里会把第一组当成最终组解析，导致后续 DB 更新使用了错误的 `Dispute ID` 列。</div>
+                <div class="finding-suggestion">💡 修复建议：按列索引选择最大的 `Dispute ID` 列，而不是 `findFirst()`。例如：`headerMap.entrySet().stream().filter(...).max(Map.Entry.comparingByKey())`，再基于该列计算 `DisputeColumns`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillOperationService.java:397</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillService.java:573-574</code>
                 </div>
-                <div class="finding-desc">当 `AuthUtil.findPrincipal()` 为空时，代码将当前用户强制降级为 `0L` 并继续提交批量导出任务。这样会把认证失效场景静默转成“匿名/伪造用户”执行，既绕过了应有的登录态校验，也会污染审计归属。</div>
-                <div class="finding-suggestion">💡 修复建议：在 `findPrincipal()` 为空时直接拒绝请求并抛出认证异常，不要使用哨兵用户 ID 继续提交任务；同时确保批量任务创建链路统一校验登录态。</div>
+                <div class="finding-desc">`countryCode` 在上方已经允许为 `null`（仅记录 warn），但在“Layer 1”分支里直接传给 `fleetCache.findByCountry(countryCode)`。当账单的 hub 未命中 facility cache 且该 bill 配置了 fleet 过滤时，这里会触发空指针或下游非法查询，导致 `getApLmBillFleets` 直接失败。</div>
+                <div class="finding-suggestion">💡 修复建议：在进入 `fleetCache.findByCountry(countryCode)` 前补充空值分支，和下方 Layer 2/3 的兜底逻辑保持一致。例如：`if (countryCode == null) { return billFleets.stream()...fleetName(String.valueOf(fleetId))...; }`，否则再查询 fleet cache。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillService.java:575-585</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillService.java:594-598</code>
                 </div>
-                <div class="finding-desc">`getApLmBillFleets` 在 `billFleets` 非空时无条件调用 `fleetCache.findByCountry(countryCode)`，但上面刚允许 `countryCode` 为 `null` 并仅打印告警。若 hub 在 facility cache 中缺失，这里会直接触发 NPE/非法参数异常，接口从“告警后继续”退化为运行时失败。</div>
-                <div class="finding-suggestion">💡 修复建议：在 Layer 1 与 Layer 2 保持一致的空值兜底：先判断 `countryCode == null`，为空时直接按 `fleetId` 返回 `FleetSimpleDto`，不要调用 `fleetCache.findByCountry(null)`。示例：`if (countryCode == null) { return billFleets.stream()...fleetName(String.valueOf(fleetId))...; }`。</div>
+                <div class="finding-desc">“Layer 2/3” 分支只返回 `fleetCache.findByCountry(countryCode)` 中能匹配到的 fleet，`ap_lm_bill_settlement` 里实际存在但缓存缺失/未同步的 `fleet_id` 会被静默丢弃。结果是接口返回的 fleet 列表不完整，前端无法选择这些有效 fleet，进而影响 Fleet Dashboard 导出等后续功能。</div>
+                <div class="finding-suggestion">💡 修复建议：以 `dmsFleetIds` 为准生成结果集，再用 cache 仅补充名称；对 cache 未命中的 fleet 也应返回 DTO，并用 `String.valueOf(fid)` 或占位名称兜底。例如先构建 `Map&lt;Long,String&gt;`，再遍历 `dmsFleetIds` 逐个输出。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillService.java:597-603</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmRateCalcService.java:737</code>
                 </div>
-                <div class="finding-desc">Layer 2 只返回 `fleetCache.findByCountry(countryCode)` 中命中的 fleet，`findDistinctFleetIdsByApLmBillId` 查到但缓存里不存在的 fleetId 会被直接丢弃。这样账单实际存在的 fleet 可能在返回结果里消失，前端无法选择这些 fleet，属于数据遗漏回归。</div>
-                <div class="finding-suggestion">💡 修复建议：对缓存未命中的 `dmsFleetIds` 做补齐兜底，而不是直接过滤掉。可先收集缓存命中的 `dmsFleetId`，再把剩余 ID 以 `fleetName=String.valueOf(fid)` 或其他可识别占位名追加到结果中。</div>
+                <div class="finding-desc">新增的降级日志会在缺少 zipcode/country 时把 `sameAddressKeyword` 直接写入 `warn` 日志。该字段按上下文属于 same-address 识别关键词，通常来自收件地址信息；一旦进入告警日志，将形成可检索的地址类敏感信息泄露面。</div>
+                <div class="finding-suggestion">💡 修复建议：不要在告警日志中输出原始地址关键词。改为仅记录 routeId、是否缺失 zipcode/country 等诊断信息，或对 `sameAddressKeyword` 做脱敏/哈希后再记录。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmRateCalcService.java:737-738</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArSettlementDomesticDetailService.java:462</code>
                 </div>
-                <div class="finding-desc">告警日志输出了 `sameAddressKeyword`。从上下文看该字段用于同址判重，通常包含收件地址文本；在缺少 zipcode/country 时把完整地址写入 warn 日志，会形成可检索的 PII 泄露面。</div>
-                <div class="finding-suggestion">💡 修复建议：日志中不要打印完整地址关键字；可改为只打印 routeId、是否缺少位置字段，或对地址做截断/哈希后再记录。</div>
+                <div class="finding-desc">`projectId` 的取值从 `settlement.getInvoiceNo()` 直接切换为 `projectName`，但新增逻辑仅在存在 invoice mapping 且 `netSuitJobName` 非空时才会填充该值。对于历史数据、已清理 mapping 或未生成 mapping 的 settlement，这里会把原本可导出的项目标识变成 `null`，导致导出结果缺失关键字段。</div>
+                <div class="finding-suggestion">💡 修复建议：保留兼容兜底逻辑，优先使用 `projectName`，为空时回退到原字段，例如：`response.setProjectId(StringUtils.isNotBlank(projectName) ? projectName : settlement.getInvoiceNo());`。同时补充无 mapping 场景的导出测试。</div>
             </div>
-            <p class="more-note">... 还有 30 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 26 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
