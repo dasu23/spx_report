@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">oms-api &nbsp;|&nbsp; 2026-05-18 16:12:33</div>
+      <div class="meta">oms-api &nbsp;|&nbsp; 2026-05-18 16:28:19</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:4 &nbsp; 主要:31</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:5 &nbsp; 主要:30</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,8 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 4 Critical finding(s)</li>
-<li>AI Review: 31 Major finding(s) &gt;= threshold 5</li></ul>
+<li>AI Review: 5 Critical finding(s)</li>
+<li>AI Review: 30 Major finding(s) &gt;= threshold 5</li></ul>
         </div>
         
   
@@ -94,77 +94,85 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/impl/ClientClaimModificationImportServiceImpl.java:221</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/impl/ClientClaimModificationImportServiceImpl.java:216</code>
                 </div>
-                <div class="finding-desc">`readAllRows` 直接将请求提供的 `fileUrl` 传给 `omsAzureBlobUtil.openBlobStreamFromUrl(fileUrl)`。如果该工具方法接受任意 URL，这里会形成服务端请求伪造（SSRF）/任意外部资源读取入口，攻击者可借导入接口探测或访问内网与云元数据地址。</div>
-                <div class="finding-suggestion">💡 修复建议：不要信任上传请求中的完整 URL。改为只接受已落库的 blob key/object key，服务端按受信任的存储账号自行拼接并读取；至少要在此处校验协议、主机名和路径前缀，仅允许受控 Azure Blob 域名与容器。</div>
+                <div class="finding-desc">导入流程直接将请求中的 `fileUrl` 传给 `omsAzureBlobUtil.openBlobStreamFromUrl(fileUrl)` 打开远程流，当前变更里没有任何协议、域名、容器或签名白名单校验。若该 util 接受任意 URL，这里会形成 SSRF/任意远程文件读取入口，攻击者可借此探测内网或触发服务端访问非预期资源。</div>
+                <div class="finding-suggestion">💡 修复建议：在进入 `readAllRows` 前对 `fileUrl` 做严格校验：仅允许受信任的 Azure Blob 域名/容器前缀、限定 `https`、校验 SAS/对象归属；更稳妥的做法是改为接收服务端生成的 blob key，而不是客户端可控的完整 URL。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/impl/DspClaimUploadServiceImpl.java:82</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/impl/DspClaimUploadServiceImpl.java:87</code>
                 </div>
-                <div class="finding-desc">这里将 `req.getFileUrl()` 原样写入 `BatchQueryTask.parameter`。若文件 URL 使用 Azure SAS/签名查询串，持久化后会把可直接访问文件的令牌保存到数据库，扩大泄露面；后续任务查询、日志或导出都可能间接暴露该凭证。</div>
-                <div class="finding-suggestion">💡 修复建议：禁止持久化完整带签名的下载 URL。改为仅保存 blob 标识符/文件键，消费端再基于服务端凭证生成临时访问；若必须保存 URL，先剥离查询串中的签名参数并单独受控存储。</div>
+                <div class="finding-desc">代码将 `req.getFileUrl()` 原样写入 `BatchQueryTask.parameter`。这类上传 URL 通常携带 SAS/签名查询串，属于可直接访问文件的临时凭证；持久化到任务表后，任何能读取该字段的日志、后台页面或数据库访问者都可能复用该凭证下载文件。</div>
+                <div class="finding-suggestion">💡 修复建议：不要持久化完整签名 URL。改为只保存 blob key/文件名/对象 ID；若必须保存 URL，至少在入库前去除查询串中的签名参数，并在消费端通过服务端凭证重新生成短期下载链接。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-test/rest/client-claim.http:5</code>
+                    <code class="finding-loc">oms-facade-impl/src/main/java/io/speedx/oms/facade/impl/MqFacadeImpl.java:389</code>
                 </div>
-                <div class="finding-desc">新增的 HTTP 示例中直接提交了 Bearer Token 值（UUID 形式），属于明文凭证暴露。即使该文件用于测试，只要进入仓库或被共享，就可能被复用访问实际环境接口，符合硬编码 Token 泄露风险。</div>
-                <div class="finding-suggestion">💡 修复建议：移除仓库中的明文 Token，改为使用环境变量或 HTTP Client 变量占位符（如 `{{token}}`），并确保真实凭证仅通过本地未纳管配置注入。若这些 Token 曾在真实环境使用过，应立即作废并轮换。</div>
+                <div class="finding-desc">新增加的 Kafka consumer 直接调用 `dspClaimImportConsumer.process(message)`，没有任何异常捕获、降级或死信转移。只要出现一条畸形/毒丸消息导致 `process` 抛出运行时异常，单线程消费者（`concurrency = &quot;1&quot;`）就可能反复消费同一条消息并阻塞后续导入任务，形成可被恶意输入触发的可用性风险。</div>
+                <div class="finding-suggestion">💡 修复建议：在监听方法内显式捕获业务和解析异常，记录必要上下文后将失败消息转入死信队列/失败表，避免单条坏消息阻塞整个 topic；同时为不可恢复异常配置错误处理器和重试上限。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-test/rest/oms.spx-5147-dsp-claim-fleet-dashboard.http:3</code>
+                    <code class="finding-loc">oms-test/rest/client-claim.http:5-88</code>
                 </div>
-                <div class="finding-desc">新建的接口调试脚本在注释和变量中硬编码了 Bearer Token（`mocktokenmocktoken1`）。即便名称看似测试用途，该模式会鼓励将认证凭证固化到仓库中，后续极易被替换为真实 Token 并泄露。</div>
-                <div class="finding-suggestion">💡 修复建议：删除文件中的硬编码认证信息，统一改为 `@token = {{token}}` 或本地私有变量文件注入；同时避免在注释中给出可直接复用的认证头示例。</div>
+                <div class="finding-desc">同一文件新增/修改了多处硬编码 Bearer Token，请求样例依赖真实凭证。该类凭证一旦泄露，风险面覆盖整个可访问环境。</div>
+                <div class="finding-suggestion">💡 修复建议：统一改为变量化写法，例如在文件顶部声明 `@token = {{token}}` 或直接使用 `Authorization: Bearer {{token}}`；不要在版本库中保留任何真实令牌。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">oms-test/rest/oms.spx-5147-dsp-claim-fleet-dashboard.http:5</code>
+                </div>
+                <div class="finding-desc">新增测试脚本将访问令牌直接写入 `@token` 变量，命中硬编码 Token 规则。即使当前值看似测试用，后续很容易被替换成真实凭证并继续沿用该模式。</div>
+                <div class="finding-suggestion">💡 修复建议：改为引用本地环境变量，例如 `@token = {{token}}`，并在不提交的环境文件中维护实际值；同时在注释中明确禁止提交真实 token。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/impl/ClientClaimModificationImportServiceImpl.java:242-249</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/impl/ClientClaimModificationImportServiceImpl.java:171</code>
                 </div>
-                <div class="finding-desc">`findLastDisputeColumns` 实际上对 `headerMap` 执行 `stream().findFirst()`，返回的是遍历遇到的第一个 `Dispute ID ` 列，而不是注释和业务上要求的“最后一个 dispute group”。当导出文件存在多个 dispute 分组时，这里会把第一组当成最终组解析，导致后续 DB 更新使用了错误的 `Dispute ID` 列。</div>
-                <div class="finding-suggestion">💡 修复建议：按列索引选择最大的 `Dispute ID` 列，而不是 `findFirst()`。例如：`headerMap.entrySet().stream().filter(...).max(Map.Entry.comparingByKey())`，再基于该列计算 `DisputeColumns`。</div>
+                <div class="finding-desc">异常分支把 `ex.getMessage()` 直接回传给调用方。导入链路涉及 Blob 读取、Excel 解析和数据库查询，底层异常消息可能包含内部存储路径、签名 URL 片段、库表/字段名等实现细节，造成不必要的信息泄露。</div>
+                <div class="finding-suggestion">💡 修复建议：对外返回固定的业务错误码/通用提示，详细异常仅记录到服务端安全日志；如需排障，可附加 traceId，而不是直接暴露底层异常文本。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillService.java:573-574</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/impl/ClientClaimModificationImportServiceImpl.java:235-243</code>
                 </div>
-                <div class="finding-desc">`countryCode` 在上方已经允许为 `null`（仅记录 warn），但在“Layer 1”分支里直接传给 `fleetCache.findByCountry(countryCode)`。当账单的 hub 未命中 facility cache 且该 bill 配置了 fleet 过滤时，这里会触发空指针或下游非法查询，导致 `getApLmBillFleets` 直接失败。</div>
-                <div class="finding-suggestion">💡 修复建议：在进入 `fleetCache.findByCountry(countryCode)` 前补充空值分支，和下方 Layer 2/3 的兜底逻辑保持一致。例如：`if (countryCode == null) { return billFleets.stream()...fleetName(String.valueOf(fleetId))...; }`，否则再查询 fleet cache。</div>
+                <div class="finding-desc">`findLastDisputeColumns` 的目标是定位“最后一组” dispute 列，但当前实现对 `headerMap.entrySet().stream()` 直接 `findFirst()`。`buildHeaderMap()` 使用 `Collectors.toMap(...)` 生成的是普通 `HashMap`，遍历顺序不稳定；当 Excel 中存在多组 `Dispute ID ...` 列时，这里可能命中任意一组而不是最后一组，导致导入把修改写到错误的 dispute 记录上。</div>
+                <div class="finding-suggestion">💡 修复建议：按列索引显式选择最大下标，而不是依赖 `Map` 遍历顺序。例如先筛选所有 `Dispute ID ` 列，再取 `max(Map.Entry.comparingByKey())`：`headerMap.entrySet().stream().filter(e -&gt; e.getValue().startsWith(&quot;Dispute ID &quot;)).max(Map.Entry.comparingByKey())...`。同时建议补充包含多组 dispute 列的导入测试。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillService.java:594-598</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/impl/DspClaimUploadServiceImpl.java:98-104</code>
                 </div>
-                <div class="finding-desc">“Layer 2/3” 分支只返回 `fleetCache.findByCountry(countryCode)` 中能匹配到的 fleet，`ap_lm_bill_settlement` 里实际存在但缓存缺失/未同步的 `fleet_id` 会被静默丢弃。结果是接口返回的 fleet 列表不完整，前端无法选择这些有效 fleet，进而影响 Fleet Dashboard 导出等后续功能。</div>
-                <div class="finding-suggestion">💡 修复建议：以 `dmsFleetIds` 为准生成结果集，再用 cache 仅补充名称；对 cache 未命中的 fleet 也应返回 DTO，并用 `String.valueOf(fid)` 或占位名称兜底。例如先构建 `Map&lt;Long,String&gt;`，再遍历 `dmsFleetIds` 逐个输出。</div>
+                <div class="finding-desc">这里先持久化 `BatchQueryTask`，再异步发送 Kafka 消息，但没有对发送失败做补偿或状态回写。如果 `sendMessageAsync(...)` 在生产端异常、topic 不可用或序列化失败时抛错，数据库里会留下 `WAIT_FOR_PROCESSING` 的任务，而消费者永远不会处理，任务中心会出现长期卡死的“处理中”记录。</div>
+                <div class="finding-suggestion">💡 修复建议：把发送动作包在 `try/catch` 中，并在失败时将任务状态更新为失败/取消，附带错误信息；或者使用事务外盒(outbox)模式保证“落库与投递”一致。最小修复可为：发送失败时更新 `savedTask.setStatus(FAILED)` 后保存，再抛出业务异常。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmRateCalcService.java:737</code>
+                    <code class="finding-loc">oms-facade-impl/src/main/java/io/speedx/oms/facade/impl/MqFacadeImpl.java:389-392</code>
                 </div>
-                <div class="finding-desc">新增的降级日志会在缺少 zipcode/country 时把 `sameAddressKeyword` 直接写入 `warn` 日志。该字段按上下文属于 same-address 识别关键词，通常来自收件地址信息；一旦进入告警日志，将形成可检索的地址类敏感信息泄露面。</div>
-                <div class="finding-suggestion">💡 修复建议：不要在告警日志中输出原始地址关键词。改为仅记录 routeId、是否缺失 zipcode/country 等诊断信息，或对 `sameAddressKeyword` 做脱敏/哈希后再记录。</div>
+                <div class="finding-desc">新增的 Kafka 监听方法在收到 `null` 或空消息时仍直接调用 `dspClaimImportConsumer.process(message)`。Kafka 在异常生产、补数或 tombstone 场景下可能出现空载荷，这里会把非法输入继续下传，容易触发解析异常或空指针，并导致该分区重复消费/阻塞。</div>
+                <div class="finding-suggestion">💡 修复建议：在调用消费者前先校验消息内容，空消息直接记录告警并返回；对非空消息再进入处理。例如：`if (message == null || message.trim().isEmpty()) { log.warn(&quot;Ignore empty DSP claim import message&quot;); return; } dspClaimImportConsumer.process(message);`</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArSettlementDomesticDetailService.java:462</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillOperationService.java:392-394</code>
                 </div>
-                <div class="finding-desc">`projectId` 的取值从 `settlement.getInvoiceNo()` 直接切换为 `projectName`，但新增逻辑仅在存在 invoice mapping 且 `netSuitJobName` 非空时才会填充该值。对于历史数据、已清理 mapping 或未生成 mapping 的 settlement，这里会把原本可导出的项目标识变成 `null`，导致导出结果缺失关键字段。</div>
-                <div class="finding-suggestion">💡 修复建议：保留兼容兜底逻辑，优先使用 `projectName`，为空时回退到原字段，例如：`response.setProjectId(StringUtils.isNotBlank(projectName) ? projectName : settlement.getInvoiceNo());`。同时补充无 mapping 场景的导出测试。</div>
+                <div class="finding-desc">`recordApLmBillOperations(...)` 失败时并不会抛出，而是可能返回 `null`（从同批次 `ApLmBillExecutionLogService` 的容错写法可以看出）。这里直接调用 `apLmBillOperation.getId()`，在操作日志落库失败时会触发空指针，导致导出任务提交流程整体失败。</div>
+                <div class="finding-suggestion">💡 修复建议：在使用返回值前做空判断，日志创建失败时要么显式抛出业务异常中断流程，要么允许任务继续但跳过 taskId 回写。例如：`if (apLmBillOperation == null) { throw new BizException(&quot;Failed to create export operation log&quot;); }`。</div>
             </div>
-            <p class="more-note">... 还有 26 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 25 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
