@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-exchange-api &nbsp;|&nbsp; 2026-05-21 09:14:02</div>
+      <div class="meta">pos-exchange-api &nbsp;|&nbsp; 2026-05-21 16:27:21</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -56,13 +56,13 @@
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#4caf50">31.3%</div>
+      <div class="metric-value" style="color:#4caf50">31.4%</div>
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#f44336">32.5%</div>
+            <div class="metric-value" style="color:#f44336">32.1%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:7</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:10</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -84,7 +84,7 @@
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube analysis timed out after 1 minutes</li>
 <li>AI Review: 1 Critical finding(s)</li>
-<li>AI Review: 7 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 10 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,65 +94,75 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerV2ServiceImpl.java:617-760</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/dao/LabelDao.java:604-617</code>
                 </div>
-                <div class="finding-desc">**原因：**
-新增 `transferParcel(...)`、`combineContainer(...)`（及其 `do...` 事务方法）执行了包裹解绑/重绑、容器合并等高影响写操作，但在该变更片段内未看到任何角色/权限校验（如 `@PreAuthorize`、`AuthUtil.requireRole()`）或调用方身份范围约束。
+                <div class="finding-desc">原因：新增原生查询 `findLabelsByContainerNum` 仅按 `container_num` 取 `pos_label` 全量记录，未体现任何基于 `facilityCode/orgId/fleetId/userId` 的数据范围约束。
 ```java
-@Transactional(rollbackOn = Exception.class)
-public Boolean transferParcel(TransferParcel transferParcel) { ... }
-
-public Boolean combineContainer(ContainerCombineBo containerCombineBo) { ... }
+@Query(value = &quot;select pl.* &quot; +
+        &quot;from pos_label pl &quot; +
+        &quot;join pos_container_parcel pcp on pcp.tracking_number = pl.tracking_number &quot; +
+        &quot;where pcp.container_num = :containerNum &quot; +
+        &quot;and pcp.deleted = false&quot;,
+        nativeQuery = true)
+List&lt;Label&gt; findLabelsByContainerNum(@Param(&quot;containerNum&quot;) String containerNum);
 ```
-**影响：**
-若上层 HTTP 入口未做严格鉴权与数据范围控制，具备接口访问能力的低权限主体可能触发跨容器迁移/合并，造成越权修改与业务数据完整性破坏（含跨仓/跨归属操作风险）。当前分片无法从 diff 直接确认其外层控制器是否已强制权限。</div>
-                <div class="finding-suggestion">💡 修复建议：为对应 HTTP 入口和/或 Facade 层增加强制鉴权与范围校验：
-1) 在入口方法添加 `@PreAuthorize`（或统一 `AuthUtil.requireRole(...)`）。
-2) 在服务内二次校验资源归属（至少校验 `facilityCode` 与当前登录用户一致），避免仅依赖前端参数。
-3) 对 `sourceCTN/targetCTN/trackingNo` 执行基于当前用户可见范围的校验后再写库。</div>
+影响：若上层入口未补充强制租户/网点过滤，知道或猜到 `containerNum` 的调用方可读取非本权限域标签数据，形成跨范围数据越权读取。</div>
+                <div class="finding-suggestion">💡 修复建议：在 DAO 查询中强制加入权限域条件（如 `facility_code/org_id`），并由 Service 从当前登录态注入，不允许仅靠 `containerNum` 查询。示例：
+```java
+@Query(value = &quot;select pl.* from pos_label pl &quot; +
+        &quot;join pos_container_parcel pcp on pcp.tracking_number = pl.tracking_number &quot; +
+        &quot;join pos_container pc on pc.id = pcp.container_id &quot; +
+        &quot;where pcp.container_num = :containerNum &quot; +
+        &quot;and pcp.deleted = false &quot; +
+        &quot;and pc.facility_code = :facilityCode&quot;,
+        nativeQuery = true)
+List&lt;Label&gt; findLabelsByContainerNumAndFacilityCode(@Param(&quot;containerNum&quot;) String containerNum,
+                                                     @Param(&quot;facilityCode&quot;) String facilityCode);
+```
+同时在对应 HTTP 入口增加角色校验（`@PreAuthorize` 或等效机制）与数据归属校验。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/bo/dispatch/ContainerInfoReq.java:15</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/dao/PosContainerParcelDao.java:33-34</code>
                 </div>
-                <div class="finding-desc">`boolean isSource` 与 Lombok `@Data` 组合会生成 `isSource()`/`setSource(...)` 风格访问器，JavaBean 属性名会被解释为 `source`，容易与期望的请求字段 `isSource` 产生反序列化/序列化不一致，导致来源标记丢失或误判。</div>
-                <div class="finding-suggestion">💡 修复建议：将字段改为 `private Boolean source;`（或 `private boolean source;`）并统一 API 字段名为 `source`；若外部契约必须是 `isSource`，请显式加 `@JsonProperty(&quot;isSource&quot;)` 并补充单测覆盖两种入参。示例：`@JsonProperty(&quot;isSource&quot;) private boolean source;`。</div>
+                <div class="finding-desc">`countByContainerNum` 的 SQL `count(distinct tracking_number)` 返回数值类型，但方法签名声明为 `String`，存在运行时类型转换不稳定风险（常见返回为 `BigInteger/Long`）。在不同 JDBC 驱动或方言下可能触发类型转换异常。</div>
+                <div class="finding-suggestion">💡 修复建议：将返回类型改为数值类型并在上层按需转换，例如：`Long countByContainerNum(String containerNum);`。若必须返回字符串，建议在服务层 `String.valueOf(count)` 做显式转换。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/dao/PosContainerParcelScanHistoryDao.java:29-30</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerImplService.java:1083-1089</code>
                 </div>
-                <div class="finding-desc">`softDeleteByTrackingNumber` 仅按 `tracking_number` 软删，未限制 `container_num`。当同一运单号在多个 container 有历史记录时，会一次性误删全部记录，造成合并/回滚链路的数据越界删除。</div>
-                <div class="finding-suggestion">💡 修复建议：将条件收敛到业务上下文（至少增加 `container_num`，必要时增加时间窗或操作批次标识）。示例：`... where tracking_number=?1 and container_num=?2 and deleted=false`，并同步调整方法签名。</div>
+                <div class="finding-desc">`scanParcelToContainer` 中同样采用“仅拦截 DISPATCHING/DISPATCHED”逻辑，在 `isPtcEnabled=true` 时会放行其他非 ACTIVE 状态。该行为会改变原先“仅 ACTIVE 可扫描”的状态机约束，存在把包裹扫入不应接收扫描的容器状态的风险。</div>
+                <div class="finding-suggestion">💡 修复建议：将放行条件显式限定为业务允许状态（如 `ACTIVE` 或 `ACTIVE/CLOSED`，按产品规则确定），不要使用“排除两个状态”的负向判断。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/container/PosContainerV2Service.java:76-80</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerImplService.java:1535-1540</code>
                 </div>
-                <div class="finding-desc">新增接口 `combineContainer` 与 `transferParcel` 使用 `Boolean` 作为返回类型（可为 null）。调用方若进行自动拆箱（如 `if (service.combineContainer(...))`）会触发空指针异常，属于显式边界风险。</div>
-                <div class="finding-suggestion">💡 修复建议：将返回类型改为原始类型 `boolean`，或统一返回明确结果对象（含 `success`/`code`/`message`）并禁止返回 null。例如：`boolean combineContainer(...)`、`boolean transferParcel(...)`。同时在实现类与测试中补充“失败分支返回 false 而非 null”的断言。</div>
+                <div class="finding-desc">`rollBackCodeFlags.isPtcEnabled()` 分支下仅拦截 `DISPATCHING/DISPATCHED`，会放行除这两种外的所有状态（例如非 `ACTIVE/CLOSED` 的异常状态）。但注释写的是“active and closed container can scan and get the container info”，实现与意图不一致，可能导致不应可查的容器被查询。</div>
+                <div class="finding-suggestion">💡 修复建议：按注释和业务意图改为白名单判断，例如：`boolean allowed = ACTIVE.equals(status) || CLOSED.equals(status); if (isPtcEnabled ? !allowed : !ACTIVE.equals(status)) { ... }`，避免放行未知状态。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerImplService.java:1084-1088</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerV2ServiceImpl.java:651-659</code>
                 </div>
-                <div class="finding-desc">容器状态拦截逻辑在 `isPtcEnabled=true` 时仅阻断 `DISPATCHING/DISPATCHED`，不再阻断 `CLOSED`。该变更会放开对关闭容器的扫描/绑定入口，和旧逻辑（仅 ACTIVE 可继续）相比会导致已关闭容器仍可被操作，存在业务流程异常风险。</div>
-                <div class="finding-suggestion">💡 修复建议：按业务规则显式收敛允许状态，避免通过“排除式”判断放开 CLOSED。例如改为白名单：`boolean allowed = PosContainerStatusEnum.ACTIVE.getName().equals(status); if (rollBackCodeFlags.isPtcEnabled()) { allowed = allowed || PosContainerStatusEnum.CLOSED.getName().equals(status); } if (!allowed) { ... }`，并补充 CLOSED 场景的单测确认是否允许扫描入箱。</div>
+                <div class="finding-desc">`transferParcel` 的 Redis 幂等键使用 `trackingNo:targetCTN`。这会允许同一 `trackingNo` 同时对不同 `targetCTN` 发起并发迁移请求（键不同不会互斥），两次请求都可通过 `setIfAbsent`，进而并发执行解绑/重绑，造成包裹归属竞争与状态不一致。</div>
+                <div class="finding-suggestion">💡 修复建议：将幂等/互斥粒度改为按 `trackingNo` 全局加锁（必要时再附加 facility 维度），确保同一包裹任意时刻只能有一个迁移事务执行。例如：`redisKey = &quot;transfer:&quot; + facilityCode + &quot;:&quot; + trackingNo`，并设置明确短 TTL。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerV2ServiceImpl.java:705-719</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerV2ServiceImpl.java:685-693</code>
                 </div>
-                <div class="finding-desc">`combineContainer` 的 Redis 去重键仅使用 `sourceCTN`（`redisKey = sourceCTN`），未绑定操作者/facility 等上下文。若接口可被频繁调用，攻击者可通过重复占位同一 `sourceCTN` 触发持续冲突，形成针对该容器的操作阻断（应用层 DoS）。</div>
-                <div class="finding-suggestion">💡 修复建议：将去重键改为更细粒度且含租户边界的信息（如 `facilityCode:sourceCTN:operator` 或请求幂等ID），并设置合理短 TTL、失败重试和审计告警；同时对入口增加限流。</div>
+                <div class="finding-desc">Redis 去重键仅在异常分支删除，成功路径未显式释放（`combineContainer` 同样模式）。若 `RedisDataEnum.TRANSFER_PARCEL/COMBINE_CONTAINER` 未配置合理过期时间或过期时间过长，会导致键长期占用，后续合法操作被持续拒绝，形成可利用的业务拒绝服务风险。</div>
+                <div class="finding-suggestion">💡 修复建议：在成功提交后显式删除去重键，或确保键 TTL 为严格短时并在代码中注明/校验。推荐在事务提交后释放：通过 `TransactionSynchronizationManager.registerSynchronization(...)` 在 `afterCommit` 删除键，避免回滚时误删。</div>
             </div>
-            <p class="more-note">... 还有 2 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 5 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
