@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">oms-api &nbsp;|&nbsp; 2026-05-22 01:03:11</div>
+      <div class="meta">oms-api &nbsp;|&nbsp; 2026-05-22 12:13:36</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:3 &nbsp; 主要:12</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:4 &nbsp; 主要:23</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,8 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 3 Critical finding(s)</li>
-<li>AI Review: 12 Major finding(s) &gt;= threshold 5</li></ul>
+<li>AI Review: 4 Critical finding(s)</li>
+<li>AI Review: 23 Major finding(s) &gt;= threshold 5</li></ul>
         </div>
         
   
@@ -94,41 +94,76 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-facade-impl/src/main/java/io/speedx/oms/facade/impl/BillingZoneFacadeImpl.java:65-74</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/hub/ApLmBillHubResolver.java:29</code>
                 </div>
-                <div class="finding-desc">**原因：** 新增的 POST 接口逻辑未见 `AuthUtil.requireRole()` 或 `@PreAuthorize`，且直接使用请求中的 `pickupAccountId`/`facilityCode` 查询分区配置，缺少基于当前登录主体的数据范围校验。
+                <div class="finding-desc">**原因：** 新增的 `bypassRoles()` 将 `DSP_LM_BILL_AUDITOR`、`DSP_LM_BILL_BILLING` 设为“完全绕过 hub 校验”角色。该类后续 `validateAccess(...)` 中的 hub 范围校验与 specialist 归属校验都依赖统一校验链，一旦命中 bypass 将不再执行这些数据范围限制。
+```java
+@Override
+public String[] bypassRoles() { return new String[]{&quot;DSP_LM_BILL_AUDITOR&quot;, &quot;DSP_LM_BILL_BILLING&quot;}; }
+```
+**影响：** 若上述角色仅应具备“跨流程查看/操作”而非“跨 hub 全量访问”权限，则会导致 AP LM Bill 数据越权可见或越权操作（跨 hub 数据面暴露）。当前分片未给出对应 HTTP 入口与更细粒度约束，无法证明该绕过是最小权限设计。</div>
+                <div class="finding-suggestion">💡 修复建议：将 bypass 从“全量跳过”改为“最小化豁免”：仅在确有业务需要的方法上做显式放行，并保留 hub 校验或追加只读限制。示例：
+```java
+@Override
+public String[] bypassRoles() {
+    return new String[]{&quot;DSP_LM_BILL_AUDITOR&quot;}; // 仅保留经审批的最小集合
+}
+
+@Override
+public void validateAccess(HubValidationContext ctx) {
+    HubResolver.super.validateAccess(ctx); // 保留 hub 校验基线
+    // 如 billing 需跨 hub，仅允许特定只读动作，在调用点再做动作级鉴权
+}
+```
+同时补充对应控制器/Facade 的 `@PreAuthorize` 或等效动作级权限校验，避免角色被授予后获得跨 hub 全能力。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/CustomerSlaDefinitionService.java:205-319</code>
+                </div>
+                <div class="finding-desc">原因：`page()`/`buildPageSpec()` 新增实现仅按请求参数拼接查询条件，未基于当前登录主体做任何数据范围收敛（如按用户可见 `customerId/pickupId` 白名单过滤）。当 `filterModel` 为空时将返回全量数据。\n```java\nPageable pageable = buildPageable(req);\nSpecification&lt;CustomerSlaDefinition&gt; spec = buildPageSpec(req.getFilterModel());\nPage&lt;CustomerSlaDefinition&gt; result = customerSlaDefinitionRepository.findAll(spec, pageable);\n```\n影响：具备接口访问权限但不具备全量数据权限的主体可通过空过滤或构造过滤条件读取非授权客户 SLA 规则，造成越权读取。</div>
+                <div class="finding-suggestion">💡 修复建议：在进入 `page()` 前强制做数据范围注入与校验：从会话中提取主体可见的 `customerId/pickupId` 集合，并与请求条件取交集；若无交集直接拒绝。示例：\n```java\nSet&lt;Long&gt; allowedCustomerIds = authScopeService.allowedCustomerIdsOfCurrentUser();\nif (allowedCustomerIds.isEmpty()) {\n    throw new BizException(&quot;forbidden&quot;);\n}\nspec = spec.and((root,q,cb) -&gt; root.get(&quot;customerId&quot;).in(allowedCustomerIds));\n```</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">oms-facade-impl/src/main/java/io/speedx/oms/facade/impl/BillingZoneFacadeImpl.java:66-76</code>
+                </div>
+                <div class="finding-desc">原因：新增的 `getZoneProfileId` 作为对外 POST 入口对应实现中，未见 `AuthUtil.requireRole()` 或 `@PreAuthorize` 等显式角色鉴权；同时仅使用请求中的 `pickupAccountId/facilityCode` 直传到服务层，未在该变更中体现基于当前登录主体的数据范围约束。
 
 ```java
-List&lt;Long&gt; accountGroupsByAccountId = customerService.getAccountGroupsByAccountId(request.getPickupAccountId());
-Long zoneId = billingZoneService.getZoneProfileId(
-        request.getProductCode(),
-        request.getPickupAccountId(),
-        accountGroupsByAccountId,
-        request.getFacilityCode(),
-        request.getTime()
-);
+@Override
+public BaseResponse&lt;Long&gt; getZoneProfileId(ZoneProfileIdRequest request) {
+    log.info(&quot;Getting zone id - request: {}&quot;, request);
+    List&lt;Long&gt; accountGroupsByAccountId = customerService.getAccountGroupsByAccountId(request.getPickupAccountId());
+    Long zoneId = billingZoneService.getZoneProfileId(
+            request.getProductCode(),
+            request.getPickupAccountId(),
+            accountGroupsByAccountId,
+            request.getFacilityCode(),
+            request.getTime()
+    );
+    return BaseResponse.success(zoneId);
+}
 ```
 
-**影响：** 攻击者可伪造他人 `pickupAccountId` 或跨 `facilityCode` 请求，获取不属于自身权限范围的分区信息，构成越权读取（IDOR/数据范围越界）。
+影响：若上游未统一拦截，该接口可能被低权限主体调用并利用可控 `pickupAccountId/facilityCode` 探测或读取非本属计费分区信息，造成越权访问与数据可见范围扩大。
 
 ---
 
-新增对外接口 `getZoneProfileId` 未见任何权限校验/权限声明（如 `@PreAuthorize` 或等效鉴权逻辑），存在被未授权调用的风险。</div>
-                <div class="finding-suggestion">💡 修复建议：为该入口增加强制角色鉴权与数据范围校验：
-1) 在入口层添加 `@PreAuthorize(...)`（或调用 `AuthUtil.requireRole(...)`）限制可访问角色；
-2) 从登录态获取可访问 `accountId/facilityCode` 范围，拒绝与 `request` 不一致的数据；
-3) 在 `billingZoneService.getZoneProfileId(...)` 内再做一次服务层兜底校验，避免绕过。
+原因：新增了对外调用路径 `POST /billingZone/getZoneProfileId` 的 Feign 契约，但本分片仅包含客户端接口声明，未包含对应服务端实现/控制器鉴权注解（如 `@PreAuthorize`）或显式角色校验逻辑，无法确认是否进行了角色与数据范围限制。
+
+影响：若服务端对应入口未做严格鉴权或数据范围过滤，调用方可能查询到不属于自身权限范围的 zone profile id，形成越权读取风险。</div>
+                <div class="finding-suggestion">💡 修复建议：在该 HTTP 入口增加强制鉴权与数据范围校验，至少满足：1）角色校验（`@PreAuthorize` 或 `AuthUtil.requireRole`）；2）将 `facilityCode/pickupAccountId` 与当前用户可访问范围做交叉校验后再调用服务层。
 
 示例：
 ```java
-@PreAuthorize(&quot;hasAnyRole(&#x27;OPERATOR&#x27;,&#x27;DISPATCHER&#x27;,&#x27;ADMIN&#x27;)&quot;)
+@PreAuthorize(&quot;hasAnyRole(&#x27;OPERATOR&#x27;,&#x27;DISPATCHER&#x27;,&#x27;DRIVER_LEADER&#x27;)&quot;)
 public BaseResponse&lt;Long&gt; getZoneProfileId(ZoneProfileIdRequest request) {
-    Long loginAccountId = AuthUtil.currentAccountId();
-    String loginFacilityCode = AuthUtil.currentFacilityCode();
-    if (!Objects.equals(loginAccountId, request.getPickupAccountId())
-            || !Objects.equals(loginFacilityCode, request.getFacilityCode())) {
-        throw new AccessDeniedException(&quot;forbidden&quot;);
-    }
+    LoginUserBo user = AuthUtil.currentUser();
+    authzService.assertFacilityAllowed(user, request.getFacilityCode());
+    authzService.assertAccountAllowed(user, request.getPickupAccountId());
     ...
 }
 ```</div>
@@ -136,10 +171,9 @@ public BaseResponse&lt;Long&gt; getZoneProfileId(ZoneProfileIdRequest request) {
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-facade-impl/src/main/java/io/speedx/oms/facade/impl/web/external/v1/CustomerSlaExternalController.java:52-63</code>
+                    <code class="finding-loc">oms-facade-impl/src/main/java/io/speedx/oms/facade/impl/web/external/v1/CustomerSlaExternalController.java:58-66</code>
                 </div>
-                <div class="finding-desc">**原因：** 该 HTTP 入口仅校验 `X-API-KEY` 是否存在于系统（`getCustomerAccountIdByApiKey(apiKey) != null`），但后续查询未使用解析出的 `customerAccountId` 做任何数据范围绑定；请求方可自带任意 `pickupId` 读取规则，缺少按调用方身份进行租户/归属过滤。
-
+                <div class="finding-desc">原因：接口仅校验 `X-API-KEY` 是否存在于系统中，但未将调用方身份与请求中的 `pickupId` 建立授权约束，也未做数据范围过滤。任一有效 API Key 持有方都可传入任意 `pickupId` 读取对应 SLA。
 ```java
 if (customerAccountApiKeyService.getCustomerAccountIdByApiKey(apiKey) == null) {
     return BaseResponse.error(401, &quot;Invalid X-API-KEY&quot;);
@@ -148,80 +182,64 @@ return BaseResponse.success(customerSlaDefinitionService
         .readByPickup(req.getPickupId(), req.getProductCode())
         .orElse(null));
 ```
-
-**影响：** 任意持有有效 API Key 的调用方都可能读取非本方 `pickupId` 对应的 SLA 信息，形成跨租户数据越权读取；一旦密钥泄露，攻击面扩大为全量可枚举读取。</div>
-                <div class="finding-suggestion">💡 修复建议：将 API Key 解析出的主体身份强制参与查询约束，禁止仅凭 `pickupId` 直查。示例：在 service 层新增 `readByPickupAndCustomer(customerAccountId, pickupId, productCode)`，并校验 `pickupId` 归属该 `customerAccountId`；不匹配时返回 403。
+影响：会导致跨租户/跨客户数据可见性扩大（越权读取）。一旦某下游服务的 API Key 泄露或被滥用，攻击者可批量枚举 `pickupId` 获取其他客户 SLA 规则，构成敏感业务配置泄露风险。</div>
+                <div class="finding-suggestion">💡 修复建议：将 API Key 解析出的 `customerAccountId` 作为强制授权边界，并在查询时同时按 `customerAccountId + pickupId + productCode` 过滤；若 `pickupId` 不属于该 `customerAccountId`，返回 403。示例：
 ```java
-Long customerAccountId = customerAccountApiKeyService.getCustomerAccountIdByApiKey(apiKey);
-if (customerAccountId == null) {
+Long callerCustomerId = customerAccountApiKeyService.getCustomerAccountIdByApiKey(apiKey);
+if (callerCustomerId == null) {
     return BaseResponse.error(401, &quot;Invalid X-API-KEY&quot;);
 }
-return BaseResponse.success(customerSlaDefinitionService
-    .readByPickupAndCustomer(customerAccountId, req.getPickupId(), req.getProductCode())
-    .orElse(null));
-```
-同时建议为该接口补充调用方范围校验与越权访问测试。</div>
-            </div>
-            <div class="finding-card finding-critical">
-                <div class="finding-header">
-                    <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-facade-impl/src/main/java/io/speedx/oms/facade/impl/web/admin/CustomerSlaDefinitionController.java:37-69</code>
-                </div>
-                <div class="finding-desc">原因：仅见功能权限 `@RequirePermissions(&quot;customer-sla:delete&quot;)`，新增删除入口未在该分片中体现资源归属校验（如 `fleetId/userId/facilityCode` 绑定校验）。
-
-影响：具备删除权限的主体可通过枚举/猜测 `id` 删除非本人或非本范围资源，导致越权删除。
-
-```java
-@RequirePermissions(&quot;customer-sla:delete&quot;)
-@DeleteMapping(&quot;/{id}&quot;)
-public BaseResponse&lt;Void&gt; delete(@PathVariable Long id) {
-    customerSlaDefinitionService.delete(id);
+if (!customerSlaDefinitionService.isPickupOwnedByCustomer(req.getPickupId(), callerCustomerId)) {
+    return BaseResponse.error(403, &quot;Forbidden&quot;);
 }
+return BaseResponse.success(
+    customerSlaDefinitionService.readByPickupAndCustomer(callerCustomerId, req.getPickupId(), req.getProductCode())
+        .orElse(null)
+);
 ```</div>
-                <div class="finding-suggestion">💡 修复建议：在删除前强制做归属校验（资源所属 fleet/facility/user 与当前登录主体一致）后再执行删除；服务层统一封装 `checkOwnershipOrThrow(id, currentUser)` 并在 `delete` 入口必经。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/hub/ApLmBillHubResolver.java:54</code>
+                </div>
+                <div class="finding-desc">`result.getHub().toUpperCase()` 在 `hub` 为空时会触发空指针，导致权限校验流程直接异常中断（500），属于边界条件未覆盖。</div>
+                <div class="finding-suggestion">💡 修复建议：先对 `hub` 做非空校验再比较，例如：`String hub = result.getHub(); if (hub == null) { throw new BizException(&quot;AP LM Bill hub is missing: &quot; + ctx.getEntityId()); } if (!ctx.getAllowedHubs().contains(hub.toUpperCase())) { ... }`。同时建议在 `resolveHub` 中也统一保证返回非空 hub。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
                     <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillExportService.java:798</code>
                 </div>
-                <div class="finding-desc">`mapCountryDisplay` 在 `countryCode == null` 时从原来的 `null` 改为固定返回 `&quot;USA&quot;`，会把缺失国家码的数据误标为美国，导致导出数据语义错误。</div>
-                <div class="finding-suggestion">💡 修复建议：保留空值语义，改回 `return null;`；若业务需要默认国家，建议仅在明确的上游场景做兜底并增加显式标记字段，避免把“未知”与“美国”混淆。</div>
+                <div class="finding-desc">`countryCode == null` 时返回值从 `null` 改为固定 `&quot;USA&quot;`，会把缺失国家数据伪造为美国，导致导出结果失真（统计、对账、下游解析都可能被误导）。</div>
+                <div class="finding-suggestion">💡 修复建议：保留空值语义，不要把未知值映射为具体国家。示例：`if (countryCode == null) { return null; }`；如业务确需默认值，建议新增显式标识（如 `&quot;UNKNOWN&quot;`）并同步更新下游规则。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArSettlementDomesticDetailService.java:251-252</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArSettlementServiceUtil.java:35-46</code>
                 </div>
-                <div class="finding-desc">`forwardParcels.stream().collect(Collectors.toMap(Parcel::getTrackingNo, p -&gt; p))` 未提供冲突合并策略。若查询结果出现重复 `trackingNo`（历史脏数据/跨分表重复），运行时会抛 `IllegalStateException`，导致导出流程失败。</div>
-                <div class="finding-suggestion">💡 修复建议：改为带 mergeFunction 的 `toMap`，并记录冲突日志，例如：`Collectors.toMap(Parcel::getTrackingNo, Function.identity(), (a,b) -&gt; a)`；国际/SF 同类代码保持一致修复。</div>
+                <div class="finding-desc">`resolveBasedOnFlag` 在 `settlement.getBasedOnCustomerDimension()` 非空时直接返回原值，未做标准化。调用侧大量使用 `&quot;N&quot;.equals(basedOnFlag)`，若库内存在小写/空白值（如 `&quot;n&quot;`、`&quot; N &quot;`），会错误走客户维度分支，导致尺寸/重量取值与计费展示不一致。</div>
+                <div class="finding-suggestion">💡 修复建议：在工具方法内统一标准化并兜底非法值。示例：`flag = StringUtils.trimWhitespace(flag); flag = flag == null ? null : flag.toUpperCase(); if (!&quot;Y&quot;.equals(flag) &amp;&amp; !&quot;N&quot;.equals(flag)) { flag = &quot;Y&quot;; }`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArSettlementInternationalDetailService.java:255-256</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/CustomerSlaDefinitionService.java:248-255</code>
                 </div>
-                <div class="finding-desc">与 Domestic 相同，`toMap(Parcel::getTrackingNo, p -&gt; p)` 在重复 key 时会抛 `IllegalStateException`，可导致国际明细导出中断。</div>
-                <div class="finding-suggestion">💡 修复建议：增加 mergeFunction（如保留首条）并补充重复 key 日志；与其他明细服务统一实现。</div>
+                <div class="finding-desc">`applyLongEquals` 对 `filterModel.values/filter` 直接执行 `Long.valueOf`，遇到非数字输入会抛出 `NumberFormatException`，导致分页接口 500，而不是可控的参数校验错误。</div>
+                <div class="finding-suggestion">💡 修复建议：在转换前做数字校验并对非法值返回业务异常，例如：`if (!NumberUtils.isParsable(v)) { throw new BizException(&quot;Invalid customerId/pickupId filter&quot;); }`；或在本方法内捕获 `NumberFormatException` 并转换为 `BizException`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArSettlementSfDetailService.java:255-256</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ParcelService.java:1484-1490</code>
                 </div>
-                <div class="finding-desc">与 Domestic/International 相同，`Collectors.toMap` 未处理重复 `trackingNo`，存在运行时异常风险，可能中断 SF 明细导出。</div>
-                <div class="finding-suggestion">💡 修复建议：使用 `Collectors.toMap(keyMapper, valueMapper, mergeFunction)` 处理重复 key，并打点监控重复数据。</div>
+                <div class="finding-desc">计费重量来源被改为固定使用 `parcel.getActualWeight()`。当 `actualWeight` 为空（但 `verifiedWeight` 有值）时，后续 `UomConvertUtils.convert(...)` 可能触发空指针，且与原有“可回退 verifiedWeight”的行为不一致，存在计费失败回归风险。</div>
+                <div class="finding-suggestion">💡 修复建议：保留空值兜底逻辑，至少保证 `actualWeight` 为空时回退到 `verifiedWeight`（在满足业务条件时）；并在两者都为空时明确抛出业务异常而非进入底层 NPE。</div>
             </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/CustomerSlaDefinitionService.java:252-259</code>
-                </div>
-                <div class="finding-desc">`applyLongEquals` 对 `f.getValues()` 和 `f.getFilter()` 直接执行 `Long.valueOf(...)`，当前端传入非数字字符串时会抛 `NumberFormatException`，导致分页接口 500，而不是可控的参数错误响应。</div>
-                <div class="finding-suggestion">💡 修复建议：在转换前做数值校验并对非法值返回业务异常。例如：先用 `StringUtils.isNumeric`/正则校验，或在 `try-catch` 中捕获 `NumberFormatException` 后抛 `BizException(&quot;Invalid filter for &quot; + column)`；对 `values` 列表建议过滤非法项并在全非法时返回明确错误。</div>
-            </div>
-            <p class="more-note">... 还有 7 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 18 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
