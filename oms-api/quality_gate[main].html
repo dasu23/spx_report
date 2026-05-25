@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">oms-api &nbsp;|&nbsp; 2026-05-25 10:35:47</div>
+      <div class="meta">oms-api &nbsp;|&nbsp; 2026-05-25 14:11:38</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:13 &nbsp; 主要:34</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:9 &nbsp; 主要:32</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,8 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 13 Critical finding(s)</li>
-<li>AI Review: 34 Major finding(s) &gt;= threshold 5</li></ul>
+<li>AI Review: 9 Critical finding(s)</li>
+<li>AI Review: 32 Major finding(s) &gt;= threshold 5</li></ul>
         </div>
         
   
@@ -94,138 +94,176 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/impl/ClientClaimModificationImportServiceImpl.java:241-244</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/impl/ClientClaimModificationImportServiceImpl.java:235-252</code>
                 </div>
-                <div class="finding-desc">`readAllRows(String fileUrl)` 直接使用外部输入的 `fileUrl` 打开流读取，未做来源域名/协议白名单校验，存在恶意 URL 被服务端请求与解析的风险（可被用于 SSRF 或读取非预期资源）。</div>
-                <div class="finding-suggestion">💡 修复建议：对 `fileUrl` 增加严格校验：仅允许受信任对象存储域名、限定 `https` 协议、校验路径前缀与签名有效期；拒绝内网地址与本地文件协议。示例：先 `URI` 解析并校验 host 在 allowlist，再调用 `openBlobStreamFromUrl`。</div>
+                <div class="finding-desc">`readAllRows(String fileUrl)` 直接使用外部输入的 `fileUrl` 调用 `omsAzureBlobUtil.openBlobStreamFromUrl(fileUrl)`，未见协议/域名/路径白名单校验。若调用方可控 `fileUrl`，存在读取非预期资源或内部资源探测风险（SSRF/越权读取对象存储）。</div>
+                <div class="finding-suggestion">💡 修复建议：在进入 `openBlobStreamFromUrl` 前做强校验：仅允许受信任 Blob 域名、HTTPS、限定容器/路径前缀，并校验签名参数与过期时间；拒绝任意外部 URL。示例：`URI u=URI.create(fileUrl); if(!&quot;https&quot;.equals(u.getScheme())||!trustedHosts.contains(u.getHost())) throw new BizException(&quot;invalid file url&quot;);`</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-facade/src/main/java/io/speedx/oms/facade/model/dto/ClientClaimExportDto.java:19-20</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillOperationService.java:408-410</code>
                 </div>
-                <div class="finding-desc">**原因：** 新增 `parcelId`（注释明确用于“re-uploading for modification”时做DB更新定位）把可修改记录的主键暴露给客户端输入链路。如果后续导入/保存接口仅按该ID更新、未做 `userId`/租户归属校验，会形成典型IDOR越权修改入口。\n\n**影响：** 攻击者可篡改导入文件中的 `parcelId` 指向他人记录，导致跨租户/跨账号的理赔数据被非法修改。当前diff未展示对应接口实现，无法断言是否已做归属校验。
-
----
-
-**原因：** 新DTO同时新增 `parcelId` 与嵌套 `disputeId`，并在注释中声明“用于re-upload后DB update”。这会把内部主键作为客户端可控输入回流到写操作；若服务端未对 claim/dispute 的归属进行逐条校验，攻击者可通过替换ID进行批量越权更新。\n\n**影响：** 可导致跨主体修改理赔主记录及争议子记录（`disputeId`），扩大到批量导入场景时影响面更大。</div>
-                <div class="finding-suggestion">💡 修复建议：在所有基于 `parcelId` 的修改入口强制执行“ID + 归属”联合校验：按 `parcelId` 查记录后，校验其 `userId`/tenant/facility 与当前登录主体一致，不一致直接拒绝；禁止仅凭前端传入主键执行更新。示例：`update ... where id = :parcelId and tenant_id = :currentTenantId`，并校验更新影响行数必须为1。</div>
+                <div class="finding-desc">原因：`exportFleetDashboard` 在提交异步任务前未强制认证/授权，新增代码在 `AuthUtil.findPrincipal()==null` 时将 `currentUserId` 降级为 `0L` 并继续提交任务，形成“未认证也可落任务上下文”的路径。
+```java
+Long currentUserId = AuthUtil.findPrincipal() == null ? 0L : AuthUtil.findPrincipal().getId();
+BatchQueryResponse response = batchQueryService.submitBatchQuery(batchQueryRequest, currentUserId);
+```
+影响：若上游鉴权配置出现放行或被绕过，请求可在匿名/伪匿名上下文触发导出任务，导致未授权任务创建与潜在数据导出（越权读取）。</div>
+                <div class="finding-suggestion">💡 修复建议：在该方法内做强制认证与角色校验，禁止匿名兜底 `0L`。示例：
+```java
+AuthPrincipal principal = AuthUtil.findPrincipal();
+if (principal == null) {
+    throw new BizException(&quot;Unauthorized&quot;);
+}
+AuthUtil.requireRole(&quot;AP_LM_BILL_EXPORT&quot;);
+Long currentUserId = principal.getId();
+```
+并在提交前校验 `apLmBillId/fleetId` 的数据归属范围（与当前用户可见 fleet/facility 绑定）。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
                     <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillService.java:557-620</code>
                 </div>
-                <div class="finding-desc">原因：新增查询接口 `getApLmBillFleets(Long id)` 直接按请求 `id` 读取账单并返回关联 fleet 列表，变更代码中未体现当前用户对该 bill 的访问权限与数据范围过滤校验。
+                <div class="finding-desc">原因：新增 `getApLmBillFleets` 仅按入参 `id` 查询并返回 fleet 列表，方法内未见任何角色校验或数据范围过滤（如按 `fleetId/facilityCode/userId` 约束）。
 ```java
-public List&lt;FleetSimpleDto&gt; getApLmBillFleets(Long id) {
-    ApLmBill apLmBill = apLmBillRepository.findById(id)...
-    ...
-    List&lt;ApLmBillFleet&gt; billFleets = apLmBillFleetRepository.findByApLmBillId(id);
-    ...
-    List&lt;Long&gt; dmsFleetIds = apLmBillSettlementRepository.findDistinctFleetIdsByApLmBillId(id);
+ApLmBill apLmBill = apLmBillRepository.findById(id)...
+List&lt;ApLmBillFleet&gt; billFleets = apLmBillFleetRepository.findByApLmBillId(id);
+...
+List&lt;Long&gt; dmsFleetIds = apLmBillSettlementRepository.findDistinctFleetIdsByApLmBillId(id);
+```
+影响：只要知道/枚举 billId，即可能读取不属于当前用户可见范围的 fleet 信息，造成跨租户/跨组织数据越权读取。</div>
+                <div class="finding-suggestion">💡 修复建议：在方法入口补充认证与角色校验，并对 bill 归属与返回数据做范围过滤。示例：
+```java
+AuthUtil.requireRole(&quot;AP_LM_BILL_VIEW&quot;);
+Long uid = AuthUtil.findPrincipal().getId();
+if (!permissionService.canViewBill(uid, id)) {
+    throw new BizException(&quot;Forbidden&quot;);
 }
 ```
-影响：若上层未做严格限制，攻击者可枚举 `id` 获取其他账单的车队信息，导致跨账单数据可见性扩大（IDOR 风险）。</div>
-                <div class="finding-suggestion">💡 修复建议：为该接口补齐访问控制：1) 调用前强制鉴权；2) 在服务层增加 `assertBillReadableByCurrentUser(id)`，按用户角色及 `facilityCode/fleetId` 做数据范围校验；3) 对 driver-leader/operator/dispatcher 等角色分别收敛可见范围。示例：
-```java
-public List&lt;FleetSimpleDto&gt; getApLmBillFleets(Long id) {
-    Long userId = AuthUtil.findPrincipal().getId();
-    authzService.assertBillReadableByCurrentUser(userId, id);
-    ...
-}
-```</div>
+查询 `findByApLmBillId` / `findDistinctFleetIdsByApLmBillId` 时增加按用户可见 `fleetId/facilityCode` 的过滤条件。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/CustomerService.java:1136-1190</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/CustomerService.java:1138-1196</code>
                 </div>
-                <div class="finding-desc">原因：新增方法 `listAvailablePickupsByNetSuite(String netSuiteCode)` 仅按入参 `netSuiteCode` 查询并返回所有映射客户下的 pickup 账号，代码中未体现任何调用方身份绑定或数据归属校验（例如“当前用户仅可查询自身 netSuiteCode”）。攻击者若可调用该接口并猜测/枚举 netSuiteCode，可读取他方账号信息。
-影响：造成跨租户数据越权读取（pickupAccountId、pickupName、orgCode 等业务敏感主数据泄露），可被用于后续横向枚举与业务探测。
+                <div class="finding-desc">原因：新增方法 `listAvailablePickupsByNetSuite` 直接使用外部入参 `netSuiteCode` 查询并返回该编码下全部 customer 的 pickup 账户，代码中未见任何调用方身份与 `netSuiteCode` 归属关系校验，也未做按当前用户可见范围过滤。
+```java
+List&lt;ArReceivableCustomerMapping&gt; mappings = arReceivableCustomerMappingRepository.findByNetSuitCustomerCode(netSuiteCode);
+...
+.flatMap(customerId -&gt; customerAccountRepository.findByCustomerId(customerId).stream())
+```
+影响：若调用端可控 `netSuiteCode`，可枚举/读取其他客户的 pickupAccountId、orgCode、状态等数据，导致跨租户越权读取。
 
 ---
 
-原因：新增 `listAvailablePickupsByNetSuite` 直接按外部传入 `netSuiteCode` 返回可用提货点，变更行未体现任何鉴权注解或数据范围过滤。
-影响：任意可访问该接口的调用方可枚举/查询其他客户的网点配置，导致客户维度数据越权可见。
+**原因：**
+新增查询接口 `listAvailablePickupsByNetSuite` 直接按 `netSuiteCode` 返回可用提货点，变更代码未体现调用者身份鉴权与数据范围过滤。
+```java
+public BaseResponse&lt;List&lt;AvailablePickupResp&gt;&gt; listAvailablePickupsByNetSuite(String netSuiteCode) {
+    return BaseResponse.success(customerService.listAvailablePickupsByNetSuite(netSuiteCode));
+}
+```
+**影响：**
+调用方可通过枚举/猜测 `netSuiteCode` 读取其他客户的提货点信息，造成跨客户数据暴露。
 
 ---
 
-原因：新增通过 `netSuiteCode` 查询提货点的 GET 入口，当前变更仅体现参数透传，未体现对 `netSuiteCode` 与当前主体的绑定校验。
+原因：新增通过 `netSuiteCode` 查询可用提货点接口；变更仅包含接口声明，未见 `netSuiteCode` 与当前用户客户归属关系校验。
+
 ```java
 @GetMapping(&quot;/customer/available-pickups-by-netsuite&quot;)
 BaseResponse&lt;List&lt;AvailablePickupResp&gt;&gt; listAvailablePickupsByNetSuite(@RequestParam(name=&quot;netSuiteCode&quot;) String netSuiteCode);
 ```
-影响：若实现未校验账号归属，调用者可枚举/猜测 `netSuiteCode` 读取其他客户可用提货点，造成客户数据可见范围扩大。</div>
-                <div class="finding-suggestion">💡 修复建议：在 Facade/Controller 入口增加强制鉴权与数据范围校验：将 `netSuiteCode` 与当前登录主体（token/apiKey 对应 customer）做一致性校验，不允许前端任意传入他方 code；或忽略请求参数，直接从认证上下文派生可访问的 netSuiteCode 列表后再查询。示例：`if (!authContext.allowedNetSuiteCodes().contains(netSuiteCode)) throw new AccessDeniedException(...)`。</div>
+
+影响：若实现层缺失归属校验，可能通过传入他人 `netSuiteCode` 获取不应可见的提货点数据。</div>
+                <div class="finding-suggestion">💡 修复建议：在 Facade/Controller 入口对该接口增加强制鉴权与数据归属校验（例如 `@PreAuthorize` 或 `AuthUtil.requireRole()` + 当前用户仅可访问其绑定的 netSuiteCode 列表），并在服务层追加二次校验；查询条件应叠加调用方可见 customerId 范围。示例：先取 `allowedCustomerIds`，再执行 `customerIds.retainAll(allowedCustomerIds)` 后查询。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/FuelCoefficientService.java:124-151</code>
+                    <code class="finding-loc">oms-facade-impl/src/main/java/io/speedx/oms/facade/impl/BillingZoneFacadeImpl.java:65-75</code>
                 </div>
-                <div class="finding-desc">原因：`querySourceFuelFee` 虽接收 `userSoldToIds`，但仅做空集合短路，后续查询 `fuelSurchargeRepositorySql.findAllFuelSurcharges(request.getFilterModel(), pageable)` 未将 `userSoldToIds` 注入查询条件，导致数据范围约束缺失。
-影响：只要请求方具备该接口访问权限且传入非空 `userSoldToIds`，即可通过构造过滤条件读取不属于其 soldTo 范围的数据，形成越权读取。</div>
-                <div class="finding-suggestion">💡 修复建议：在进入仓储层前强制注入并校验 soldTo 维度过滤，且仓储 SQL 必须以 `userSoldToIds` 作为硬条件（不可仅依赖前端 filterModel）。示例：在 `request.filterModel` 中追加受控 `soldToId IN (:userSoldToIds)`，并在 `findAllFuelSurcharges(...)` 参数中显式传入 `userSoldToIds` 参与 where 条件拼装。</div>
+                <div class="finding-desc">**原因：**
+新增入口 `getZoneProfileId` 直接使用请求中的 `pickupAccountId/facilityCode` 查询分区配置，变更代码中未见 `AuthUtil.requireRole()`、`@PreAuthorize` 或基于当前登录主体的数据范围约束。
+```java
+public BaseResponse&lt;Long&gt; getZoneProfileId(ZoneProfileIdRequest request) {
+    List&lt;Long&gt; accountGroupsByAccountId = customerService.getAccountGroupsByAccountId(request.getPickupAccountId());
+    Long zoneId = billingZoneService.getZoneProfileId(...);
+    return BaseResponse.success(zoneId);
+}
+```
+**影响：**
+若调用方可构造任意 `pickupAccountId`，可越权探测/读取不属于自身的数据范围（账户组与zone映射），导致跨租户数据可见性扩大。
+
+---
+
+原因：新增了可按请求参数获取 `zoneProfileId` 的 HTTP 入口映射，但本分片仅见 Feign Facade 接口声明，未见任何角色校验（如 `@PreAuthorize`/`AuthUtil.requireRole()`）或数据归属/范围约束逻辑。
+
+```java
+@PostMapping(&quot;/billingZone/getZoneProfileId&quot;)
+BaseResponse&lt;Long&gt; getZoneProfileId(@RequestBody ZoneProfileIdRequest request);
+```
+
+影响：若下游实现未补充鉴权与数据范围过滤，调用方可能通过构造请求读取不属于自身租户/组织的分区标识，形成越权读取风险。</div>
+                <div class="finding-suggestion">💡 修复建议：为该 POST 入口补充显式角色校验与数据归属校验：
+1) 在入口增加 `@PreAuthorize` 或 `AuthUtil.requireRole(...)`；
+2) 使用当前登录用户可访问的 account/facility 集合与 `request.pickupAccountId/facilityCode` 做交集校验，不通过即拒绝。
+```java
+@PreAuthorize(&quot;hasAnyRole(&#x27;OPERATOR&#x27;,&#x27;DISPATCHER&#x27;,&#x27;DRIVER_LEADER&#x27;)&quot;)
+public BaseResponse&lt;Long&gt; getZoneProfileId(ZoneProfileIdRequest request) {
+    Long currentAccountId = AuthUtil.currentAccountId();
+    if (!customerService.canAccessPickupAccount(currentAccountId, request.getPickupAccountId())) {
+        throw new BizArgumentException(&quot;forbidden&quot;);
+    }
+    ...
+}
+```</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/impl/ClientClaimModificationImportServiceImpl.java:251-259</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/impl/ClientClaimModificationImportServiceImpl.java:253-262</code>
                 </div>
-                <div class="finding-desc">`findLastDisputeColumns` 注释要求“定位最后一个 dispute group”，但实现使用 `stream().findFirst()`，在 `headerMap` 非有序（`HashMap`）时会命中任意一个 `Dispute ID` 列，导致导入更新到错误的 dispute 列组。</div>
-                <div class="finding-suggestion">💡 修复建议：按列索引取最大值而不是 `findFirst()`，例如先过滤 `Dispute ID` 列后 `max(Map.Entry.comparingByKey())`，再基于该索引构造 `DisputeColumns`。</div>
-            </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/auth/CustomerPortalAuthResolver.java:68-70,116-119</code>
-                </div>
-                <div class="finding-desc">缓存中保存并直接返回可变的 `HashSet`（以及命中缓存时直接返回同一实例）。调用方若对返回集合做 `add/remove`，会污染共享缓存数据，导致后续请求读到被篡改的数据范围。</div>
-                <div class="finding-suggestion">💡 修复建议：对外返回只读视图，并在写入缓存前做不可变封装，避免共享可变对象。例如：`Set&lt;Long&gt; result = Collections.unmodifiableSet(new HashSet&lt;&gt;(userSoldToIds)); apiKeyToSoldToIdsCache.put(apiKey, result); return result;`；缓存命中分支同样返回不可变集合。</div>
-            </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/auth/CustomerPortalAuthResolver.java:67-74</code>
-                </div>
-                <div class="finding-desc">原因：当前实现先读本地缓存并直接返回（`getIfPresent` 命中即放行），在缓存 TTL（10 分钟）内不会再次向 `CustomerAccountApiKeyService` 校验 apiKey 的有效性/撤销状态。若密钥已在后端被禁用、轮换或删除，缓存仍可继续提供已授权的 `userSoldToIds`。
-```java
-Set&lt;Long&gt; cached = apiKeyToSoldToIdsCache.getIfPresent(apiKey);
-if (cached != null) {
-    return cached;
-}
-```
-影响：存在认证失效窗口，已失效 API Key 在 TTL 内仍可访问客户数据范围，属于授权持续生效问题；在对外 Customer Portal 场景下可导致越权持续读取。</div>
-                <div class="finding-suggestion">💡 修复建议：将缓存值绑定“可验证的版本/状态”，并在每次请求做轻量有效性校验；至少在 API Key 撤销/轮换时主动调用 `evict(apiKey)`，确保立即失效。可落地方案：
-```java
-Long customerAccountId = customerAccountApiKeyService.getCustomerAccountIdByApiKey(apiKey);
-if (customerAccountId == null) {
-    apiKeyToSoldToIdsCache.invalidate(apiKey);
-    return null;
-}
-// 仅在 key 仍有效时使用/回填缓存
-```
-并在 API Key 管理（禁用、删除、重置）事务提交后发布失效事件，统一清理本地/分布式缓存。</div>
+                <div class="finding-desc">`findLastDisputeColumns` 注释声明要定位“最后一组 Dispute 列”，但实现使用 `findFirst()`，只会命中第一组匹配列。含多组争议列时会把更新写到错误分组，导致导入结果偏移/错写。</div>
+                <div class="finding-suggestion">💡 修复建议：改为按列索引取最大值再构造 `DisputeColumns`，例如先筛选 `startsWith(&quot;Dispute ID &quot;)` 后比较 key 取 `max`；同时确保 header map 使用有序结构并基于列号判断。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/datasource/FuelCoefficientPageCache.java:60-63</code>
                 </div>
-                <div class="finding-desc">命中 [EXC-001]：`catch (Exception e)` 后直接 `return null`，将“键生成异常”与“正常无缓存键”混淆，调用方无法区分异常态与业务态。该模式在安全场景下会削弱可观测性，异常高发时可能被利用为降级通道，导致缓存层保护失效且难以及时告警。</div>
-                <div class="finding-suggestion">💡 修复建议：避免宽泛异常后返回 `null`。建议抛出受检/业务异常，或返回显式结果对象（含 `success/errorCode`）让上层可判定并做熔断/告警。例如：捕获后抛出 `IllegalStateException`（附带统一错误码），并在上层统一处理。</div>
+                <div class="finding-desc">`computeKey` 捕获宽泛 `Exception` 后直接 `return null`，将“键生成失败”与“正常可绕过缓存”混淆；上游无法区分异常与业务分支，可能掩盖序列化/数据问题并导致不可预期的缓存命中退化。</div>
+                <div class="finding-suggestion">💡 修复建议：避免返回 `null` 吞掉异常。可改为抛出业务异常，或返回带状态的结果对象；若必须降级，至少返回可观测的失败标识并在调用侧显式处理。例如：`throw new IllegalStateException(&quot;failed to compute cache key&quot;, e);`，或返回 `Optional&lt;String&gt;` 并由调用方区分 `empty` 与正常 key。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillService.java:575-576</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillOperationService.java:392</code>
                 </div>
-                <div class="finding-desc">`countryCode` 可能为 `null`（上方仅记录了 warn），但在“Layer 1”分支中仍直接调用 `fleetCache.findByCountry(countryCode)`。若该缓存实现不接受空参数，会在有 `billFleets` 数据时触发 NPE，导致 `/admin/ap-lm-bill/{id}/fleets` 查询失败。</div>
-                <div class="finding-suggestion">💡 修复建议：在进入 Layer 1 前先处理 `countryCode == null`，避免调用 `findByCountry(null)`。例如：当 `countryCode` 为空时直接按 fleetId 回填字符串名，或返回仅包含 ID 的列表；并补充空 hub/空 country 的单测。</div>
+                <div class="finding-desc">`recordApLmBillOperations(...)` 失败时可能返回 `null`（其内部有 catch 并仅记录日志），这里直接调用 `apLmBillOperation.getId()` 会触发空指针，导致导出任务提交流程在日志落库异常时崩溃。</div>
+                <div class="finding-suggestion">💡 修复建议：在使用前做空值保护，并定义降级策略（例如：抛出业务异常终止任务，或允许无 operationId 继续但显式记录）。示例：`if (apLmBillOperation == null || apLmBillOperation.getId() == null) { throw new BizException(&quot;Failed to create operation log&quot;); }`</div>
             </div>
-            <p class="more-note">... 还有 37 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillService.java:573</code>
+                </div>
+                <div class="finding-desc">`countryCode` 在上文已允许为 `null`，但随后直接传入 `fleetCache.findByCountry(countryCode)`。若该方法不接受空值，会导致 NPE/非法参数异常，影响 `/admin/ap-lm-bill/{id}/fleets` 查询稳定性。</div>
+                <div class="finding-suggestion">💡 修复建议：在 `countryCode == null` 时避免调用 `findByCountry`，直接按 fleetId 回退返回（名称用 ID 字符串）或返回明确错误。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArSettlementDomesticDetailService.java:463</code>
+                </div>
+                <div class="finding-desc">`projectId` 从 `settlement.getInvoiceNo()` 改为 `projectName`（来自 mapping）后，没有兜底逻辑；当 mapping 缺失或 `netSuitJobName` 为空时，导出字段会从原本可用值变为 `null`，造成账单导出关键字段回退。</div>
+                <div class="finding-suggestion">💡 修复建议：保留兼容兜底：`response.setProjectId(StringUtils.defaultIfBlank(projectName, settlement.getInvoiceNo()));`，并在 mapping 缺失时记录可观测日志/指标。</div>
+            </div>
+            <p class="more-note">... 还有 31 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
