@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">trk-job &nbsp;|&nbsp; 2026-05-22 16:01:36</div>
+      <div class="meta">trk-job &nbsp;|&nbsp; 2026-05-25 17:38:45</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:1</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:3</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,7 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 1 Critical finding(s)</li></ul>
+<li>AI Review: 1 Critical finding(s)</li>
+<li>AI Review: 3 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -93,19 +94,35 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/factory/component/AbstractCaiNiaoWebhookPush.java:86-183</code>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/factory/component/AbstractCaiNiaoWebhookPush.java:168-169</code>
                 </div>
-                <div class="finding-desc">异常分支将 `param` 全量写入日志：`log.error(&quot;req:{},...&quot;, JSONUtil.toJsonStr(param), ...)`。`param` 含 `logistics_interface`（运单号、位置、备注等业务/个人信息）与 `data_digest`（签名摘要），属于敏感数据泄露风险。日志系统、告警渠道或外部检索平台可进一步扩大暴露面。</div>
-                <div class="finding-suggestion">💡 修复建议：禁止记录完整请求体与签名字段；仅记录必要的追踪标识（如事件ID、trackingNo后4位、providerCode、错误码）。对必须保留字段做脱敏/截断。示例：移除 `JSONUtil.toJsonStr(param)`，改为结构化安全日志字段。</div>
+                <div class="finding-desc">错误分支日志打印完整 `param`：`log.error(&quot;req:{},cainiao req error:{}&quot;, JSONUtil.toJsonStr(param), res);`。`param` 含 `logistics_interface`（完整轨迹/位置数据）与 `data_digest`（签名摘要），属于敏感业务数据与认证相关数据，失败场景会被明文落日志，存在高风险泄露与被二次利用风险。</div>
+                <div class="finding-suggestion">💡 修复建议：禁止记录完整请求参数，尤其是 `logistics_interface`、`data_digest`、`secret` 派生字段；仅记录必要元数据（trackingNo、provider、errorCode）并对标识符脱敏。示例：`log.error(&quot;cainiao push failed, trackingNo={}, provider={}, resp={}&quot;, mask(trackingNo), getMappingProviderCode(), safeResp(res));`</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/factory/component/AbstractCaiNiaoWebhookPush.java:96-156</code>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/factory/component/AbstractCaiNiaoWebhookPush.java:101-162</code>
                 </div>
-                <div class="finding-desc">`labelSummaryDao.findFirstByTrackingNo(...)` 返回值未判空，后续 `convertEvent` 直接读取 `summary.getCustomerRefId()/getPoe()`，存在空指针风险。</div>
-                <div class="finding-suggestion">💡 修复建议：在 `summary` 使用前增加判空并给出可观测处理：`if (summary == null) { updateWebhookFail(..., &quot;labelSummary not found&quot;, ...); continue; }`。</div>
+                <div class="finding-desc">`labelSummaryDao.findFirstByTrackingNo(...)` 结果未判空即继续参与 `eventService.convertEvent(event, summary)` 和 `convertEvent(...)`，当轨迹号无对应面单汇总时会触发空指针或下游异常，造成该事件推送中断。</div>
+                <div class="finding-suggestion">💡 修复建议：在查询后立即判空并走明确分支（skip/fail），避免进入转换链路。示例：`if (summary == null) { pushLogDao.updateWebhookFail(..., &quot;labelSummary missing&quot;, new Date()); continue; }`</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/api/PosApiApi.java:172</code>
+                </div>
+                <div class="finding-desc">新增 `info` 日志直接打印 `BatchUpdateLabelDto` 全量请求体：`log.info(&quot;BatchUpdateLableDtoTag... :{}&quot;, JSON.toJSONString(request));`。该对象可能包含运单号、交接时间、国家等业务敏感字段，存在日志侧数据泄露风险（尤其在集中日志系统中可被跨角色检索）。</div>
+                <div class="finding-suggestion">💡 修复建议：避免记录全量请求对象；改为最小必要字段并做脱敏（如仅记录批次数、国家、hash 后的 trackingNumber）。示例：`log.info(&quot;BatchUpdateLabel request, country={}, size={}&quot;, country, request == null ? 0 : request.getItems().size());`</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/factory/component/CaiNiaoDGDWebhookPush.java:82</code>
+                </div>
+                <div class="finding-desc">`msg_type` 直接使用入参 `msgType`，但上游未保证该字段存在/非空；当订阅配置缺失 `msgType` 时会发送空 `msg_type`，导致第三方接口请求非法或被拒。</div>
+                <div class="finding-suggestion">💡 修复建议：在推送前增加 `msgType` 必填校验（建议在公共 `push(...)` 中统一校验，且仅对需要该字段的 provider 生效），为空时标记失败并返回可定位错误。</div>
             </div>
             
         </div>
