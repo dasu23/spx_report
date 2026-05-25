@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pus-exchange-api &nbsp;|&nbsp; 2026-05-22 20:27:22</div>
+      <div class="meta">pus-exchange-api &nbsp;|&nbsp; 2026-05-25 11:50:46</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:0</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:17</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -82,10 +82,94 @@
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube quality gate status: ERROR</li></ul>
+            <ul><li>SonarQube quality gate status: ERROR</li>
+<li>AI Review: 1 Critical finding(s)</li>
+<li>AI Review: 17 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
+        <div class="findings-section">
+            <h3>AI 代码审查发现</h3>
+            
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pus-facade/pus-facade-exchange/src/main/java/io/speedx/pus/facade/exchange/ExchangePudoTrkFacade.java:17-19</code>
+                </div>
+                <div class="finding-desc">原因：该 HTTP 入口直接接收 `bookingCodes` 并触发推送逻辑，代码中未见任何角色鉴权（`@PreAuthorize`/`AuthUtil.requireRole()`）与资源归属校验。
+```java
+public ResponseObject&lt;Void&gt; pushFailureEvent(PudoTrkPushForm form) {
+    pudoFailureTrkPushService.pushByBookingCodes(form.getBookingCodes());
+    return ResponseObject.success();
+}
+```
+影响：未授权主体可构造任意 `bookingCodes` 触发业务事件推送，可能导致越权操作、批量业务扰动或数据外发。
+
+---
+
+**原因：**
+该新增 POST 入口在契约层未体现任何角色/权限约束（无 `@PreAuthorize` 等声明），且接口语义为“手动推送失败轨迹”，属于可触发业务动作的敏感操作。
+```java
+@PostMapping(&quot;/innerApi/pudo/trk/push-failure-event&quot;)
+ResponseObject&lt;Void&gt; pushFailureEvent(@RequestBody @Valid PudoTrkPushForm form);
+```
+**影响：**
+若实现层同样缺少 `AuthUtil.requireRole()` 或等效鉴权，低权限/未授权主体可直接触发内部推送流程，造成越权操作与业务滥用风险。</div>
+                <div class="finding-suggestion">💡 修复建议：在对应 Controller 实现方法强制增加角色鉴权与操作者身份校验（不要仅依赖网关路径命名）：
+```java
+@PreAuthorize(&quot;hasAnyRole(&#x27;OPERATOR&#x27;,&#x27;DISPATCHER&#x27;)&quot;)
+@PostMapping(&quot;/innerApi/pudo/trk/push-failure-event&quot;)
+public ResponseObject&lt;Void&gt; pushFailureEvent(...) {
+    AuthUtil.requireRole(&quot;OPERATOR&quot;, &quot;DISPATCHER&quot;);
+    // 可选：校验 userId/facilityCode 与请求范围一致
+}
+```
+并补充审计日志（记录操作者、请求批次、结果）。</div>
+            </div>
+            
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/dto/PickupGroupWrapper.java:73-74</code>
+                </div>
+                <div class="finding-desc">分组判定从“双方 masterCode 均非空才按 masterCode 比较”改为“任一方非空就直接比较并返回”。这会在“一个有 masterCode、另一个无 masterCode”时直接判定不同，跳过后续 GPS/fullAddress 兜底，可能把同一物理点拆成不同组，影响 consolidate/autoCreateStaging 的合并结果。</div>
+                <div class="finding-suggestion">💡 修复建议：仅在两者 masterCode 都非空时使用 masterCode 作为强匹配；否则继续执行原有 GPS/fullAddress 兜底。示例：`if (this.masterCode != null &amp;&amp; that.masterCode != null) return this.masterCode.equals(that.masterCode);`</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/dto/StandardAddressMatchResult.java:29</code>
+                </div>
+                <div class="finding-desc">将原有构造语义改为 `apply(DaysDimAddressStandard)` 的可变方法后，类型初始化契约发生变化：调用方若仍按原构造路径创建对象将出现编译失败；即使迁移到 `apply`，`pattern` 不在该方法内赋值，也容易出现初始化不完整或复用对象时状态不一致。</div>
+                <div class="finding-suggestion">💡 修复建议：保留兼容构造器并在内部委托 `apply`，同时明确 `pattern` 的赋值入口，保证对象一次性完整初始化。示例：保留 `StandardAddressMatchResult(Pattern pattern, DaysDimAddressStandard a){ this.pattern=pattern; apply(a); }`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/event/PudoPickupFailedTrkEvent.java:21</code>
+                </div>
+                <div class="finding-desc">构造函数直接执行 `Collections.unmodifiableList(trackingNumbers)`，当调用方传入 `null` 时会在事件发布路径触发 `NullPointerException`，导致业务流程中断。</div>
+                <div class="finding-suggestion">💡 修复建议：对入参做非空校验并进行防御性拷贝，避免 NPE 与外部可变列表引用问题。例如：`this.trackingNumbers = List.copyOf(Objects.requireNonNull(trackingNumbers, &quot;trackingNumbers must not be null&quot;));`，同时按需校验 `pickup`/`providerCode`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/listener/PudoPickupFailedTrkEventListener.java:26</code>
+                </div>
+                <div class="finding-desc">在进入 try-catch 之前直接访问 `event.getPickup().getBookingCode()`，当 `event` 或 `pickup` 为空时会触发空指针，导致异步监听逻辑提前失败。</div>
+                <div class="finding-suggestion">💡 修复建议：先做空值保护，再记录日志并调用下游服务。例如：`if (event == null || event.getPickup() == null) { log.warn(...); return; }`，并复用局部变量保存 `bookingCode` 避免重复解引用。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/properties/CainiaoProperties.java:35-37</code>
+                </div>
+                <div class="finding-desc">`@ConfigurationProperties(prefix = &quot;cainiao&quot;)` 下仅定义了 `auth` 和 `pickup`，但注释示例明确包含 `partners`（含 `fromCode/receiveSignKey/coverageType`）。当前实现会导致 `cainiao.partners` 配置无法承载到类型字段，若后续按合作方维度做签名或覆盖类型路由，会出现配置失效/业务分流异常。</div>
+                <div class="finding-suggestion">💡 修复建议：补充 `partners` 字段及对应内部类型，并为关键字段加非空校验。示例：`private List&lt;Partner&gt; partners = new ArrayList&lt;&gt;();`，`Partner` 包含 `fromCode`、`receiveSignKey`、`coverageType`。同时在使用方增加“按 fromCode 匹配不到配置”时的显式异常，避免静默回退。</div>
+            </div>
+            <p class="more-note">... 还有 12 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+        </div>
+        
 
   <div class="footer">
     由质量门禁引擎生成 &nbsp;|&nbsp; SpeedX CI/CD
