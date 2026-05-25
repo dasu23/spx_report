@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-admin-api &nbsp;|&nbsp; 2026-05-25 13:29:28</div>
+      <div class="meta">pos-admin-api &nbsp;|&nbsp; 2026-05-25 17:13:32</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -56,13 +56,13 @@
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#4caf50">13.8%</div>
+      <div class="metric-value" style="color:#4caf50">16.8%</div>
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#f44336">31.6%</div>
+            <div class="metric-value" style="color:#f44336">31.1%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,40 +73,119 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:2</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:3 &nbsp; 主要:11</div>
       <div class="metric-threshold">已抑制: 0</div>
-      <div class="metric-note">已检测到问题，但当前配置未阻断流水线</div>
+      
     </div>
   </div>
 
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube analysis timed out after 1 minutes</li></ul>
+            <ul><li>SonarQube analysis timed out after 1 minutes</li>
+<li>AI Review: 3 Critical finding(s)</li>
+<li>AI Review: 11 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
         <div class="findings-section">
             <h3>AI 代码审查发现</h3>
             
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/inbound/InboundBatchCounterService.java:99-105</code>
+                </div>
+                <div class="finding-desc">存在 SQL 注入风险：`updateClause` 直接基于 `cols` 拼接 SQL 片段（`c + &quot; = &quot; + c + &quot; + 1&quot;`），随后整体拼入 `ON DUPLICATE KEY UPDATE`。若 `cols` 含非白名单值（例如来自被污染的消息或调用链参数），可注入任意 SQL 表达式。</div>
+                <div class="finding-suggestion">💡 修复建议：对 `cols` 做严格白名单过滤，只允许 `COUNT_COLUMNS` 中的列参与更新；并在过滤后为空时拒绝执行。示例：先 `Set&lt;String&gt; safeCols = cols.stream().filter(COUNT_COLUMNS::contains).collect(Collectors.toSet());`，再用 `safeCols` 生成 `updateClause`，若 `safeCols.isEmpty()` 则直接返回或抛异常。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-admin-api/src/main/java/com/miq/posadminapi/controller/businessdata/PadAddressModifyController.java:79</code>
+                </div>
+                <div class="finding-desc">原因：本次修改触达了 `POST /updateNew` 入口的方法签名，但在可见变更中未看到任何显式角色校验（如 `AuthUtil.requireRole()` 或 `@PreAuthorize`）及资源归属校验（基于 `trackingNumber` 对应资源与当前用户/fleet/facility 的绑定关系）。
+```java
+@PostMapping(&quot;/updateNew&quot;)
+public ResponseObject&lt;String&gt; updateNew(@RequestBody @Valid UpdateAddressReq req) throws Exception {
+```
+影响：若上游未有强制鉴权拦截，调用方可直接以任意 `trackingNumber` 触发地址更新，存在越权修改他人资源风险（数据完整性受损，且可能扩大跨租户/跨组织操作面）。</div>
+                <div class="finding-suggestion">💡 修复建议：在该 HTTP 入口增加显式鉴权与归属校验，并在进入 `service.update(...)` 前执行。示例：
+```java
+@PreAuthorize(&quot;hasAnyRole(&#x27;OPERATOR&#x27;,&#x27;DISPATCHER&#x27;)&quot;)
+@PostMapping(&quot;/updateNew&quot;)
+public ResponseObject&lt;String&gt; updateNew(@RequestBody @Valid UpdateAddressReq req) {
+    AuthUtil.requireRole(&quot;OPERATOR&quot;, &quot;DISPATCHER&quot;);
+    Label label = ...;
+    // 归属校验：示例字段按实际模型替换
+    if (!Objects.equals(label.getFacilityCode(), AuthUtil.currentFacilityCode())) {
+        throw new RRException(&quot;forbidden&quot;);
+    }
+    String base64Label = service.update(req, label, labelExt);
+    return ResponseObject.success(base64Label);
+}
+```
+同时在 service 层补充二次校验，避免仅靠 Controller 防护。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/dao/InboundBatchCounterDao.java:17</code>
+                </div>
+                <div class="finding-desc">原因：新增方法按 `parentBatchCode + childBatchCodes` 查询时未附带 `facilityCode` 过滤，形成跨站点数据读取能力。
+```java
+List&lt;InboundBatchCounter&gt; findByParentBatchCodeAndChildBatchCodeIn(String parentBatchCode, List&lt;String&gt; childBatchCodes);
+```
+影响：若该方法被非全局权限调用链复用，调用方可在缺少数据域约束时读取其他 facility 的计数数据，存在越权读取与数据可见范围扩大风险。</div>
+                <div class="finding-suggestion">💡 修复建议：将该查询收敛为带数据域参数的接口，并在调用链强制传入当前用户可见范围（如 facilityCode）。例如：
+```java
+List&lt;InboundBatchCounter&gt; findByParentBatchCodeAndChildBatchCodeInAndFacilityCode(
+    String parentBatchCode, List&lt;String&gt; childBatchCodes, String facilityCode);
+```
+同时在 Service/Facade 层增加基于当前身份的数据范围校验，禁止普通角色走“跨 facility”查询分支。</div>
+            </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerV2ServiceImpl.java:360-364</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/inbound/InboundBatchCounterService.java:73-86</code>
                 </div>
-                <div class="finding-desc">区间校验存在 off-by-one 风险：当前仅限制 `endNumber - startNumber &gt; 200`，这会允许差值等于 200 的输入（如 1~201），实际生成 201 个标签，可能突破“最多 200 个”业务上限。</div>
-                <div class="finding-suggestion">💡 修复建议：将校验改为按“生成数量”判断，例如：`int count = form.getEndNumber() - form.getStartNumber() + 1; if (count &gt; 200) throw new RRException(&quot;The number of labels must not exceed 200&quot;);`，并保留 `endNumber &gt;= startNumber` 校验。</div>
+                <div class="finding-desc">存在“先加 Redis 去重锁，再执行数据库写入”的部分失败窗口：若 `upsertCounter(...)` 抛异常，事务会回滚，但 Redis 锁会保留 5 分钟，导致同一 `eventId` 在 TTL 内被判重跳过，计数事件可能丢失或延迟。</div>
+                <div class="finding-suggestion">💡 修复建议：将“加锁+写库”设计为可补偿流程。可选方案：1) 捕获 `upsertCounter` 异常并主动删除当前 `redisKey` 后再抛出；2) 使用更短 TTL 并在失败时打标重试；3) 以数据库幂等键为主、Redis 仅做辅助限流。示例：`try { upsertCounter(...); } catch (Exception e) { stringRedisTemplate.delete(redisKey); throw e; }`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/so/SorterLogSo.java:59</code>
+                    <code class="finding-loc">pos-admin-api/src/main/java/com/miq/posadminapi/consumer/ParcelCounterConsumer.java:58</code>
                 </div>
-                <div class="finding-desc">`sortIds` 仅校验了列表是否为空，但未校验元素是否为 `null`，在 `String val = id.trim();` 处会触发空指针，导致查询直接失败。</div>
-                <div class="finding-suggestion">💡 修复建议：在循环内过滤空值并跳过空白项，例如：`for (String id : sortIds) { if (id == null || id.trim().isEmpty()) continue; String val = id.trim(); ... }`；若全部无效则返回 `cb.conjunction()` 或不追加该条件。</div>
+                <div class="finding-desc">`JSON.parseObject` 在输入为 `&quot;null&quot;` 等场景可能返回 `null` 而不抛异常，随后 `msg.getType()` 触发 NPE。该异常虽然进入 `catch`，但当前 `catch` 内又调用 `msg.getEventId()`，会再次 NPE，导致监听方法异常退出。</div>
+                <div class="finding-suggestion">💡 修复建议：在第二个 `try` 前增加 `msg == null` 判空并直接返回；同时日志打印 `eventId` 前做空值保护，例如：`String eventId = (msg == null ? null : msg.getEventId());`。</div>
             </div>
-            
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-admin-api/src/main/java/com/miq/posadminapi/consumer/ParcelCounterConsumer.java:52-70</code>
+                </div>
+                <div class="finding-desc">`counterService.applyEvent` 失败后仅记录日志且不重试/不入 DLQ，消息会被直接确认并丢失，导致计数长期不一致（依赖人工补数）。</div>
+                <div class="finding-suggestion">💡 修复建议：为消费失败建立可恢复机制：至少接入重试或 DLQ（如 `DefaultErrorHandler + DeadLetterPublishingRecoverer`），并对不可恢复异常落地补偿队列，避免静默丢数。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-admin-api/src/main/java/com/miq/posadminapi/controller/businessdata/PadAddressModifyController.java:76-89</code>
+                </div>
+                <div class="finding-desc">`updateNew` 的返回类型改为 `ResponseObject&lt;String&gt;`，且新增了 `base64Label` 接收 `service.update(...)` 的返回值，但当前仍返回 `ResponseObject.success()`（无数据）。这会导致接口声明与实际返回语义不一致，调用方拿不到预期字符串结果。</div>
+                <div class="finding-suggestion">💡 修复建议：将返回值显式带上 `base64Label`，例如：`return ResponseObject.success(base64Label);`。若该接口不应返回字符串，则回退方法签名为 `ResponseObject&lt;Void&gt;` 并移除 `base64Label` 变量，保持契约一致。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/bo/Inbound/ParcelCountTuple.java:46-56</code>
+                </div>
+                <div class="finding-desc">8 个计数字段均使用 `int` 累加，数据量或单行值较大时存在整型溢出风险，可能返回负数或错误统计值。</div>
+                <div class="finding-suggestion">💡 修复建议：将累加变量改为 `long` 并在构造返回值前做边界校验（或改造 `ParcelCountTuple` 字段为 `long`）。至少可使用 `Math.addExact` 在溢出时快速失败并记录上下文。</div>
+            </div>
+            <p class="more-note">... 还有 6 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
