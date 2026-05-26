@@ -45,24 +45,24 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">rps-api &nbsp;|&nbsp; 2026-05-21 17:06:05</div>
+      <div class="meta">rps-api &nbsp;|&nbsp; 2026-05-26 13:22:15</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
-      <span style="background:#4caf50;color:#fff;padding:4px 12px;border-radius:4px;font-weight:bold;">PASSED</span>
+      <span style="background:#f44336;color:#fff;padding:4px 12px;border-radius:4px;font-weight:bold;">FAILED</span>
     </div>
   </div>
 
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#4caf50">37.4%</div>
+      <div class="metric-value" style="color:#4caf50">36.9%</div>
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#4caf50">64.3%</div>
+            <div class="metric-value" style="color:#4caf50">66.0%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:0</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:18</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -82,10 +82,67 @@
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube analysis timed out after 1 minutes</li></ul>
+            <ul><li>SonarQube analysis timed out after 1 minutes</li>
+<li>AI Review: 1 Critical finding(s)</li>
+<li>AI Review: 18 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
+        <div class="findings-section">
+            <h3>AI 代码审查发现</h3>
+            
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/module/rate/MaerskRateModule.java:18-29</code>
+                </div>
+                <div class="finding-desc">`lookupRate` 新实现直接将运费字段固定为 `BigDecimal.ZERO`，并将 `rate_version`/`rate_id` 置空，未进行任何费率查询或校验。该变更会把计费结果从“计算得出”改为“硬编码为 0”，属于资金计算链路的高风险改动。若该模块在生产路径被命中，将导致系统性少计费/漏计费。</div>
+                <div class="finding-suggestion">💡 修复建议：恢复真实费率计算流程，至少在该模块内调用费率服务并校验返回值；禁止以硬编码 `0` 作为默认运费落库。示例：先调用 `calculateRateCmd.calculateRate(...)` 获取 `postage_base/postage_amount/rate_id`，仅在明确的业务白名单场景下才允许 0 运费，并记录审计日志与原因码。</div>
+            </div>
+            
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/CalculateRateCmd.java:65</code>
+                </div>
+                <div class="finding-desc">`calculateRate` 的 public 方法签名从 `calculateRate(req, calculateRateType)` 改为 `calculateRate(req)`，属于破坏性变更。若仍有未同步编译的调用方、反射调用或跨模块二进制依赖，可能在运行期触发 `NoSuchMethodError`/调用失败。该风险与费率规则 rps-rate-001 对签名兼容性的约束一致。</div>
+                <div class="finding-suggestion">💡 修复建议：保留兼容重载一段过渡期，例如新增 `calculateRate(RpsCalculateRateRequest req, String calculateRateType)` 并内部委托到新方法；同时在全仓与下游服务完成调用方清理后再移除旧签名。示例：`@Deprecated public CalculateRateResult calculateRate(RpsCalculateRateRequest req, String t) throws Exception { return calculateRate(req); }`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/module/billing/MaerskBillingZoneModule.java:14</code>
+                </div>
+                <div class="finding-desc">`context.getCreateLabelValue()` 在此处被直接解引用并调用 `setZone(0)`，缺少空值保护。若上游在异常分支或新接入链路中未初始化 `createLabelValue`，会触发空指针并导致标签创建流程中断。</div>
+                <div class="finding-suggestion">💡 修复建议：在赋值前增加前置校验并给出可定位的业务异常，例如：`if (context == null || context.getCreateLabelValue() == null) { throw new IllegalArgumentException(&quot;createLabelValue is required before billing zone lookup&quot;); }`，再执行 `setZone`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/module/label/MaerskLabelModule.java:65-83</code>
+                </div>
+                <div class="finding-desc">GLS sort code 生成时使用了 `iMpbLabelForm.getTrackingNumber()`，但 tracking number 在后续第 68 行才赋值，可能导致传入空值或错误值，进而引发分拣码计算异常或标签内容错误。</div>
+                <div class="finding-suggestion">💡 修复建议：先生成并设置 tracking number，再调用 `createGLsLabelCmd.execute(...)`。例如：先执行 `String trackingNo = trkNumFactoryMaersk.generate(createLabelValue); iMpbLabelForm.setTrackingNumber(trackingNo);`，然后在 GLS 分支中传 `trackingNo` 生成 sort code。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/module/product/MaerskProductModule.java:19</code>
+                </div>
+                <div class="finding-desc">`context.getCourierExt().getProductCode()` 缺少空值保护；当 `context` 或 `courierExt` 为空时会触发空指针，导致创建标签流程直接失败。</div>
+                <div class="finding-suggestion">💡 修复建议：在访问前增加空值校验并给出可定位的业务异常信息。示例：`Objects.requireNonNull(context, &quot;context is null&quot;); Objects.requireNonNull(context.getCourierExt(), &quot;courierExt is null&quot;);`，或使用已有参数校验/异常体系返回明确错误码。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/module/product/MaerskProductModule.java:20-23</code>
+                </div>
+                <div class="finding-desc">该实现在 `weightUom/dimensionUom` 为空时直接回退为硬编码 `LB/IN`，并将 `volumeUom` 固定为 `INQ`。这会在 Product Matrix 未完整提供单位或客户输入缺失时，静默使用英制默认值，可能与客户/产品配置单位不一致，导致后续体积重与计费计算偏差。</div>
+                <div class="finding-suggestion">💡 修复建议：不要在此处硬编码单位兜底；优先使用 OMS Product Matrix 的单位声明。若无法取得有效单位，应显式降级并中断后续依赖单位的计算（例如返回可识别的空矩阵/抛出业务异常），避免将 `LB/IN/INQ` 作为默认值写入。示例：先校验 `context.getCourierExt()` 与矩阵单位字段，缺失时 `throw new IllegalStateException(&quot;product matrix uom missing&quot;)` 或按既有降级约定返回 null。</div>
+            </div>
+            <p class="more-note">... 还有 13 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+        </div>
+        
 
   <div class="footer">
     由质量门禁引擎生成 &nbsp;|&nbsp; SpeedX CI/CD
