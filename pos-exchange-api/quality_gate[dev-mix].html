@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-exchange-api &nbsp;|&nbsp; 2026-05-26 14:55:45</div>
+      <div class="meta">pos-exchange-api &nbsp;|&nbsp; 2026-05-26 16:07:55</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -62,7 +62,7 @@
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#f44336">33.9%</div>
+            <div class="metric-value" style="color:#f44336">35.9%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:13</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:4 &nbsp; 主要:19</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,8 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube analysis timed out after 1 minutes</li>
-<li>AI Review: 1 Critical finding(s)</li>
-<li>AI Review: 13 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 4 Critical finding(s)</li>
+<li>AI Review: 19 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,65 +94,116 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/inbound/InboundBatchCounterService.java:100-102</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/inbound/InboundBatchCounterService.java:97-99</code>
                 </div>
-                <div class="finding-desc">存在 SQL 注入风险：`updateClause` 直接使用 `cols` 中的字符串拼接列赋值表达式，未校验列名白名单。若 `cols` 可被外部输入（如消息体污染、重放篡改）影响，攻击者可构造恶意片段进入 `ON DUPLICATE KEY UPDATE` 子句，造成任意 SQL 片段执行或语义篡改。</div>
-                <div class="finding-suggestion">💡 修复建议：对 `cols` 做严格白名单过滤，仅允许 `COUNT_COLUMNS` 中定义的列参与 SQL 构建；过滤后为空则直接返回。更稳妥方案是改为预定义分支 SQL（按固定列集合映射），避免把未验证标识符拼进语句。例如：`Set&lt;String&gt; safeCols = cols.stream().filter(COUNT_COLUMNS::contains).collect(Collectors.toSet());` 并基于 `safeCols` 生成 `updateClause`。</div>
+                <div class="finding-desc">存在 SQL 注入风险：`updateClause` 直接基于外部传入的 `cols` 拼接 SQL 片段（`c + &quot; = &quot; + c + &quot; + 1&quot;`），未对 `cols` 做白名单校验。若攻击者可控制消息内容（例如伪造/污染 `ParcelCounterMessage` 对应字段来源），可注入任意列名或表达式进入 `ON DUPLICATE KEY UPDATE` 子句。</div>
+                <div class="finding-suggestion">💡 修复建议：对 `cols` 强制做白名单过滤，仅允许 `COUNT_COLUMNS` 中的固定列参与拼接；若存在非法列直接拒绝处理并告警。示例：`Set&lt;String&gt; safeCols = cols.stream().filter(COUNT_COLUMNS::contains).collect(Collectors.toSet()); if (safeCols.size() != cols.size()) { throw new IllegalArgumentException(&quot;invalid counter columns&quot;); }`，并用 `safeCols` 生成 `updateClause`。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/report/impl/EventUploadProcessor.java:133-150</code>
+                </div>
+                <div class="finding-desc">新增逻辑在调用 `labelCostCalcService.costCalc(...)` 时使用了宽泛 `catch (Exception)` 并仅记录日志，随后流程继续执行并将 `item.setMessage(&quot;Success&quot;)` 作为成功返回。该行为会吞掉计费异常，导致事件已上报但成本未入账/错误入账，属于可造成资金计算错误的高风险缺陷。</div>
+                <div class="finding-suggestion">💡 修复建议：将成本计算失败从“日志后继续成功”改为可感知失败：1) 至少将任务项标记为失败并触发重试；2) 对可恢复异常做重试，对不可恢复异常上抛；3) 若业务要求事件上报与成本计算一致性，需放入同一事务边界或采用可靠消息+补偿机制，避免“上报成功但计费失败”的状态分叉。示例：捕获后设置失败状态并 `throw`，由上层统一重试/告警。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/impl/LabelServiceImpl.java:779-810</code>
+                </div>
+                <div class="finding-desc">原因：`updateDeliveryInstruction` 新增后可修改 `label.notes` 与 `labelExt.accessCode`，但代码中未出现角色鉴权与资源归属校验，且通过 `trackingNumber` 即可定位并更新。
+
+影响：若上层入口未严格限制，攻击者可越权修改他人投递指令与门禁码（`accessCode`），造成敏感配送信息被篡改。
+```java
+Label label = ...findByTrackingNumber(trkNumber)...;
+...
+label.setNotes(newNotes);
+labelDao.save(label);
+...
+labelExt.setAccessCode(req.getAccessCode());
+labelExtDao.save(labelExt);
+```</div>
+                <div class="finding-suggestion">💡 修复建议：对该方法增加显式权限与数据归属双校验；对 `accessCode` 更新增加更高权限门槛：
+```java
+AuthUtil.requireRole(&quot;CUSTOMER&quot;,&quot;DISPATCHER&quot;);
+if (!ownershipService.canOperateLabel(LoginUserUtil.getLoginUser(), label)) {
+    throw new RRException(&quot;FORBIDDEN&quot;);
+}
+if (StringUtils.isNotBlank(req.getAccessCode())) {
+    AuthUtil.requireRole(&quot;DISPATCHER&quot;);
+}
+```
+同时建议在数据层按 `id + tenant_scope` 进行条件更新。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/impl/DmsServiceImpl.java:67-79</code>
+                </div>
+                <div class="finding-desc">原因：`syncDriverNote` 在仅凭 `trackingNo` 查到运单后直接执行 `updateDriverNoteByLabelId`，新增代码中未出现任何角色鉴权（如 `@PreAuthorize`/`AuthUtil.requireRole`）或资源归属校验（如 `fleetId/facilityCode/userId` 绑定校验）。
+
+影响：若该服务方法被上层接口调用且上层未强制鉴权，调用方可通过构造任意 `trackingNo` 修改他人运单司机备注，导致跨租户/越权篡改。
+```java
+Label label = labelDao.findByTrackingNumber(req.getTrackingNo());
+...
+labelExtDao.updateDriverNoteByLabelId(label.getId(), req.getDriverNote(), new Date());
+```</div>
+                <div class="finding-suggestion">💡 修复建议：在该方法或其唯一入口处增加强制鉴权与归属校验：
+```java
+AuthUtil.requireRole(&quot;DISPATCHER&quot;,&quot;OPERATOR&quot;);
+Label label = ...;
+if (!Objects.equals(label.getFacilityCode(), LoginUserUtil.getCurFacilityCode())) {
+    throw new RRException(&quot;FORBIDDEN&quot;);
+}
+```
+并在 DAO 更新条件中附加归属字段（如 `label_id + facility_code`）避免仅凭 `labelId` 更新。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/inbound/InboundBatchCounterService.java:69-83</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/inbound/InboundBatchCounterService.java:67-82</code>
                 </div>
-                <div class="finding-desc">先获取 Redis 去重锁再执行 DB UPSERT；当 `upsertCounter` 抛异常时，事务会回滚，但 Redis 锁不会回滚且保留 5 分钟，导致同一事件在窗口期内被误判为重复并跳过，形成计数丢失。</div>
-                <div class="finding-suggestion">💡 修复建议：为“锁成功但 DB 失败”增加补偿释放：在 `applyEvent` 中对 `upsertCounter` 使用 `try/catch`，失败时 `delete(redisKey)` 后再抛出异常；或改为事务提交后再写去重标记（如 `TransactionSynchronization` afterCommit）以避免失败占坑。</div>
+                <div class="finding-desc">先获取 Redis 去重锁，再执行数据库 UPSERT；若 `upsertCounter(...)` 抛异常，事务会回滚，但 Redis 锁会保留 5 分钟，导致同一 eventId 的重试在窗口期内被直接跳过，出现计数漏加。</div>
+                <div class="finding-suggestion">💡 修复建议：将“加锁+写库”改为可补偿流程：
+1) 捕获 `upsertCounter` 异常后立即删除当前 `redisKey`，再抛出异常；
+2) 或将 Redis 值写入处理状态（processing/success），失败时允许重试；
+示例：`try { upsertCounter(...); } catch (Exception e) { stringRedisTemplate.delete(redisKey); throw e; }`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/inbound/InboundBatchCounterService.java:98-100</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/bo/Inbound/ParcelCountTuple.java:46-58</code>
                 </div>
-                <div class="finding-desc">`updateClause` 直接基于入参 `cols` 拼接 SQL 列表达式，未校验是否属于 `COUNT_COLUMNS` 白名单。若上游传入非法列名，会触发 SQL 异常并导致计数事件处理失败。</div>
-                <div class="finding-suggestion">💡 修复建议：在构建 SQL 前先做白名单过滤/校验，仅允许 `COUNT_COLUMNS` 中的列参与更新；非法值直接拒绝并记录错误。例如：`Set&lt;String&gt; safeCols = cols.stream().filter(COUNT_COLUMNS::contains).collect(Collectors.toSet()); if (safeCols.isEmpty()) return; if (safeCols.size()!=cols.size()) throw new IllegalArgumentException(...)`，后续 `updateClause` 基于 `safeCols` 生成。</div>
+                <div class="finding-desc">8个计数字段及累加变量均使用 `int`，在大批量汇总或单行计数接近上限时存在整数溢出风险，可能产生负值或错误统计结果。</div>
+                <div class="finding-suggestion">💡 修复建议：将累加过程改为 `long`（如 `long t = 0L`），并在构造返回值前进行边界校验；若业务允许，建议把 `ParcelCountTuple` 字段整体升级为 `long` 以避免截断。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/web/WebAddressModifyController.java:100-101</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/event/ParcelStatusKafkaPublisher.java:32</code>
                 </div>
-                <div class="finding-desc">接口返回体从空响应改为返回 `base64Label`，新增了可直接回传标签内容的数据面：
-```java
-String base64Label = service.update(req, label, labelExt);
-return ResponseObject.success(base64Label);
-```
-若 `base64Label` 含完整面单/地址信息（常见包含姓名、电话、地址、条码等），该变更会扩大敏感业务数据暴露范围；原先仅成功状态，现在变为直接下发内容，缺少最小化返回与脱敏约束。</div>
-                <div class="finding-suggestion">💡 修复建议：仅返回业务必要字段，避免直接返回完整 `base64Label`。建议改为返回短期下载凭证或受控文件ID，并在服务端按权限二次校验后获取内容；若必须返回，需先做字段级脱敏与审计。
-
-示例：
-```java
-String labelId = service.updateAndStoreLabel(req, label, labelExt);
-return ResponseObject.success(labelId);
-```
-并新增独立下载接口，在下载接口中做角色/归属校验与访问日志。</div>
-            </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/bo/Inbound/ParcelCountTuple.java:46-59</code>
-                </div>
-                <div class="finding-desc">8个计数字段均使用 `int` 累加，若批次量较大或多行聚合后超过 `Integer.MAX_VALUE`，会发生整型溢出并得到错误统计值。</div>
-                <div class="finding-suggestion">💡 修复建议：将累加变量改为 `long`（如 `long t=0L...`），并在构造返回对象前做边界校验；若对外必须返回 `int`，使用 `Math.toIntExact` 显式失败或做上限保护。</div>
+                <div class="finding-desc">`@TransactionalEventListener` 配置了 `fallbackExecution = true`，当调用方不在事务中时监听器会直接执行，和注释中“仅在 AFTER_COMMIT 发布”的语义不一致，可能导致未经过事务提交语义约束的事件被发送。</div>
+                <div class="finding-suggestion">💡 修复建议：若业务要求“仅提交后发送”，移除 fallback：`@TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)`；若必须兼容无事务调用，需补充显式保护（如校验调用链或增加幂等/补偿）并更新注释说明真实语义。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/event/ParcelStatusKafkaPublisher.java:55-74</code>
                 </div>
-                <div class="finding-desc">`lookupFacilityType` 捕获宽泛 `Exception` 后直接返回 `null`，调用方无法区分“设施不存在”与“Redis/服务异常”，会把真实异常静默降级为正常数据路径，导致消息字段悄然丢失且难以监控。</div>
-                <div class="finding-suggestion">💡 修复建议：仅对可接受的“未命中”场景返回 `null`，其余异常应上抛或转换为明确业务异常；至少增加失败度量并在上层决定是否降级。示例：仅在 `facility == null` 返回 `null`，`catch` 中抛出 `IllegalStateException(&quot;lookup facility failed&quot;, e)`。</div>
+                <div class="finding-desc">`catch (Exception)` 后直接 `return null`（facilityType 降级为空），调用方无法区分“设施不存在”与“查询异常”，属于异常吞没，可能掩盖 Redis/依赖故障并产生静默脏数据。</div>
+                <div class="finding-suggestion">💡 修复建议：至少区分业务空值与系统异常：仅对“未命中设施”返回 null；对系统异常抛出自定义异常或打标重试。示例：catch 中抛 `IllegalStateException(&quot;lookup facility failed&quot;, e)`，由上层决定是否跳过发送/重试/告警。</div>
             </div>
-            <p class="more-note">... 还有 8 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/UpdateAddressService.java:241-247</code>
+                </div>
+                <div class="finding-desc">地址修改后同步 DMS 的条件从“仅 `ENCODED`/`DISPATCH` 状态”变为无条件调用 `sendDms(...)`。这会使非允许状态也触发下游地址更新，可能与 Label 生命周期状态约束冲突并引入错误外部副作用。</div>
+                <div class="finding-suggestion">💡 修复建议：恢复状态门禁或显式白名单校验（如仅 `ENCODED`、`DISPATCH`），再决定是否调用 `sendDms`。若确属新需求，应补充状态规则与回归测试并同步业务规则文档。</div>
+            </div>
+            <p class="more-note">... 还有 14 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
