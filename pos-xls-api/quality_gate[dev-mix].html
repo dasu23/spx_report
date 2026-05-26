@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-xls-api &nbsp;|&nbsp; 2026-05-26 11:28:44</div>
+      <div class="meta">pos-xls-api &nbsp;|&nbsp; 2026-05-26 11:58:03</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:2 &nbsp; 主要:9</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:2 &nbsp; 主要:12</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -84,7 +84,7 @@
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube analysis timed out after 1 minutes</li>
 <li>AI Review: 2 Critical finding(s)</li>
-<li>AI Review: 9 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 12 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,33 +94,18 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/inbound/InboundBatchCounterService.java:95-104</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/inbound/InboundBatchCounterService.java:96-103</code>
                 </div>
-                <div class="finding-desc">存在 SQL 注入风险：`updateClause` 直接基于外部传入的 `cols` 拼接列名，再拼接进最终 SQL。若调用方未严格约束 `cols`，攻击者可构造恶意列片段污染 `ON DUPLICATE KEY UPDATE` 子句。</div>
-                <div class="finding-suggestion">💡 修复建议：仅允许白名单列参与更新，先对 `cols` 做交集过滤/校验，再拼接 SQL；若出现非法列直接拒绝。示例：`Set&lt;String&gt; safeCols = cols.stream().filter(COUNT_COLUMNS::contains).collect(Collectors.toSet()); if (safeCols.isEmpty()) return; if (safeCols.size() != cols.size()) throw new IllegalArgumentException(&quot;invalid counter columns&quot;);`，随后仅使用 `safeCols` 生成 `updateClause`。</div>
+                <div class="finding-desc">存在 SQL 注入风险：`updateClause` 直接基于外部传入的 `cols` 拼接 SQL 片段（`c + &quot; = &quot; + c + &quot; + 1&quot;`），未校验 `cols` 必须属于白名单 `COUNT_COLUMNS`。一旦调用链上游可控 `cols`（例如消息体被伪造/污染），可构造恶意列名或表达式注入到 `ON DUPLICATE KEY UPDATE` 子句。</div>
+                <div class="finding-suggestion">💡 修复建议：对 `cols` 做强制白名单过滤后再拼接，且拒绝非法字段。示例：`Set&lt;String&gt; safeCols = cols.stream().filter(COUNT_COLUMNS::contains).collect(Collectors.toSet()); if (safeCols.size() != cols.size()) { throw new IllegalArgumentException(&quot;invalid counter columns&quot;); }`；随后仅使用 `safeCols` 生成 `updateClause`。进一步建议改为预定义列映射（枚举-&gt;固定 SQL 片段）避免任意字符串进入 SQL。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/dao/InboundBatchCounterDao.java:17</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/report/impl/EventUploadProcessor.java:136-151</code>
                 </div>
-                <div class="finding-desc">**原因：** 新增查询方法未包含 `facilityCode` 过滤条件，且注释明确为“across all facilities”。在多租户/多网点场景下，这类按 `parentBatchCode + childBatchCodes` 的查询会返回跨站点数据，缺少最小数据范围约束。
-
-```java
-List&lt;InboundBatchCounter&gt; findByParentBatchCodeAndChildBatchCodeIn(String parentBatchCode, List&lt;String&gt; childBatchCodes);
-```
-
-本分片仅见 DAO 变更，未见对应 HTTP 映射与调用方鉴权逻辑，无法断言具体入口，但该方法语义具备扩大可见范围风险。
-
-**影响：** 若上层在普通查询链路调用该方法且未追加角色/站点过滤，低权限主体可能读取非本 `facilityCode` 的计数数据，形成跨租户/跨网点越权读取。</div>
-                <div class="finding-suggestion">💡 修复建议：将该方法改为强制带 `facilityCode` 的受限查询，或仅在明确的高权限场景下调用并在服务层增加角色校验与数据范围校验。
-
-```java
-List&lt;InboundBatchCounter&gt; findByParentBatchCodeAndChildBatchCodeInAndFacilityCode(
-    String parentBatchCode, List&lt;String&gt; childBatchCodes, String facilityCode);
-```
-
-同时在调用点增加显式鉴权（如 `@PreAuthorize` 或等效角色校验）并校验请求方可访问的 `facilityCode` 集合。</div>
+                <div class="finding-desc">新增逻辑在 `trkApi.pushTrackingEvent(insertEventForm);` 之后执行 `labelCostCalcService.costCalc(...)`，但将成本计算异常全部吞掉，仅记录日志后继续将处理结果标记为 `Success`。这会导致“事件已成功上报，但费用未成功入账/更新”的状态分裂，属于资金计算链路的完整性缺陷。</div>
+                <div class="finding-suggestion">💡 修复建议：将费用计算失败视为主流程失败并显式回滚/重试，避免成功状态误报。示例：捕获后抛出业务异常并由上层统一失败处理；或将 `item.setMessage(&quot;Success&quot;)` 放在成本计算成功之后。可参考：`catch (Exception e) { log.error(...); throw new BizException(&quot;cost calc failed&quot;, e); }`。</div>
             </div>
             
             <div class="finding-card finding-major">
@@ -134,53 +119,36 @@ List&lt;InboundBatchCounter&gt; findByParentBatchCodeAndChildBatchCodeInAndFacil
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/bo/Inbound/ParcelCountTuple.java:46-55</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/bo/Inbound/ParcelCountTuple.java:48-56</code>
                 </div>
-                <div class="finding-desc">8个计数字段在循环中使用 `int` 累加，存在整数溢出风险；当批次数量或计数值较大时会产生负数或错误统计结果。</div>
-                <div class="finding-suggestion">💡 修复建议：将中间累加变量改为 `long`，并在构造返回值前做边界校验（或使用 `Math.addExact` 显式检测溢出），例如 `long t = 0L;` 并在最终转换时校验 `&lt;= Integer.MAX_VALUE`。</div>
+                <div class="finding-desc">`sumCounters` 在遍历 `rows` 时未处理元素为 `null` 的情况，直接调用 `r.getParcelTotalQty()` 等会触发空指针异常，导致统计流程中断。</div>
+                <div class="finding-suggestion">💡 修复建议：在循环内增加 `null` 保护后再累加字段，例如：`for (InboundBatchCounter r : rows) { if (r == null) { continue; } ... }`；或在进入方法前对集合做非空元素过滤。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/event/ParcelStatusKafkaPublisher.java:54-74</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/event/ParcelStatusKafkaPublisher.java:33</code>
                 </div>
-                <div class="finding-desc">命中 [EXC-001]：在宽泛 `catch (Exception e)` 后直接 `return null`，把 Redis/依赖服务异常与“确实无facilityType”混淆，调用方无法区分失败与正常空值，导致异常被静默吞掉。攻击者或故障场景下可借此长期隐藏设施类型查询失败，影响后续风控/审计链路的数据可信度。</div>
-                <div class="finding-suggestion">💡 修复建议：避免在宽泛异常后返回业务正常值。建议抛出受检/业务异常，或返回显式失败结果并由上层做降级决策，例如：`throw new IllegalStateException(&quot;lookup facility type failed&quot;, e);`；若必须降级，至少返回带状态的结果对象（如 `LookupResult{success=false,...}`）并在上层打点告警。</div>
+                <div class="finding-desc">`@TransactionalEventListener` 使用 `fallbackExecution = true`，当调用方不在事务中时监听器会立即执行，和注释中“AFTER_COMMIT 才发送”的语义不一致，可能在无事务场景发布了本不应发送的事件。</div>
+                <div class="finding-suggestion">💡 修复建议：若业务要求“仅提交后发送”，将 `fallbackExecution` 改为 `false`（默认），并在发布方确保处于事务内；或在方法内显式检查事务状态后再发送。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/UpdateAddressService.java:241-249</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/event/ParcelStatusKafkaPublisher.java:53-74</code>
                 </div>
-                <div class="finding-desc">在 `@Transactional` 的 `update(...)` 方法内新增了 `getNewAddressLabel(label)` 调用；该调用依赖外部模板路径与绘制逻辑（`DrawRouteUtils.generate`）并声明可抛异常。这样会把“地址更新成功”与“新面单渲染成功”强耦合，渲染失败会触发事务回滚，导致主业务被非核心步骤拖垮。属于多步操作的部分失败处理缺失。</div>
-                <div class="finding-suggestion">💡 修复建议：将面单渲染从事务主流程中解耦：先完成地址更新并提交事务，再在事务外异步/降级生成面单；或在事务内对渲染异常单独捕获并记录告警，避免回滚主数据。示例：`try { return getNewAddressLabel(label); } catch (Exception e) { log.error(&quot;generate label failed&quot;, e); return &quot;&quot;; }`（建议放在事务外层调用）。</div>
+                <div class="finding-desc">`lookupFacilityType` 捕获 `Exception` 后直接返回 `null`，会把“设施不存在”和“查询异常”两类场景混淆，调用方无法区分真实数据缺失还是依赖故障，可能导致静默数据质量问题。</div>
+                <div class="finding-suggestion">💡 修复建议：至少区分异常与空结果：异常时返回显式兜底值（如 `&quot;UNKNOWN&quot;`）并打点告警，或改为抛出业务异常由上层决定是否跳过发送。示例：`catch (Exception e) { log.error(..., e); return &quot;UNKNOWN&quot;; }`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/UpdateAddressService.java:147,241-252</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/factory/strategy/returnlabel/SpxReturnLabelStrategy.java:110</code>
                 </div>
-                <div class="finding-desc">原因：`update(...)` 从 `void` 改为 `String` 并在地址变更时返回新标签内容，等同于给外部更新接口增加“读取标签结果”的新权限面；新增代码内未体现按调用方身份做数据范围约束。
-影响：外部入口若仅校验“可更新”而未严格校验“可读该标签完整内容”，将出现权限扩张，增加外部面越权读取风险。
-
----
-
-原因：新增逻辑在地址变更后直接返回新面单内容（`getNewAddressLabel` -&gt; `DrawRouteUtils.generate(...)`），但变更代码内未体现任何与调用方身份绑定的数据范围校验（如 `fleetId/facilityCode/userId` 归属二次校验）。这会把“修改地址”能力扩展为“读取完整新面单内容”能力。
-```java
-if (addressChanged) {
-    return getNewAddressLabel(label);
-}
-...
-private String getNewAddressLabel(Label label) throws Exception {
-    boolean spxTrackingNoFlag = labelQueryService.isSpxTrackingNumber(label.getTrackingNumber());
-    boolean isLPDSP = zoneMappingService.isLPDSP(label);
-    return DrawRouteUtils.generate(label, routeLabelPath, null, isLPDSP, spxTrackingNoFlag);
-}
-```
-影响：若上游控制器鉴权/数据范围控制存在薄弱点，调用者可在更新后直接获得新标签字符串，放大越权读取与敏感物流数据外泄风险。</div>
-                <div class="finding-suggestion">💡 修复建议：对 `/external/address/update` 入口增加显式授权分层：更新权限与标签读取权限分离；仅在读取权限通过时返回标签内容，否则返回空或业务成功码。并记录拒绝审计日志。</div>
+                <div class="finding-desc">新增链式调用 `.originTrkNo(value.getLabel().getTrackingNumber())` 未做空值保护；当 `value` 或 `value.getLabel()` 为 `null` 时会触发 NPE，导致创建退货标签流程失败。</div>
+                <div class="finding-suggestion">💡 修复建议：在取值前增加空值校验并提供降级逻辑，例如：`String originTrkNo = value != null &amp;&amp; value.getLabel() != null ? value.getLabel().getTrackingNumber() : null;` 再传入 `.originTrkNo(originTrkNo)`；若该字段业务必填，则改为显式参数校验并抛出可读业务异常。</div>
             </div>
-            <p class="more-note">... 还有 4 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 7 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
