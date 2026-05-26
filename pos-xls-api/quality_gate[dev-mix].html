@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-xls-api &nbsp;|&nbsp; 2026-05-15 16:15:20</div>
+      <div class="meta">pos-xls-api &nbsp;|&nbsp; 2026-05-26 11:28:44</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -56,13 +56,13 @@
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#4caf50">14.6%</div>
+      <div class="metric-value" style="color:#4caf50">15.5%</div>
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#f44336">21.4%</div>
+            <div class="metric-value" style="color:#f44336">32.6%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:12</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:2 &nbsp; 主要:9</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,8 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube analysis timed out after 1 minutes</li>
-<li>AI Review: 1 Critical finding(s)</li>
-<li>AI Review: 12 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 2 Critical finding(s)</li>
+<li>AI Review: 9 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,53 +94,93 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/impl/TrackingManagementServiceImpl.java:93-107</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/inbound/InboundBatchCounterService.java:95-104</code>
                 </div>
-                <div class="finding-desc">新增逻辑在 `trkApi.pushTrackingEvent(form)` 成功后，用 `try/catch` 吞掉了 `labelCostCalcService.costCalc(...)` 的所有异常。任何时间解析失败、依赖服务异常或数据库异常都会导致轨迹事件已落地/下发，但计费计算被静默跳过，形成不可见的费用漏算或状态-费用不一致。该问题属于资金计算链路的事务边界缺陷。</div>
-                <div class="finding-suggestion">💡 修复建议：不要在计费链路上直接吞异常。若计费是必需步骤，应让异常向上抛出并回滚当前业务，或将轨迹事件与计费任务一起写入可靠消息/补偿队列，确保失败可重试且可告警。至少应对 `localEventTs` 解析失败和 `costCalc` 执行失败分别做显式补偿处理。</div>
+                <div class="finding-desc">存在 SQL 注入风险：`updateClause` 直接基于外部传入的 `cols` 拼接列名，再拼接进最终 SQL。若调用方未严格约束 `cols`，攻击者可构造恶意列片段污染 `ON DUPLICATE KEY UPDATE` 子句。</div>
+                <div class="finding-suggestion">💡 修复建议：仅允许白名单列参与更新，先对 `cols` 做交集过滤/校验，再拼接 SQL；若出现非法列直接拒绝。示例：`Set&lt;String&gt; safeCols = cols.stream().filter(COUNT_COLUMNS::contains).collect(Collectors.toSet()); if (safeCols.isEmpty()) return; if (safeCols.size() != cols.size()) throw new IllegalArgumentException(&quot;invalid counter columns&quot;);`，随后仅使用 `safeCols` 生成 `updateClause`。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/dao/InboundBatchCounterDao.java:17</code>
+                </div>
+                <div class="finding-desc">**原因：** 新增查询方法未包含 `facilityCode` 过滤条件，且注释明确为“across all facilities”。在多租户/多网点场景下，这类按 `parentBatchCode + childBatchCodes` 的查询会返回跨站点数据，缺少最小数据范围约束。
+
+```java
+List&lt;InboundBatchCounter&gt; findByParentBatchCodeAndChildBatchCodeIn(String parentBatchCode, List&lt;String&gt; childBatchCodes);
+```
+
+本分片仅见 DAO 变更，未见对应 HTTP 映射与调用方鉴权逻辑，无法断言具体入口，但该方法语义具备扩大可见范围风险。
+
+**影响：** 若上层在普通查询链路调用该方法且未追加角色/站点过滤，低权限主体可能读取非本 `facilityCode` 的计数数据，形成跨租户/跨网点越权读取。</div>
+                <div class="finding-suggestion">💡 修复建议：将该方法改为强制带 `facilityCode` 的受限查询，或仅在明确的高权限场景下调用并在服务层增加角色校验与数据范围校验。
+
+```java
+List&lt;InboundBatchCounter&gt; findByParentBatchCodeAndChildBatchCodeInAndFacilityCode(
+    String parentBatchCode, List&lt;String&gt; childBatchCodes, String facilityCode);
+```
+
+同时在调用点增加显式鉴权（如 `@PreAuthorize` 或等效角色校验）并校验请求方可访问的 `facilityCode` 集合。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/factory/pipeline/AbstractDataProducer.java:44-48</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/inbound/InboundBatchCounterService.java:71-85</code>
                 </div>
-                <div class="finding-desc">`finally` 中使用阻塞式 `queue.put(Collections.emptyList())` 发送 poison pill；一旦消费者已经异常退出且队列已满，生产者会永久阻塞在这里，导致任务无法结束，调用方也拿不到原始异常。</div>
-                <div class="finding-suggestion">💡 修复建议：将结束信号改为有界降级策略，避免在 `finally` 中无限阻塞，例如使用 `offer` 带超时并在失败时记录错误/取消消费者：`if (!queue.offer(Collections.emptyList(), 5, TimeUnit.SECONDS)) { log.error(&quot;failed to publish poison pill&quot;); }`。同时结合上层在任一侧失败时主动取消另一侧任务。</div>
+                <div class="finding-desc">`applyEvent` 未校验 `msg` 是否为 null，后续直接调用 `msg.getEventId()/getChildBatchCode()`，会在消费异常消息时触发 NPE，导致事件处理失败。</div>
+                <div class="finding-suggestion">💡 修复建议：在方法入口增加空值保护并记录错误日志，例如：`if (msg == null) { log.error(&quot;counter event is null&quot;); return false; }`；同时在调用方或反序列化层补充非空约束。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/factory/pipeline/AbstractDataProducer.java:46</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/bo/Inbound/ParcelCountTuple.java:46-55</code>
                 </div>
-                <div class="finding-desc">`finally` 中使用阻塞式 `queue.put(Collections.emptyList())` 投递 poison pill。若消费者已经异常退出或队列已满且无人继续消费，生产者会在清理阶段永久阻塞，导致工作线程无法释放，形成可被异常输入放大的拒绝服务风险。</div>
-                <div class="finding-suggestion">💡 修复建议：避免在 `finally` 中无条件使用阻塞 `put`。可改为带超时的 `offer`，失败后记录错误并退出；或在投递前检查中断状态，并由调度层在消费者失败时主动取消生产者。</div>
+                <div class="finding-desc">8个计数字段在循环中使用 `int` 累加，存在整数溢出风险；当批次数量或计数值较大时会产生负数或错误统计结果。</div>
+                <div class="finding-suggestion">💡 修复建议：将中间累加变量改为 `long`，并在构造返回值前做边界校验（或使用 `Math.addExact` 显式检测溢出），例如 `long t = 0L;` 并在最终转换时校验 `&lt;= Integer.MAX_VALUE`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/factory/pipeline/ProducerConsumerPipeline.java:63-76</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/event/ParcelStatusKafkaPublisher.java:54-74</code>
                 </div>
-                <div class="finding-desc">这里固定先等待 `producerFuture.get()`，再等待 `consumerFuture.get()`。如果消费者先失败，生产者在队列写满后会阻塞，当前线程会一直卡在 `producerFuture.get()`，从而无法及时感知消费者异常，整个流水线可能死锁。</div>
-                <div class="finding-suggestion">💡 修复建议：不要串行等待两个 `Future`。可改为使用 `CompletionService`/`CompletableFuture.anyOf` 先感知首个失败任务，并在任一侧失败后立即 `cancel(true)` 另一侧；或至少并发监控两个任务结果，避免先 `get()` 生产者导致阻塞。</div>
+                <div class="finding-desc">命中 [EXC-001]：在宽泛 `catch (Exception e)` 后直接 `return null`，把 Redis/依赖服务异常与“确实无facilityType”混淆，调用方无法区分失败与正常空值，导致异常被静默吞掉。攻击者或故障场景下可借此长期隐藏设施类型查询失败，影响后续风控/审计链路的数据可信度。</div>
+                <div class="finding-suggestion">💡 修复建议：避免在宽泛异常后返回业务正常值。建议抛出受检/业务异常，或返回显式失败结果并由上层做降级决策，例如：`throw new IllegalStateException(&quot;lookup facility type failed&quot;, e);`；若必须降级，至少返回带状态的结果对象（如 `LookupResult{success=false,...}`）并在上层打点告警。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerImplService.java:1608</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/UpdateAddressService.java:241-249</code>
                 </div>
-                <div class="finding-desc">新增的 `getContainerDetail` 方法在容器不存在时直接调用 `getGetContainerInfoResponse(containerNo)`，而该辅助方法会创建并落库新容器。这样会把一个语义上应为“查询详情”的接口变成带写副作用的入口，外部只需不断传入格式合法的 `containerNo` 即可批量制造新记录，形成资源消耗/脏数据注入风险。</div>
-                <div class="finding-suggestion">💡 修复建议：将“查询详情”和“创建容器”拆分为两个独立流程：`getContainerDetail` 在容器不存在时仅返回 not found/业务错误；如确需自动创建，改为显式写接口并增加幂等控制、频率限制和审计。</div>
+                <div class="finding-desc">在 `@Transactional` 的 `update(...)` 方法内新增了 `getNewAddressLabel(label)` 调用；该调用依赖外部模板路径与绘制逻辑（`DrawRouteUtils.generate`）并声明可抛异常。这样会把“地址更新成功”与“新面单渲染成功”强耦合，渲染失败会触发事务回滚，导致主业务被非核心步骤拖垮。属于多步操作的部分失败处理缺失。</div>
+                <div class="finding-suggestion">💡 修复建议：将面单渲染从事务主流程中解耦：先完成地址更新并提交事务，再在事务外异步/降级生成面单；或在事务内对渲染异常单独捕获并记录告警，避免回滚主数据。示例：`try { return getNewAddressLabel(label); } catch (Exception e) { log.error(&quot;generate label failed&quot;, e); return &quot;&quot;; }`（建议放在事务外层调用）。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/impl/PoeZoneFacilityMappingServiceImpl.java:76</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/UpdateAddressService.java:147,241-252</code>
                 </div>
-                <div class="finding-desc">新增过滤条件直接调用 `baseFacility.getPoe().equals(x.getPoe())`，当基础资料中的 `poe` 为空时会触发空指针，导致查询 zone 直接失败。这个空值在缓存未完整初始化、脏数据或历史数据场景下都可能出现。</div>
-                <div class="finding-suggestion">💡 修复建议：改为空安全比较，例如 `Objects.equals(baseFacility.getPoe(), x.getPoe())`，或先校验 `baseFacility.getPoe()` 非空后再进入过滤。示例：`filter(x -&gt; Objects.equals(baseFacility.getPoe(), x.getPoe()) &amp;&amp; facilityCode.equals(x.getFacilityCode()))`。</div>
+                <div class="finding-desc">原因：`update(...)` 从 `void` 改为 `String` 并在地址变更时返回新标签内容，等同于给外部更新接口增加“读取标签结果”的新权限面；新增代码内未体现按调用方身份做数据范围约束。
+影响：外部入口若仅校验“可更新”而未严格校验“可读该标签完整内容”，将出现权限扩张，增加外部面越权读取风险。
+
+---
+
+原因：新增逻辑在地址变更后直接返回新面单内容（`getNewAddressLabel` -&gt; `DrawRouteUtils.generate(...)`），但变更代码内未体现任何与调用方身份绑定的数据范围校验（如 `fleetId/facilityCode/userId` 归属二次校验）。这会把“修改地址”能力扩展为“读取完整新面单内容”能力。
+```java
+if (addressChanged) {
+    return getNewAddressLabel(label);
+}
+...
+private String getNewAddressLabel(Label label) throws Exception {
+    boolean spxTrackingNoFlag = labelQueryService.isSpxTrackingNumber(label.getTrackingNumber());
+    boolean isLPDSP = zoneMappingService.isLPDSP(label);
+    return DrawRouteUtils.generate(label, routeLabelPath, null, isLPDSP, spxTrackingNoFlag);
+}
+```
+影响：若上游控制器鉴权/数据范围控制存在薄弱点，调用者可在更新后直接获得新标签字符串，放大越权读取与敏感物流数据外泄风险。</div>
+                <div class="finding-suggestion">💡 修复建议：对 `/external/address/update` 入口增加显式授权分层：更新权限与标签读取权限分离；仅在读取权限通过时返回标签内容，否则返回空或业务成功码。并记录拒绝审计日志。</div>
             </div>
-            <p class="more-note">... 还有 7 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 4 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
