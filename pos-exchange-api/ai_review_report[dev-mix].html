@@ -1230,7 +1230,7 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: pos-exchange-api | 生成时间: 2026-05-25 16:03:01</p>
+      <p class="hero-meta">服务: pos-exchange-api | 生成时间: 2026-05-26 14:52:46</p>
       <div class="top-criticals" id="top-criticals">
         <h3>Top 3 Critical 问题</h3>
         <ul id="top-criticals-list"></ul>
@@ -1252,222 +1252,234 @@
     <div id="panel-general" class="report-panel is-active" role="tabpanel" aria-labelledby="tab-general">
     <section class="summary">
       <h2>总体结论</h2>
-      <div id="summary-text" class="summary-body summary-preformatted"><div class="summary-condensed"><p>合并 <strong>48</strong> 个分片审查，共 <strong>19</strong> 条发现 （Critical 2 · Major 12 · Minor 4 · Info 1）。详细列表见下方「按文件的审查发现」；接口与数据权限维度见「权限与业务规则」页签。</p><details class="summary-raw-details"><summary>展开各分片原文结论</summary><pre class="summary-raw-pre">**分片 1**
+      <div id="summary-text" class="summary-body summary-preformatted"><div class="summary-condensed"><p>合并 <strong>52</strong> 个分片审查，共 <strong>19</strong> 条发现 （Critical 1 · Major 13 · Minor 5 · Info 0）。详细列表见下方「按文件的审查发现」；接口与数据权限维度见「权限与业务规则」页签。</p><details class="summary-raw-details"><summary>展开各分片原文结论</summary><pre class="summary-raw-pre">**分片 1**
 
-本分片仅见 `UpdateAddressService` 新增依赖注入、配置项读取、`update(...)` 返回值由 `void` 改为 `String`，以及在地址变更后调用 `DrawRouteUtils.generate(...)`；在新增/修改行中未发现 SQL 注入、硬编码密钥、敏感日志、显式放宽鉴权（如 `permitAll`）或并发共享变量写入等安全问题。
-
+本分片仅见 1 处安全风险：`UpdateAddressService.update()` 新增返回标签内容，扩大了数据暴露面但未在新增代码中体现二次权限/归属校验。
 HTTP 入口清单（方法 + 路径）
-1. POST `/address/update`（PadAddressModifyController）: 关联 `UpdateAddressService.update()`；本次 diff 仅体现服务返回值与标签生成逻辑变化，未出现新增/删减鉴权与数据范围过滤代码，结论为无新增权限风险（实现侧完整鉴权仍需在对应 Controller/安全配置分片确认）。
-2. POST `/address/update`（WebAddressModifyController）: 同上，未见本分片新增权限放宽迹象，结论为无新增权限风险（需结合 Controller 分片最终确认）。
-3. POST `/external/address/update`（UpdateAddressController）: 同上，未见本分片新增权限放宽迹象，结论为无新增权限风险（需结合 Controller 分片最终确认）。
-4. GET `/external/address/one`（UpdateAddressService.one()）: 该方法实现未在本分片 diff 内，无法断言权限。
-5. （无 HTTP 注解）`updateLabelNotesForm()`: 入口实现未在本分片 diff 内，无法断言权限。
+- POST `/address/update`：存在上述新增数据面带来的潜在越权读取风险（见 finding）。
+- POST `/external/address/update`：存在上述新增数据面带来的潜在越权读取风险（见 finding）。
+- GET `/external/address/one`：实现未在本分片/diff 内，无法断言权限。
+- POST `/address/update`（另一 Controller 入口）：存在上述新增数据面带来的潜在越权读取风险（见 finding）。
+- `updateLabelNotesForm()`：无 HTTP 注解（按提供信息），不构成可直接判定的 HTTP 权限面。
 
 **分片 2**
 
-本分片仅在 `UpdateAddressService` 看到 1 个 Major（事务内引入标签生成导致主流程可被非核心失败回滚）。权限面未见新增放权逻辑：`POST /address/update`、`POST /external/address/update` 仍复用既有 `UpdateAddressService.update()`，本次 diff 未引入新的鉴权绕过或路径暴露变更。
+仅基于提供的 diff，发现 1 个 Major 级业务回归风险（事务内新增面单生成导致更新被连带回滚）。权限维度上，本分片新增/修改行未出现权限注解或鉴权逻辑变更；对清单中的 `/address/update`、`/external/address/update`、`/external/address/one` 及无 HTTP 注解入口未发现新增越权迹象。
 
 **分片 3**
 
-本分片仅见 Kafka 消费者新增代码，未发现 SQL 注入、硬编码密钥或 HTTP 鉴权绕过类变更。HTTP 入口清单（方法 + 路径）：无；`ParcelCounterConsumer.onMessage()` 为非 HTTP 入口，不适用基于 URL 的权限校验结论。
+本分片提供的 diff 仅涉及测试类 `EventUploadProcessorTest` 的 import 与 mock 字段新增（`LabelService`、`LabelCostCalcService`），未引入业务逻辑、数据访问、鉴权配置或 HTTP 入口变更。按给定安全清单与规则核查，未发现新增安全风险。
 
 **分片 4**
 
-本分片仅包含 `ParcelCounterConsumer.onMessage()`（无 HTTP 入口），未发现权限控制类风险。主要问题是空消息分支的 NPE 与异常仅日志不补偿导致的计数一致性风险。
+本分片仅包含测试类中新增依赖的 import 与 @Mock 字段声明，未发现会导致功能异常、类型不安全或业务逻辑回归的问题。变更与常见 Mockito 注入场景一致，整体风险较低。
 
 **分片 5**
 
-本次分片在 `POST /updateNew` 上引入了新的响应数据面：接口开始返回 `base64Label`，存在敏感信息外泄风险，建议按最小披露原则收敛返回内容。
-
-HTTP 入口清单（方法 + 路径）
-- POST /updateNew：已在 findings 记录对应 HTTP 面安全风险（返回值由 `Void` 变为标签内容，数据暴露面扩大）。
+本分片可见变更均位于测试代码（新增/调整 Mock 与断言）及测试依赖注入，未在新增/修改行中发现 SQL 注入、越权、敏感信息泄露、硬编码密钥、认证失效或并发安全等安全问题。由于本分片 diff 未出现任何 HTTP 映射注解（@GetMapping/@PostMapping/@PutMapping/@DeleteMapping/@PatchMapping/@RequestMapping），HTTP 入口清单为空。
 
 **分片 6**
 
-本分片变更整体实现清晰，未发现明显运行时错误风险。主要关注点是接口响应契约变更带来的兼容性影响，建议通过版本化或兼容层降低回归风险。
+本分片变更主要集中在测试代码重构与新增测试用例；基于提供的 diff（仅新增/修改行）未发现满足 Major/Minor/Info 报告阈值的有效问题。
 
 **分片 7**
 
-本分片提供的新增/修改内容均为测试代码变更，未发现符合本次安全审查清单的新增安全风险（Critical/Major）。在仅基于当前 diff 且仅审查“+”行的前提下，未识别到 SQL 注入、越权、敏感信息泄露、硬编码密钥、认证失效、并发安全或 API 权限契约绕过问题。
+本次分片在 `POST /updateNew` 引入了新增数据暴露面：将更新接口改为直接返回 `base64Label`，存在敏感业务信息过度返回风险。
+HTTP 入口清单（方法 + 路径）：
+- POST /updateNew：存在新增安全风险（返回体扩展为标签内容回传），对应上述 finding。
 
 **分片 8**
 
-基于所给 diff（仅新增/修改行）未发现符合 Major/Minor/Info 标准的有效缺陷；本分片改动以测试补充与测试类型修正为主，未见会导致业务功能异常、类型不安全或明显逻辑回归的问题。
+本分片变更整体实现清晰，主要风险是接口响应契约从 `Void` 改为 `String` 的兼容性影响。建议补充版本化/兼容策略与契约回归测试。
 
 **分片 9**
 
-本分片提供的 diff 仅包含新增数据聚合值对象 `ParcelCountTuple`，未发现 SQL 注入、越权访问、敏感信息泄露、硬编码密钥/口令、认证失效或并发安全等新增安全风险。该 diff 中未出现 HTTP 映射注解（如 `@GetMapping/@PostMapping`），因此无可列示的 HTTP 入口清单。
+本分片仅涉及测试代码调整与新增测试类，未见新增/修改行引入 SQL 注入、越权、硬编码密钥、敏感日志、并发竞态或认证绕过等安全风险。基于当前 diff 可判定：无新增安全问题。
 
 **分片 10**
 
-本分片存在 2 个 Major 边界条件问题：空元素空指针与整型溢出风险，均位于新增的 `sumCounters` 聚合逻辑中，建议优先修复并补充边界单测。
+本分片未发现 Major 级功能风险；主要问题集中在测试有效性：一组集成测试被永久禁用、另一组测试全局放宽 Mockito 严格度，均会降低回归缺陷的检出能力。
 
 **分片 11**
 
-本分片提供的 diff 仅涉及删除 `@Max(value = 200)` 校验注解，未出现任何以 `+` 开头的新增/修改业务代码行；按约束仅审查新增/修改行后，未发现可报告的安全问题。
+本分片仅看到新增数据载体类 `ParcelCountTuple`（纯内存计数聚合与对象方法），未发现 SQL 注入、越权访问、敏感信息泄露、硬编码密钥、认证绕过、并发共享可变状态等新增安全风险。且该 diff 不包含任何 HTTP 映射注解，故无 HTTP 入口清单项。
 
 **分片 12**
 
-本分片提供的 diff 中未出现任何新增/修改代码行（仅删除了 `@Max` 注解），按约束仅审查 `+` 行后无可报告问题。
+该分片新增代码整体结构清晰，但在计数聚合路径存在两个 Major 边界问题：空元素空指针风险与 `int` 累加溢出风险，建议优先修复并补充对应单测。
 
 **分片 13**
 
-本分片仅新增配置类 `InboundCounterProperties`，未发现 SQL 注入、越权访问、敏感信息泄露、硬编码密钥/口令、认证绕过、并发安全等新增安全风险。该 diff 未包含任何 HTTP 映射注解（如 `@GetMapping/@PostMapping/@RequestMapping`），因此无 HTTP 入口清单可列示。
+本分片提供的 diff 仅涉及删除 `@Max(200)` 校验注解，未出现新增或修改的 `+` 代码行可触发安全问题；按约束（仅审查 `+` 行）未发现可报告的新增安全风险。
 
 **分片 14**
 
-本分片仅包含新增配置类 `InboundCounterProperties`，未发现会导致功能异常、类型不安全或明显业务逻辑问题的新增/修改代码。当前实现与“默认关闭、按开关启用”的发布策略一致。
+本分片给出的 diff 仅涉及删除注解行（无新增/修改的 `+` 行），按约束未发现可报告问题；当前变更在常规审查维度下通过。
 
 **分片 15**
 
-本分片发现1项安全问题：新增DAO接口引入无facility范围约束的查询能力，存在跨facility数据越权读取风险。其余新增/修改行未发现SQL注入、硬编码密钥、敏感日志等直接安全问题。
+本分片仅新增配置类 `InboundCounterProperties`（布尔开关与时间阈值属性绑定），未出现 SQL/鉴权入口/密钥硬编码/敏感日志/并发共享写入等安全风险模式；按当前 diff 可判定无新增安全问题。
 
 **分片 16**
 
-在仅基于本分片提供的 diff（且仅检查新增/修改行）进行审查后，未发现符合本次规则的 Major/Minor/Info 问题。当前改动以 DAO 方法声明补充与单字段更新扩展为主，未见明显业务异常或类型安全风险。
+本分片新增配置类整体实现简洁、开关默认值安全；仅发现一个时间配置语义的可预防性风险，建议尽早统一为带时区时间类型。
 
 **分片 17**
 
-本分片仅在 DTO `ParcelSearchResultDto` 中新增 `Date containerDate` 字段及对应 import，未出现 SQL/鉴权/权限范围/敏感信息/并发共享状态等安全风险代码模式。未涉及任何 HTTP Mapping 变更，因此本分片无可列示的 HTTP 入口清单。
+本分片在新增 DAO 中发现 1 处权限与访问控制风险：引入了不带 `facilityCode` 的跨场地查询能力，若上层未强制数据范围过滤将导致越权读取。未发现本 diff 内的 HTTP Mapping 变更，无法在本分片建立具体方法+路径映射。
 
 **分片 18**
 
-本分片仅在 DTO 中新增 `containerDate` 字段并补充 `java.util.Date` 引用，未发现会导致编译失败、运行时异常或业务逻辑回归的问题。基于当前 diff，常规维度审查通过。
+本分片仅涉及 DAO 接口方法新增与一处字段更新语句补充，未发现可在新增/修改行上直接确认的 Major/Minor/Info 级功能性问题；类型签名与 Spring Data/JPA 语义在当前 diff 范围内保持一致。
 
 **分片 19**
 
-本分片仅涉及实体字段与格式微调（`InboundBatchCounter` 新增实体、`Label` 新增时间字段、空白字符调整），在新增/修改行中未发现 SQL 注入、越权、敏感信息泄露、硬编码密钥、并发安全或认证失效等安全问题。另：本分片 diff 未出现任何 `@GetMapping/@PostMapping/@PutMapping/@DeleteMapping/@PatchMapping/@RequestMapping` 映射，故无可列示的 HTTP 入口清单。
+本分片提供的 diff 仅在 DTO `ParcelSearchResultDto` 中新增 `containerDate` 字段及 `java.util.Date` 引入，未出现 SQL、鉴权、敏感信息、并发控制、异常吞噬或安全配置相关变更。基于仅审查新增/修改行的约束，未发现新增安全风险。
 
 **分片 20**
 
-在本分片提供的 diff 范围内（仅新增/修改行）未发现符合 Major/Minor/Info 标准的有效问题；变更主要为实体字段新增与格式调整，未见明显功能性风险。
+本分片变更整体较小，未发现 Major 问题；主要风险是新增 `Date` 字段的时间格式与时区契约未显式定义，建议补充序列化约束以保证跨端一致性。
 
 **分片 21**
 
-本分片新增代码未发现 SQL 注入、硬编码密钥、越权入口或鉴权绕过等 Critical 安全问题。HTTP 入口覆盖结论：`ParcelEventPublisher.publish()`、`ParcelStatusKafkaPublisher.onParcelStatusChanged()` 均无 Controller 映射（非 HTTP 暴露面），本次 diff 未引入新增 HTTP 权限风险。
+本分片仅涉及实体类字段新增与空白字符调整，未出现 SQL 拼接、鉴权逻辑、权限注解、敏感信息、并发控制或认证流程相关的新增/修改代码，未发现新增安全风险。且本 diff 未包含任何 `@GetMapping/@PostMapping/@PutMapping/@DeleteMapping/@PatchMapping/@RequestMapping` 变更，HTTP 入口清单在本分片不适用。
 
 **分片 22**
 
-本分片未发现 HTTP 入口变更，`ParcelEventPublisher.publish()` 与 `ParcelStatusKafkaPublisher.onParcelStatusChanged()` 无 Controller 映射，未见新增权限与访问控制风险。主要风险集中在异常降级语义与事务回调一致性边界。
+本分片仅涉及实体字段新增与空白字符调整，未发现会导致业务异常、类型不安全、异常处理缺陷或并发原子性问题的新增/修改代码风险。整体变更在当前 diff 范围内是稳健的。
 
 **分片 23**
 
-本次仅审查给定 diff 的新增/修改行，未发现符合 CRITICAL/MAJOR 安全问题的新增风险：未出现硬编码密码/密钥、SQL 拼接、鉴权放行配置、敏感日志新增、并发不安全共享状态或认证失效逻辑。
-
-权限判断（基于已给“全量接口端点清单”）：清单中的 Service 方法在本分片均标注为“无 Controller 调用”，即无可识别 HTTP Method/Path 映射；本次变更也未新增/修改任何 Controller 映射或 Spring Security 配置，未观察到新增越权或数据范围放大风险。对这些方法可得结论为：当前 diff 未削弱权限控制，但因缺少直接 HTTP 入口上下文，外部可达性与最终鉴权链路仍需在对应 Controller 分片联动复核。
-
-HTTP 入口清单（方法 + 路径）：本分片 diff 中未出现 `@GetMapping`/`@PostMapping`/`@PutMapping`/`@DeleteMapping`/`@PatchMapping` 或带路径的 `@RequestMapping`，因此无新增可列示的 HTTP 入口。
+未在本分片 diff 的新增/修改行中发现可确认的安全问题（Critical/Major）。权限维度上，给定清单中的方法均标注为“无 Controller 调用”，本次变更未出现新的 HTTP 暴露面、鉴权注解删除或数据范围过滤削弱迹象；因此无新增可判定的越权/访问控制风险（仅基于当前 diff）。
 
 **分片 24**
 
-本分片仅见 1 个 Major 边界条件问题（空值导致 NPE）。其余本次变更涉及的 Service 方法在给定信息中均无 Controller/HTTP 入口映射，未发现可判定的“权限与访问控制”风险。
+本分片发现 1 个 Major 边界条件问题（空值拆箱 NPE 风险）。权限维度上，给定清单中的相关 Service 方法均无可确认的 Controller/HTTP 入口，本分片未发现新增越权面。
 
 **分片 25**
 
-本分片仅新增 1 行：`originTrkNo(value.getLabel().getTrackingNumber())`（文件 `pos-service/src/main/java/com/miq/posservice/factory/strategy/returnlabel/SpxReturnLabelStrategy.java`）。基于提供的 diff，未发现 SQL 注入、越权访问、硬编码密钥/Token、敏感日志泄露、并发安全或认证失效等新增安全风险。该变更为请求字段透传，不涉及 HTTP 控制器入口或鉴权链路变更。
-
-HTTP 入口清单（方法 + 路径）
-- `SpxReturnLabelStrategy.create()`：无 HTTP Method / 无 HTTP Path（无 Controller 调用）。权限判断：本分片未引入或削弱任何对外接口鉴权与数据范围控制，无法形成新增越权面，结论为无新增权限风险。
+本分片仅在 `ScanTypeEnum` 新增枚举值 `DELIVERED`（`pos-service/src/main/java/com/miq/posservice/enums/ScanTypeEnum.java`），未引入 SQL、鉴权、敏感信息、并发控制或认证流程相关变更；基于当前 diff 未发现新增安全风险。
 
 **分片 26**
 
-本分片仅新增 1 行：`SpxReturnLabelStrategy.create()` 中设置 `originTrkNo(value.getLabel().getTrackingNumber())`，未发现可确定的 Major/Minor/Info 问题。权限面已核对：该方法无 Controller/HTTP 入口，不涉及接口级权限放行或越权风险。
+本分片仅在 ScanTypeEnum 新增了末尾枚举值 `DELIVERED`，未发现基于新增/修改行可确定的功能性、类型安全或异常处理问题。该改动对既有枚举顺序无破坏（追加而非插入中间），整体风险较低。
 
 **分片 27**
 
-本分片仅在 `VintedProperties` 新增了一个普通整型配置项 `stagingCutoffHour`（默认值 1），未触及鉴权、HTTP 入口、SQL、密钥/Token、日志敏感信息、并发共享状态或认证流程代码。基于当前 diff 未发现新增安全风险。
+本分片新增事件发布代码未发现 SQL 注入、硬编码密钥、鉴权放开等 Critical 安全问题；但存在两处异常吞噬/默认值降级，可能造成安全审计链路与数据一致性风险。HTTP 入口清单（方法 + 路径）：1) `ParcelEventPublisher.publish()`：无 HTTP 映射（无 Controller 调用），无新增权限风险。2) `ParcelStatusKafkaPublisher.onParcelStatusChanged()`：无 HTTP 映射（无 Controller 调用），无新增权限风险。
 
 **分片 28**
 
-本分片仅新增 `VintedProperties` 的配置字段 `stagingCutoffHour`（默认值 1），未发现会导致功能异常、类型不安全或明显业务回归的问题；当前变更可接受。
+本分片新增的 `ParcelEventPublisher.publish()` 与 `ParcelStatusKafkaPublisher.onParcelStatusChanged()` 均无 HTTP 入口，未发现接口级权限放行风险。主要风险集中在异常处理：当前实现存在静默降级与消息丢失隐患。
 
 **分片 29**
 
-本分片在 `SorterLogSo` 新增查询条件中发现 1 处权限与访问控制风险：LIKE 通配符未转义导致过滤可被绕过并扩大结果集。未发现硬编码密钥、SQL 拼接注入或认证配置放行类新增问题。
+未在本分片提供的新增行中发现可确认的安全问题。唯一新增代码 `originTrkNo(value.getLabel().getTrackingNumber())` 为字段透传，未引入硬编码密钥、SQL 拼接、鉴权放行、并发共享状态修改或敏感日志输出等风险。
+
+HTTP 入口清单（方法 + 路径）
+1. SpxReturnLabelStrategy.create()：无 HTTP Method / Path（无 Controller 调用）。与现有权限体系不存在直接入口关联，本次 diff 未新增或削弱鉴权与数据范围控制，结论为无新增权限风险。
 
 **分片 30**
 
-本分片发现 1 个 Major 边界条件问题：`sortIds` 元素为 null 时会触发空指针并中断查询。其余新增逻辑在当前 diff 范围内未见更高级别异常。
+本分片仅新增 1 行：`SpxReturnLabelStrategy` 构建请求时增加 `originTrkNo` 赋值。未发现基于新增行可确定的 Major/Minor/Info 问题；类型签名与 Builder 调用形式匹配。权限面审查：`SpxReturnLabelStrategy.create()` 无 Controller/HTTP 暴露入口，本分片未引入接口级权限与访问控制风险。
 
 **分片 31**
 
-本分片仅在 `CreateLabelForm` 新增字段 `originTrkNo`（数据载体变更），未出现 SQL 拼接、鉴权放行、敏感信息硬编码、日志泄露、并发共享写等安全风险模式。未发现新增/修改行中的安全问题。
+本分片仅在 `pos-service/src/main/java/com/miq/posservice/properties/VintedProperties.java` 新增配置字段 `stagingCutoffHour`（默认值 `1`），未涉及 SQL、鉴权、HTTP 入口、敏感信息、并发共享状态或认证流程变更；按当前 diff 未发现新增安全风险。
 
 **分片 32**
 
-本分片仅在 CreateLabelForm 新增字段 `originTrkNo`，未发现会导致功能异常、类型不安全、异常处理缺陷或明显性能/业务逻辑回归的问题。整体变更风险低。
+本分片仅新增了 `VintedProperties` 的配置字段 `stagingCutoffHour`（默认值 1），未发现基于新增/修改行可确认的功能性缺陷、类型安全问题或异常处理风险。整体变更较小且实现直接。
 
 **分片 33**
 
-本分片仅在 `pos-service/src/main/java/com/miq/posservice/service/impl/PushLogServiceImpl.java` 新增 1 行字段回填逻辑：`dto.setTruckHandoverTime(...)`，未引入 SQL 拼接、硬编码密钥/口令、敏感日志、认证绕过或权限注解变更。该变更属于既有“按入参覆盖、否则沿用原值”的同类赋值语句扩展，未新增独立 HTTP 入口，也未改变现有鉴权/数据范围控制面。结合给定入口清单，本次 diff 未新增可对外访问路径，且所列 `PushLogServiceImpl` 方法均标注为“无 Controller 调用”，因此本分片结论为：无新增安全风险。
+本分片在 `SorterLogSo` 新增查询条件中存在通配符未转义导致的可见范围扩大风险，属于权限与访问控制问题；未发现硬编码密钥、SQL 拼接或认证配置放开类新增问题。
+HTTP 入口清单（方法 + 路径）：本分片 diff 未出现 `@GetMapping/@PostMapping/@PutMapping/@DeleteMapping/@PatchMapping/@RequestMapping` 新增或修改，无法在本分片内建立具体 URL 映射；上述风险需在对应调用该 SO 的查询接口处补全权限断言。
 
 **分片 34**
 
-本分片仅在 `PushLogServiceImpl` 新增一行字段回填：`truckHandoverTime` 使用 `Optional.ofNullable(...).orElse(...)` 与同段既有字段回填模式一致，未发现空指针、类型不匹配、并发原子性或异常处理回归风险。权限侧核对：该变更位于 Service 内部逻辑，当前清单显示无 Controller/HTTP 入口映射，因此无新增接口级权限风险。
+本分片变更整体实现思路清晰，但 `sortIds` 的空值/空白值边界未兜底，存在一次可复现的 NPE 风险及一次结果集放大风险，建议优先补齐输入过滤与对应测试。
 
 **分片 35**
 
-本分片发现 1 个 Critical 安全问题（动态 SQL 列名拼接导致注入风险）。HTTP 入口覆盖：`InboundBatchCounterService.applyEvent()` 无 Controller 映射（非 HTTP 暴露面），本 diff 未引入新增的接口级权限与访问控制风险。
+本分片仅在 `CreateLabelForm` 新增了一个字符串字段 `originTrkNo`（`+    private String originTrkNo;`），未出现 SQL 拼接、鉴权/数据范围变更、敏感信息硬编码、并发控制或异常处理等安全风险代码模式；在仅基于本 diff 新增行的前提下，未发现新增安全问题。
+
+HTTP 入口清单（方法 + 路径）：本分片 diff 未出现 `@GetMapping/@PostMapping/@PutMapping/@DeleteMapping/@PatchMapping/@RequestMapping` 新增或修改，故无可识别 HTTP 入口需要闭环评估。
 
 **分片 36**
 
-本分片仅见 `InboundBatchCounterService` 新增代码，发现 2 个 Major（部分失败导致短窗口数据丢失、动态列名缺少白名单校验）。权限方面：该服务方法无 HTTP Controller 入口，未发现“权限与访问控制”风险。
+本分片仅在 CreateLabelForm 新增了 `originTrkNo` 字段，未发现会导致功能异常、类型不安全或业务逻辑缺陷的问题；该变更在当前 diff 范围内风险可控。
 
 **分片 37**
 
-本分片仅涉及 `AbstractPartnerService` 与 `VintedService` 的 staging cutoff 小时抽象与配置化替换，未发现新增/修改行引入的安全问题（含 SQL 注入、越权、敏感信息泄露、硬编码密钥、并发安全、认证失效、API 鉴权契约绕过等）。本 diff 未出现 HTTP 映射注解，故无可列出的 HTTP 入口清单。
+本分片新增/修改行未发现 SQL 注入、硬编码密钥、敏感日志、认证放行或直接越权校验缺失等 Critical/Major 安全问题。权限维度上，给定清单中的方法均标注为“无 Controller 调用”，且本次 diff 未出现 `@GetMapping/@PostMapping/@RequestMapping` 等 HTTP 入口变更，因此无新增可直接复现的 HTTP 鉴权/数据范围风险；但服务内异常吞掉会导致安全相关业务状态（成本计算）失败不可见，建议修复。
 
 **分片 38**
 
-本分片改动整体方向合理，但新增动态 cutoff 缺少合法区间校验，存在时间窗口计算偏差风险。建议补充配置约束与边界测试。
+本分片仅见 1 处可确认问题：`insertEvent` 中新增计费调用存在宽泛异常吞没风险。其余本次变更未发现新增 HTTP 入口，依据给定清单这些 Service 方法均无 Controller 映射，未识别到权限与访问控制风险。
 
 **分片 39**
 
-本分片仅基于给定 diff 的新增/修改行进行安全审查，未发现 SQL 注入、硬编码密钥、敏感日志、认证放开或明确越权新增问题；发现 1 处可被放大利用的 N+1 查询性能风险（Major）。权限面上，本分片可见变更集中在 Service 实现与内部统计逻辑，未出现新的 `@GetMapping/@PostMapping/@PutMapping/@DeleteMapping/@PatchMapping/@RequestMapping` 映射，故无可新增判定的 HTTP 放权入口；给定全局清单中的 Service 方法在本 diff 可见范围内未观察到新增权限绕过代码。
+本分片在 `InboundBatchCounterService` 中发现 1 个 Critical 安全问题（动态 SQL 列名拼接未做白名单校验）。权限面：本分片未出现 HTTP Controller 映射，且给定入口清单显示 `applyEvent()` 无 Controller 调用，未发现新增“权限与访问控制”风险。
 
 **分片 40**
 
-本分片发现 2 个 Major：1 个空指针边界问题，1 个新增事件发布带来的部分失败一致性风险。未发现需要单独上报的权限与访问控制风险（本分片变更均在 Service 层且无可确认 HTTP 映射新增）。
+本分片仅见 `InboundBatchCounterService.applyEvent()`，且无 HTTP Controller 入口，未发现接口级权限放行风险。主要问题集中在事件计数一致性：SQL 列名白名单缺失与“先加锁后写库失败”导致的短窗口误去重。
 
 **分片 41**
 
-本分片仅涉及测试类 `UpdateAddressServiceTest` 的依赖注入调整（新增 `LabelQuerySerivce` 的 `import` 与 `@Mock` 字段），未引入可执行业务逻辑、HTTP 入口、鉴权流程、数据访问或配置变更。基于给定 diff 的新增/修改行，未发现 SQL 注入、越权、敏感信息泄露、硬编码密钥、并发安全或认证失效等安全问题。
+本分片提供的 diff 仅涉及服务层时间切换逻辑与抽象方法扩展，未出现 SQL 拼接、鉴权放行、越权数据范围、敏感信息硬编码/泄露、并发共享状态修改等安全风险模式；在仅审查新增/修改行前提下未发现安全问题。HTTP 入口清单：本分片 diff 中未出现 `@GetMapping`/`@PostMapping`/`@PutMapping`/`@DeleteMapping`/`@PatchMapping`/带路径 `@RequestMapping`，因此无可识别的新增或变更 HTTP 入口。
 
 **分片 42**
 
-本分片仅涉及测试类新增 import 与 mock 字段，未发现会导致业务功能异常、类型不安全或边界/异常处理问题的新增缺陷。整体改动风险较低。
+本分片改动整体方向合理（将 cutoff 从硬编码提取为可配置），但存在 cutoff 配置边界缺失，可能引发日期推进逻辑偏差。
 
 **分片 43**
 
-本分片仅新增测试文件 `InboundBatchCounterServiceTest`，未发现新增/修改行引入的安全问题（Critical/Major 维度均无命中）。本分片 diff 中未出现 HTTP 映射注解（如 @GetMapping/@PostMapping 等），因此无 HTTP 入口清单项。
+本分片新增代码存在 1 处异常吞没问题（EXC-002）：`costCalc` 失败仅打日志，可能导致失败被误报为成功，影响安全审计与数据完整性。未在本 diff 中发现 SQL 注入、硬编码密钥/密码、越权入口变更等其他新增安全问题。
 
 **分片 44**
 
-本分片仅包含新增测试类，针对 Redis 锁获取、空列跳过、SQL 生成与更新子句等关键路径覆盖较完整。未在新增/修改行中发现会导致功能异常或明显逻辑缺陷的问题。
+本分片变更存在1个主要风险和1个性能问题：主要是计费计算异常被吞掉后仍返回成功，可能造成数据一致性问题；其次是逐条查 Label 的 N+1 查询隐患。
 
 **分片 45**
 
-基于本分片提供的唯一 diff（`AbstractPartnerServiceTest` 中新增测试覆写方法 `getStagingCutoffHour()` 返回常量），未发现新增/修改行引入的安全风险。该变更位于测试代码且不涉及 HTTP 入口、鉴权、数据范围、SQL、密钥或并发共享状态逻辑；本分片 diff 中也未出现可识别的 `@*Mapping` 映射，因此无 HTTP 入口清单可列。
+本分片仅见 1 处新增安全相关风险（可用性维度）：`WebInboundBatchServiceImpl` 新增逻辑存在 N+1 查询。未在本分片 diff 中发现硬编码密钥/密码、SQL 拼接注入、敏感日志、Spring Security 放行配置或新增越权校验缺失的直接证据。权限结论：给出的服务方法清单均显示“无 Controller 调用”，且本分片未出现 `@GetMapping/@PostMapping/@RequestMapping` 等 HTTP 映射新增或变更，故无可判定的新增 HTTP 鉴权面。
 
 **分片 46**
 
-本分片提供的新增代码为测试桩补充 `getStagingCutoffHour()` 覆写并返回固定值 `6`，与现有测试语义一致，未发现会导致功能异常、类型不安全或业务规则冲突的问题。
+本分片仅基于给定 diff 审查新增/修改行，发现 1 个主要性能问题（N+1 查询）。已检查到本分片列出的 Service 方法均无明确 Controller HTTP 入口映射，未发现可判定的接口权限放行风险。
 
 **分片 47**
 
-本分片提供的 diff 仅涉及测试代码调整与新增测试类（主要为 mock 方式和断言重构），未发现新增/修改行引入的安全问题（含 SQL 注入、越权、敏感信息泄露、并发安全、认证失效、API 契约绕过等）。
-HTTP 入口清单（方法 + 路径）：本分片给出的 diff 中未出现 `@GetMapping`/`@PostMapping`/`@PutMapping`/`@DeleteMapping`/`@PatchMapping` 或带路径的 `@RequestMapping`，因此无可识别的新增/变更 HTTP 入口。
+本分片仅在测试类 `UpdateAddressServiceTest` 新增 `LabelQuerySerivce` 的 mock 引用与字段注入（测试代码变更），未引入业务执行路径、HTTP 入口、鉴权逻辑、SQL、日志或密钥处理相关改动。基于当前提供的 diff，未发现新增安全风险。
 
 **分片 48**
 
-本分片整体改动以测试重构与补测为主，未发现会直接导致业务功能异常的 Major 问题；但存在一个等值边界未覆盖的测试缺口，建议补齐以降低回归风险。</pre></details></div></div>
+本分片仅在测试类中新增了一个 import 和对应的 @Mock 字段，未发现会导致功能异常、类型不安全或业务逻辑问题的新增/修改代码。
+
+**分片 49**
+
+本分片仅新增测试文件 `pos-service/src/test/java/com/miq/posservice/service/inbound/InboundBatchCounterServiceTest.java`，未引入可利用的安全风险代码路径（无HTTP入口、无鉴权逻辑变更、无密钥/Token硬编码、无SQL拼接执行点）。按给定 diff 范围审查结果为无新增安全问题。
+
+**分片 50**
+
+本分片仅见一处测试可靠性风险：全局 LENIENT 可能弱化回归保护。未发现新增代码中的 Major 级功能性问题。
+
+**分片 51**
+
+本分片仅在测试类 `AbstractPartnerServiceTest` 新增了 `getStagingCutoffHour()` 的覆盖返回值（`6`），未涉及生产代码路径、鉴权逻辑、SQL、凭证、日志或并发共享状态，未发现新增安全风险。HTTP 入口清单（方法 + 路径）：本分片 diff 未出现 `@GetMapping/@PostMapping/@PutMapping/@DeleteMapping/@PatchMapping/@RequestMapping` 映射，故无可识别入口需要权限闭环审查。
+
+**分片 52**
+
+本分片仅在测试类中新增 `getStagingCutoffHour()` 的覆写并返回常量 `6`，变更范围小且未见边界条件、异常处理、类型签名或业务规则冲突问题；就给定 diff 而言质量良好。</pre></details></div></div>
       <div class="filter-row">
         <span class="filter-label">点击筛选:</span>
         <div class="chips">
-          <span class="chip critical filter-chip" data-filter="critical" onclick="filterBySeverity(this)">Critical: 2</span>
-          <span class="chip major filter-chip" data-filter="major" onclick="filterBySeverity(this)">Major: 12</span>
-          <span class="chip minor filter-chip" data-filter="minor" onclick="filterBySeverity(this)">Minor: 4</span>
-          <span class="chip info filter-chip" data-filter="info" onclick="filterBySeverity(this)">Info: 1</span>
+          <span class="chip critical filter-chip" data-filter="critical" onclick="filterBySeverity(this)">Critical: 1</span>
+          <span class="chip major filter-chip" data-filter="major" onclick="filterBySeverity(this)">Major: 13</span>
+          <span class="chip minor filter-chip" data-filter="minor" onclick="filterBySeverity(this)">Minor: 5</span>
+          <span class="chip info filter-chip" data-filter="info" onclick="filterBySeverity(this)">Info: 0</span>
           <span class="chip">Total: 19</span>
         </div>
       </div>
@@ -1516,46 +1528,52 @@ HTTP 入口清单（方法 + 路径）：本分片给出的 diff 中未出现 `@
       </div>
     </div>
 
-    <h2 class="section-title subsection-title">按文件的审查发现</h2><div class="findings-list-wrap"><details class="file-group findings-file-group" open="open" id="fg-b820e040ddb2" data-file-path="pos-exchange-api/src/main/java/com/miq/posexchangeapi/consumer/ParcelCounterConsumer.java" data-short-name="ParcelCounterConsumer.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">pos-exchange-api/src/main/java/com/miq/posexchangeapi/consumer/ParcelCounterConsumer.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">2 Major</span> <span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">3 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L57,74-75</span><span class="finding-cat">安全风险</span></div><div class="finding-desc">错误日志直接输出原始 `jsonString`（`message={}`），会把完整事件载荷写入日志。若消息中包含运单号、用户信息或后续扩展出的敏感字段，日志侧将形成敏感数据暴露面，且异常场景下更容易被集中采集与外传。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>对日志做最小化与脱敏：仅记录 `eventId`、`type`、`status` 等必要字段，禁止打印完整消息体；解析失败场景可记录摘要/hash。示例：`log.error(&quot;[ParcelCounterConsumer] parse failed, payloadHash={}&quot;, DigestUtils.sha256Hex(jsonString), e);`。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>构造包含敏感字段（如 phone/token）的 Kafka 消息并触发异常，验证日志中不再出现原文敏感值，仅出现脱敏后的摘要或白名单字段。</p></div></div></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L59-72</span><span class="finding-cat">边界条件</span></div><div class="finding-desc">`JSON.parseObject` 在输入为 `null`/`&quot;null&quot;`/非对象 JSON 时可能返回 `null`，随后直接调用 `msg.getType()` 会触发 NPE。且外层 `catch` 中又调用 `msg.getEventId()`，当 `msg==null` 时会在异常处理中再次 NPE，导致消费线程异常而非按预期仅记录日志。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>在反序列化后立即做空值保护，并在异常日志中避免直接解引用 `msg`。示例：`if (msg == null) { log.error(&quot;...invalid message={}&quot;, jsonString); return; }`；catch 内改为 `String eventId = (msg == null ? &quot;null&quot; : msg.getEventId());` 后再记录日志。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>新增用例：输入 `&quot;null&quot;`、空串、结构不匹配 JSON 时，`onMessage` 不抛异常；验证不会调用 `counterService.applyEvent`，且日志路径可正常执行。</p></div></div></details></div><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L55-58,71-76</span><span class="finding-cat">异常处理</span></div><div class="finding-desc">存在 `catch (Exception)` 后仅记录日志并 `return` 的处理路径（解析失败、应用失败），未上抛、未重试、未进入 DLQ。攻击者可通过构造异常消息持续触发该路径，造成事件被静默丢弃，影响计数一致性与可审计性。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>为消费失败建立可追踪失败通道：至少接入 DLQ/重试策略，并区分可重试与不可重试异常；不可重试异常也应落库告警（含 eventId、失败原因）以便补偿。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>注入会触发 `counterService.applyEvent` 异常的消息，验证消息不会被静默吞掉：应进入 DLQ 或重试队列，并能在监控/告警中检索到对应 `eventId`。</p></div></div></details></div></div></details><details class="file-group findings-file-group" id="fg-caacdb95d072" data-file-path="pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/web/WebAddressModifyController.java" data-short-name="WebAddressModifyController.java" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/web/WebAddressModifyController.java</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L81,100-101</span><span class="finding-cat">向后兼容</span></div><div class="finding-desc">`/updateNew` 的返回类型从 `ResponseObject&lt;Void&gt;` 变更为 `ResponseObject&lt;String&gt;`，并开始返回 `base64Label`。这是对既有响应契约的变更，可能导致依赖旧结构（如 `data` 预期为 `null`）的调用方反序列化或断言失败。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>若该接口已被外部或前端稳定使用，建议保持旧契约并新增版本化接口（如 `/updateNewV2`）返回 `base64Label`；或在响应体中保持兼容字段结构并同步更新接口文档与调用方。示例：保留 `updateNew` 返回 `ResponseObject&lt;Void&gt;`，新增 `updateNewV2` 返回 `ResponseObject&lt;String&gt;`。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>补充契约回归测试：1) 旧调用方用例校验 `updateNew` 仍可按旧结构解析；2) 新用例校验返回 `base64Label` 非空且可被前端正常消费。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-80c6beb5c34b" data-file-path="pos-service/src/main/java/com/miq/posservice/bo/Inbound/ParcelCountTuple.java" data-short-name="ParcelCountTuple.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/bo/Inbound/ParcelCountTuple.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L43-56</span><span class="finding-cat">边界条件</span></div><div class="finding-desc">8 个计数字段使用 `int` 累加，遇到大批量数据时存在整型溢出风险，可能得到负数或错误统计值，影响后续比对与日志判断。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>将累加变量与 DTO 字段改为 `long`（或在累加时使用 `Math.addExact` 显式检测溢出并处理），例如 `long t = 0L; t = Math.addExact(t, nz(...));`。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>新增边界单测：构造接近 `Integer.MAX_VALUE` 的计数并进行累加，验证不会出现负值回绕；若使用 `Math.addExact`，验证溢出时抛出预期异常。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-e9d4c41e195d" data-file-path="pos-service/src/main/java/com/miq/posservice/dao/InboundBatchCounterDao.java" data-short-name="InboundBatchCounterDao.java" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/dao/InboundBatchCounterDao.java</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">1 Critical</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L17</span><span class="finding-cat">权限与访问控制</span></div><div class="finding-desc">**原因：** 新增方法 `findByParentBatchCodeAndChildBatchCodeIn(String parentBatchCode, List&lt;String&gt; childBatchCodes)` 未包含 `facilityCode`/租户范围条件，数据访问天然是“跨facility”读取；若上层调用链未做严格角色与数据域过滤，将形成可被误用的越权读取入口。
+    <h2 class="section-title subsection-title">按文件的审查发现</h2><div class="findings-list-wrap"><details class="file-group findings-file-group" id="fg-caacdb95d072" data-file-path="pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/web/WebAddressModifyController.java" data-short-name="WebAddressModifyController.java" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/web/WebAddressModifyController.java</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L81,101-102</span><span class="finding-cat">API契约</span></div><div class="finding-desc">`/updateNew` 接口返回类型从 `ResponseObject&lt;Void&gt;` 变为 `ResponseObject&lt;String&gt;`，并开始返回 `base64Label`。这会改变响应体结构（原先 `data` 为空，现在为字符串），对仍按旧契约解析的调用方可能产生兼容性问题。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>若这是对外已使用接口，建议通过版本化或兼容字段渐进发布：例如保留旧接口返回 `Void`，新增 `v2` 返回标签字符串；或在响应中新增可选字段而不改变原有字段语义。同时补充契约测试，覆盖旧客户端反序列化场景。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>1) 使用旧客户端（按 `ResponseObject&lt;Void&gt;` 反序列化）调用 `/updateNew`，验证是否出现解析失败或业务异常；2) 使用新客户端验证 `data` 为 Base64 标签字符串；3) 回归验证空标签/更新失败场景下返回体与错误码一致。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-80c6beb5c34b" data-file-path="pos-service/src/main/java/com/miq/posservice/bo/Inbound/ParcelCountTuple.java" data-short-name="ParcelCountTuple.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/bo/Inbound/ParcelCountTuple.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L46-59</span><span class="finding-cat">边界条件</span></div><div class="finding-desc">8个计数字段均使用 `int` 累加，若批次量较大或多行聚合后超过 `Integer.MAX_VALUE`，会发生整型溢出并得到错误统计值。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>将累加变量改为 `long`（如 `long t=0L...`），并在构造返回对象前做边界校验；若对外必须返回 `int`，使用 `Math.toIntExact` 显式失败或做上限保护。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>构造多个 `InboundBatchCounter`，使某字段累加值超过 `2147483647`，验证实现不会静默溢出（应抛错或按设计进行上限处理）。</p></div></div></details></div></div></details><details class="file-group findings-file-group" id="fg-9e852fdcde7c" data-file-path="pos-service/src/main/java/com/miq/posservice/config/InboundCounterProperties.java" data-short-name="InboundCounterProperties.java" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/config/InboundCounterProperties.java</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L27-28</span><span class="finding-cat">配置变更</span></div><div class="finding-desc">`counterEffectiveTime` 使用 `LocalDateTime` 作为配置开关时间点，未包含时区信息；在多时区部署或 JVM 默认时区不一致时，可能导致批次分流边界提前/延后，出现新旧 SQL 路由不一致。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>将字段改为带时区语义的类型并统一解析，例如 `OffsetDateTime`/`Instant`，并在配置中明确使用 UTC（如 `2026-05-26T00:00:00Z`）；同时在读取处统一按 UTC 比较。示例：`private Instant counterEffectiveTime;`。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>分别在不同时区（如 UTC 与 America/Los_Angeles）启动应用，注入同一配置值，验证同一 `created_at` 批次的路由结果一致。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-e9d4c41e195d" data-file-path="pos-service/src/main/java/com/miq/posservice/dao/InboundBatchCounterDao.java" data-short-name="InboundBatchCounterDao.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/dao/InboundBatchCounterDao.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L23</span><span class="finding-cat">权限与访问控制</span></div><div class="finding-desc">原因：新增方法 `findByChildBatchCode(String childBatchCode)` 未包含 `facilityCode`/租户范围条件，且注释明确为“across all facilities”，该数据访问能力本身可返回跨场地全量计数记录；若被 Web/Facade 读接口直接调用且未在上层强制做数据范围过滤，将形成越权读面。
 
+影响：具备普通查询权限的主体（如需按 `fleetId`/`facilityCode` 受限的角色）在缺失上层二次校验时，可能读取非所属场地数据，造成租户/场地维度数据泄露。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>将该 DAO 查询收敛为带范围条件的方法，并在服务层强制注入当前登录主体的数据范围参数。
 ```java
-List&lt;InboundBatchCounter&gt; findByParentBatchCodeAndChildBatchCodeIn(String parentBatchCode, List&lt;String&gt; childBatchCodes);
+List&lt;InboundBatchCounter&gt; findByChildBatchCodeAndFacilityCode(String childBatchCode, String facilityCode);
 ```
-
-**影响：** 调用方在未额外加范围约束时，可能返回同一 `parentBatchCode` 下多个 facility 的计数数据，导致租户/站点级数据可见范围扩大，属于高风险数据越权读取。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>将该方法改为强制携带范围字段并在查询层固化过滤，避免调用方“忘记传范围”导致越权。
-
+同时在调用链增加权限断言（例如 `@PreAuthorize` 或 `AuthUtil.requireRole(...)`）并校验 `facilityCode/fleetId` 归属一致后再查询。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>新增安全用例：以仅允许访问 facility=A 的账号调用对应读接口（或服务方法），请求 childBatchCode 命中 A/B 两个 facility 的数据；期望仅返回 A。再以无权限账号验证被拒绝（403/业务拒绝）。</p></div></div></details></div></div></details><details class="file-group findings-file-group" id="fg-69153b908055" data-file-path="pos-service/src/main/java/com/miq/posservice/dto/container/ParcelSearchResultDto.java" data-short-name="ParcelSearchResultDto.java" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/dto/container/ParcelSearchResultDto.java</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L14</span><span class="finding-cat">API契约</span></div><div class="finding-desc">新增 `Date containerDate` 到返回 DTO，但未定义序列化格式/时区语义。`java.util.Date` 在 Spring Boot 2.x 默认 Jackson 配置下可能出现时区偏移或前后端解析不一致，导致同一容器日期在不同时区客户端展示不同。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>为该字段明确 JSON 契约，至少固定格式与时区，例如：`@JsonFormat(pattern = &quot;yyyy-MM-dd HH:mm:ss&quot;, timezone = &quot;UTC&quot;) private Date containerDate;`；或改为 `LocalDateTime/OffsetDateTime` 并统一全局序列化配置。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>增加序列化/反序列化测试：1) 服务端在 UTC 与非 UTC 时区下输出 `containerDate` 一致；2) 前端约定格式可稳定解析；3) 旧客户端忽略新增字段时不报错。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-7d3bf616882b" data-file-path="pos-service/src/main/java/com/miq/posservice/event/ParcelStatusKafkaPublisher.java" data-short-name="ParcelStatusKafkaPublisher.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/event/ParcelStatusKafkaPublisher.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L55-74</span><span class="finding-cat">异常处理</span></div><div class="finding-desc">`lookupFacilityType` 捕获宽泛 `Exception` 后直接返回 `null`，调用方无法区分“设施不存在”与“Redis/服务异常”，会把真实异常静默降级为正常数据路径，导致消息字段悄然丢失且难以监控。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>仅对可接受的“未命中”场景返回 `null`，其余异常应上抛或转换为明确业务异常；至少增加失败度量并在上层决定是否降级。示例：仅在 `facility == null` 返回 `null`，`catch` 中抛出 `IllegalStateException(&quot;lookup facility failed&quot;, e)`。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>模拟 `baseFacilityService.getInRedisByFacilityCode` 抛出运行时异常，断言不会被当作普通 `null facilityType` 静默处理（应抛异常或命中明确降级分支并产生日志/指标）。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-31d6c3a4b686" data-file-path="pos-service/src/main/java/com/miq/posservice/service/UpdateAddressService.java" data-short-name="UpdateAddressService.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/service/UpdateAddressService.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L241-252</span><span class="finding-cat">业务逻辑</span></div><div class="finding-desc">`update()` 在事务内新增 `getNewAddressLabel()` 调用；该调用依赖 `labelQueryService`、`zoneMappingService` 与 `DrawRouteUtils.generate(...)`（可能涉及外部服务/模板文件路径）。一旦该步骤抛异常，会触发 `@Transactional` 整体回滚，导致“地址已通过校验并准备更新，但因标签生成失败而整单失败”的回归风险。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>将“地址更新落库”与“新面单渲染”解耦：先在事务内仅完成地址更新并提交；再在事务外尝试生成面单，失败时记录告警并返回可识别的降级结果。例如：事务方法返回更新结果对象（含 `addressChanged`），由上层在事务外调用 `getNewAddressLabel()`，并对渲染异常做降级处理（不回滚地址更新）。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>新增用例：Mock `DrawRouteUtils.generate(...)` 抛异常，断言地址更新仍成功持久化（不回滚），接口返回“地址更新成功但面单生成失败”的可识别结果；再补充正常路径断言返回新面单字符串。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-f0396ce48a4d" data-file-path="pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerV2ServiceImpl.java" data-short-name="PosContainerV2ServiceImpl.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerV2ServiceImpl.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L364-370</span><span class="finding-cat">边界条件</span></div><div class="finding-desc">新增区间校验直接对 `form.getEndNumber()` 与 `form.getStartNumber()` 做比较和减法，若任一字段为 `null` 会触发自动拆箱导致 `NullPointerException`，请求会以 500 失败。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>在比较前先做非空校验并返回明确业务异常，例如：`if (form.getStartNumber() == null || form.getEndNumber() == null) { throw new RRException(&quot;Start Number and End Number are required.&quot;); }`，然后再执行大小与区间判断。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>新增用例：`startNumber=null,endNumber=10`、`startNumber=1,endNumber=null`，期望抛出可读的 RRException，而不是 NPE。</p></div></div></details></div></div></details><details class="file-group findings-file-group" id="fg-ff7e319536e4" data-file-path="pos-service/src/main/java/com/miq/posservice/service/impl/TrackingManagementServiceImpl.java" data-short-name="TrackingManagementServiceImpl.java" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/service/impl/TrackingManagementServiceImpl.java</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L103-106</span><span class="finding-cat">异常处理</span></div><div class="finding-desc">命中规则 **[EXC-002]**：新增代码在 `catch (Exception e)` 中仅记录日志并吞掉异常，未上抛或返回失败状态。该逻辑发生在 `trkApi.pushTrackingEvent(form)` 之后的成本计算流程中，调用方会继续按成功路径执行，无法感知 `costCalc` 失败。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>对成本计算失败进行显式失败传播或补偿，避免静默失败。示例：
 ```java
-List&lt;InboundBatchCounter&gt; findByParentBatchCodeAndChildBatchCodeInAndFacilityCode(
-    String parentBatchCode, List&lt;String&gt; childBatchCodes, String facilityCode);
+} catch (Exception e) {
+    log.error(&quot;costCalc failed for trackingNo: {}&quot;, form.getTrackingNo(), e);
+    throw new RRException(&quot;cost calc failed&quot;, e);
+}
 ```
+若业务要求不阻断主流程，应至少落库失败任务并触发重试告警（而非仅日志）。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>构造 `DateUtils.stringToDate` 解析失败或 `labelCostCalcService.costCalc` 抛异常场景；断言接口/调用链返回明确失败（或产生重试任务与告警），而不是静默成功。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-f330a2c74fde" data-file-path="pos-service/src/main/java/com/miq/posservice/service/inbound/InboundBatchCounterService.java" data-short-name="InboundBatchCounterService.java" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/service/inbound/InboundBatchCounterService.java</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">1 Critical</span> <span class="stat-chip stat-major">2 Major</span></span><span class="file-group-count">3 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L100-102</span><span class="finding-cat">安全风险</span></div><div class="finding-desc">存在 SQL 注入风险：`updateClause` 直接使用 `cols` 中的字符串拼接列赋值表达式，未校验列名白名单。若 `cols` 可被外部输入（如消息体污染、重放篡改）影响，攻击者可构造恶意片段进入 `ON DUPLICATE KEY UPDATE` 子句，造成任意 SQL 片段执行或语义篡改。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>对 `cols` 做严格白名单过滤，仅允许 `COUNT_COLUMNS` 中定义的列参与 SQL 构建；过滤后为空则直接返回。更稳妥方案是改为预定义分支 SQL（按固定列集合映射），避免把未验证标识符拼进语句。例如：`Set&lt;String&gt; safeCols = cols.stream().filter(COUNT_COLUMNS::contains).collect(Collectors.toSet());` 并基于 `safeCols` 生成 `updateClause`。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>构造包含恶意列名的 `cols`（如 `&quot;parcel_total_qty = 1, updated_at = NOW() --&quot;`）调用 `applyEvent`，验证修复前 SQL 被污染、修复后该值被拒绝且不会进入 SQL。</p></div></div></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L69-83</span><span class="finding-cat">数据一致性</span></div><div class="finding-desc">先获取 Redis 去重锁再执行 DB UPSERT；当 `upsertCounter` 抛异常时，事务会回滚，但 Redis 锁不会回滚且保留 5 分钟，导致同一事件在窗口期内被误判为重复并跳过，形成计数丢失。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>为“锁成功但 DB 失败”增加补偿释放：在 `applyEvent` 中对 `upsertCounter` 使用 `try/catch`，失败时 `delete(redisKey)` 后再抛出异常；或改为事务提交后再写去重标记（如 `TransactionSynchronization` afterCommit）以避免失败占坑。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>模拟 `jdbcTemplate.update` 抛异常后立即重试同一 `eventId`，期望：重试不应因旧锁被跳过（应可再次尝试处理）。</p></div></div></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L98-100</span><span class="finding-cat">业务逻辑</span></div><div class="finding-desc">`updateClause` 直接基于入参 `cols` 拼接 SQL 列表达式，未校验是否属于 `COUNT_COLUMNS` 白名单。若上游传入非法列名，会触发 SQL 异常并导致计数事件处理失败。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>在构建 SQL 前先做白名单过滤/校验，仅允许 `COUNT_COLUMNS` 中的列参与更新；非法值直接拒绝并记录错误。例如：`Set&lt;String&gt; safeCols = cols.stream().filter(COUNT_COLUMNS::contains).collect(Collectors.toSet()); if (safeCols.isEmpty()) return; if (safeCols.size()!=cols.size()) throw new IllegalArgumentException(...)`，后续 `updateClause` 基于 `safeCols` 生成。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>构造 `cols` 包含非法字段（如 `&quot;bad_col&quot;`）并调用 `applyEvent`，期望：方法按设计明确拒绝（抛业务异常或返回可识别失败），不会执行异常 SQL。</p></div></div></details></div></div></details><details class="file-group findings-file-group" id="fg-48f1ff26044f" data-file-path="pos-service/src/main/java/com/miq/posservice/service/partner/impl/AbstractPartnerService.java" data-short-name="AbstractPartnerService.java" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/service/partner/impl/AbstractPartnerService.java</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L217</span><span class="finding-cat">业务逻辑</span></div><div class="finding-desc">`getStagingCutoffHour()` 返回值未做边界校验，若配置为 `&lt;0` 或 `&gt;23`，`today.getHour() &gt;= cutoff` 会退化为“永远+1天”或“永不+1天”，导致 pickup_date 计算错误。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>在使用前对 cutoff 做范围保护（0-23），异常值回退默认值并记录告警。例如：`int cutoff = getStagingCutoffHour(); if (cutoff &lt; 0 || cutoff &gt; 23) { cutoff = 6; log.warn(&quot;Invalid stagingCutoffHour: {}&quot;, getStagingCutoffHour()); }`，再参与比较。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>补充参数化测试：cutoff=-1、0、6、23、24；验证在各时区下 `today` 是否按预期加一天。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-aef449874bc2" data-file-path="pos-service/src/main/java/com/miq/posservice/service/report/impl/EventUploadProcessor.java" data-short-name="EventUploadProcessor.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/service/report/impl/EventUploadProcessor.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L134-150</span><span class="finding-cat">数据一致性</span></div><div class="finding-desc">新增逻辑在 `trkApi.pushTrackingEvent(insertEventForm)` 成功后，再执行 `labelCostCalcService.costCalc(...)`；但 `costCalc` 失败被 `catch (Exception)` 吞掉并继续 `item.setMessage(&quot;Success&quot;)`。这会产生“主流程成功、计费未落地”的部分失败，调用方无法感知，易导致后续计费数据不一致。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>将 `costCalc` 失败纳入任务结果：至少标记当前 item 失败并返回明确错误；若业务要求强一致，可在同一事务边界内处理或增加补偿任务。示例：`catch` 后设置 `item.setMessage(&quot;CostCalcFailed: ...&quot;)` 并抛出业务异常，或记录待补偿队列表。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>构造 `pushTrackingEvent` 成功、`labelCostCalcService.costCalc` 抛异常的用例，断言该 item 不应返回 `Success`，并验证失败标记/补偿记录已生成。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-65d5d31a235d" data-file-path="pos-service/src/main/java/com/miq/posservice/service/web/impl/WebInboundBatchServiceImpl.java" data-short-name="WebInboundBatchServiceImpl.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/service/web/impl/WebInboundBatchServiceImpl.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L3242-3249</span><span class="finding-cat">性能隐患</span></div><div class="finding-desc">`computeParentCountsLegacy` 在遍历每个父批次时都单独调用 `inboundBatchRelationDao.findByParentBatchCodeIn(...)` 和后续聚合查询，形成典型 N+1 查询模式。父批次数量增大时会导致数据库往返次数线性上升，页面查询耗时显著恶化。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>改为批量查询：先一次性查询所有 parentBatchCode 的 relation，再按 parent 分组；随后按分组结果批量拉取物流统计并在内存聚合，避免循环内 DAO 调用。示例方向：`findByParentBatchCodeIn(allParentCodes)` -&gt; `groupingBy(parent)` -&gt; 批量 `queryParentLogisticsData(...)`。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>构造 200+ 父批次分页数据，对比改造前后 SQL 次数与接口 RT；断言 SQL 次数不随父批次数线性增长。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-726c7e140530" data-file-path="pos-service/src/main/java/com/miq/posservice/so/SorterLogSo.java" data-short-name="SorterLogSo.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/so/SorterLogSo.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">2 Major</span></span><span class="file-group-count">2 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L60</span><span class="finding-cat">边界条件</span></div><div class="finding-desc">在遍历 `sortIds` 时直接执行 `id.trim()`，当列表中包含 `null` 元素时会触发 `NullPointerException`，导致查询接口失败。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>在构造谓词前先过滤空值：`if (id == null || id.trim().isEmpty()) { continue; }`；并在循环结束后若无有效谓词则返回 `cb.conjunction()` 或仅返回 `base`，避免异常与无效条件。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>新增用例：`sortIds = [null, &quot;901&quot;]` 时查询不抛异常且仍能按 `901` 命中。</p></div></div></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L60-65</span><span class="finding-cat">权限与访问控制</span></div><div class="finding-desc">**原因：** 新增的 `buildSortIdSpec()` 直接将外部可控的 `sortIds` 元素拼入 `LIKE` 匹配模式，未对 `%`、`_` 等通配符做转义或白名单校验。攻击者可构造包含通配符的 `sortId`（如 `%`、`_`、`901%`）扩大匹配范围，绕过“按指定 sortId 精确过滤”的预期数据边界。
 
-若确需跨facility查询，应拆分为受限内部专用方法，并在Service/Facade入口增加显式角色校验与审计日志（仅高权限角色可调用）。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>新增权限回归测试：使用仅具单facility权限的账号调用对应业务入口，构造同 `parentBatchCode` 且跨facility的数据，断言结果仅包含授权 `facilityCode` 数据；未授权facility数据必须为0条。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-7d3bf616882b" data-file-path="pos-service/src/main/java/com/miq/posservice/event/ParcelStatusKafkaPublisher.java" data-short-name="ParcelStatusKafkaPublisher.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/event/ParcelStatusKafkaPublisher.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span> <span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">2 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L56-77</span><span class="finding-cat">异常处理</span></div><div class="finding-desc">命中规则 **[EXC-001] catch 宽泛异常后返回默认值**：`lookupFacilityType` 在捕获 `Exception` 后直接 `return null`，把 Redis/依赖异常与“设施不存在”混淆，调用方无法区分真实异常与正常空值，可能导致后续风控/审计依赖字段失真。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>避免在宽泛异常中直接返回业务默认值。建议至少区分“查询不到”与“查询失败”：抛出业务异常或返回带状态的结果对象，并在上层决定是否丢弃事件/重试。示例：`catch (Exception e) { throw new IllegalStateException(&quot;facility lookup failed: &quot; + facilityCode, e); }`；若必须降级，增加显式失败标记字段（如 `facilityTypeLookupFailed=true`）随消息发送。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>构造 `baseFacilityService.getInRedisByFacilityCode` 抛出运行时异常，断言：1) 不再静默返回与正常空值不可区分的 `null`；2) 上层可感知失败并触发重试/告警路径。</p></div></div></details></div><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L35</span><span class="finding-cat">数据一致性</span></div><div class="finding-desc">`@TransactionalEventListener(..., fallbackExecution = true)` 会在无事务上下文时立即执行监听器，与注释中“仅在提交后发送以避免回滚脏消息”的语义不完全一致，可能在部分调用路径下削弱一致性保证。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>若业务要求严格“仅提交后发送”，移除 `fallbackExecution = true`（使用默认 `false`）；若必须保留，需在注释和监控中明确“无事务时立即发送”的行为，并补充调用方事务约束。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>分别在有事务和无事务上下文触发 `publish`：有事务场景下回滚后不应发送；无事务场景下验证当前实现会发送，并确认是否符合预期。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-31d6c3a4b686" data-file-path="pos-service/src/main/java/com/miq/posservice/service/UpdateAddressService.java" data-short-name="UpdateAddressService.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/service/UpdateAddressService.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L244-252</span><span class="finding-cat">业务逻辑</span></div><div class="finding-desc">在事务方法 `update(...)` 内新增了 `getNewAddressLabel(...)` 调用；该调用依赖 `LabelQuerySerivce` 和 `DrawRouteUtils.generate(...)`，任一异常都会向上抛出并触发整个事务回滚。结果是“地址已通过业务校验并准备更新”与“标签渲染失败”被强绑定，出现非核心步骤失败导致主流程失败/回滚的部分失败问题。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>将标签生成从主事务中解耦：先完成地址更新并提交事务，再执行标签生成；或在事务内对标签生成异常进行降级处理（记录日志并返回空字符串/错误码，不回滚地址更新）。示例：`String labelContent=&quot;&quot;; try { labelContent=getNewAddressLabel(label);} catch(Exception e){ log.warn(&quot;generate label failed, trackingNo={}&quot;, label.getTrackingNumber(), e);} return labelContent;`</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>新增用例：mock `DrawRouteUtils.generate(...)` 抛异常，断言地址字段仍成功更新且事务不回滚；同时断言接口返回降级结果并记录告警日志。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-f0396ce48a4d" data-file-path="pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerV2ServiceImpl.java" data-short-name="PosContainerV2ServiceImpl.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerV2ServiceImpl.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L364-370</span><span class="finding-cat">边界条件</span></div><div class="finding-desc">新增区间校验直接对 `form.getEndNumber()` / `form.getStartNumber()` 做比较与减法，若任一字段为 `null` 会触发空指针异常，导致接口以 500 失败而不是返回可读业务错误。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>先做空值校验再比较区间，例如：`Integer startNum = form.getStartNumber(); Integer endNum = form.getEndNumber(); if (startNum == null || endNum == null) { throw new RRException(&quot;Start Number and End Number are required.&quot;); } if (endNum &lt; startNum) ... if (endNum - startNum &gt; 200) ...`。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>补充用例：1) `startNumber=null,endNumber=10`；2) `startNumber=1,endNumber=null`；期望抛出明确 RRException，而非 NPE。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-f330a2c74fde" data-file-path="pos-service/src/main/java/com/miq/posservice/service/inbound/InboundBatchCounterService.java" data-short-name="InboundBatchCounterService.java" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/service/inbound/InboundBatchCounterService.java</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">1 Critical</span> <span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">2 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L91-97</span><span class="finding-cat">安全风险</span></div><div class="finding-desc">存在 SQL 注入风险：`updateClause` 直接基于外部传入的 `cols` 拼接列名生成 `ON DUPLICATE KEY UPDATE` 语句，未校验 `cols` 是否严格属于白名单 `COUNT_COLUMNS`。攻击者若可影响 `cols` 内容，可构造恶意片段进入 SQL。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>在构造 SQL 前强制白名单校验，仅允许 `COUNT_COLUMNS` 中的列参与更新；若出现非法列立即拒绝处理并记录安全日志。示例：先执行 `if (!COUNT_COLUMNS.containsAll(cols)) { throw new IllegalArgumentException(&quot;invalid counter column&quot;); }`，并将 `updateClause` 改为基于 `COUNT_COLUMNS` 过滤生成（而不是直接遍历 `cols`）。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>新增安全测试：传入 `cols` 包含非法值（如 `parcel_total_qty = 1, updated_at = NOW() --`）时，方法应抛出异常且不执行 `jdbcTemplate.update`；传入合法列集合时正常执行。</p></div></div></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L63-68</span><span class="finding-cat">数据一致性</span></div><div class="finding-desc">先获取 Redis 去重锁，再执行数据库 UPSERT；若 `upsertCounter(...)` 抛异常导致事务回滚，Redis 锁仍会保留到 TTL 到期。该事件在短时间重试会被误判为重复并跳过，造成计数丢失（部分失败无补偿）。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>对“加锁+写库”失败场景增加补偿：在 `upsertCounter` 异常时删除对应 Redis key，或将 Redis 锁改为更明确的处理态并在失败时回滚处理态。例如：`try { upsert... } catch (Exception e) { stringRedisTemplate.delete(redisKey); throw e; }`。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>构造 `jdbcTemplate.update` 抛异常的用例，随后立即重放同一 `eventId`，验证第二次不会被 dedup 跳过且可成功写入。</p></div></div></details></div></div></details><details class="file-group findings-file-group" id="fg-48f1ff26044f" data-file-path="pos-service/src/main/java/com/miq/posservice/service/partner/impl/AbstractPartnerService.java" data-short-name="AbstractPartnerService.java" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/service/partner/impl/AbstractPartnerService.java</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L217</span><span class="finding-cat">业务逻辑</span></div><div class="finding-desc">将固定阈值改为 `getStagingCutoffHour()` 后，未对返回值做边界约束（有效小时应为 0-23）。当配置为负数或大于 23 时，会导致 `pickup_date` 计算异常（例如永远/永不加一天）。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>在使用前做显式校验并设置兜底值，例如：`int cutoff = getStagingCutoffHour(); if (cutoff &lt; 0 || cutoff &gt; 23) { cutoff = 6; }`，或在配置绑定层使用 `@Min(0) @Max(23)` 约束。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>新增参数化测试：cutoff=-1、0、6、23、24，分别断言 `today.getHour() &gt;= cutoff` 分支行为与预期一致，且非法值会触发兜底/校验失败。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-7b1725a55790" data-file-path="pos-service/src/main/java/com/miq/posservice/service/web/impl/RtsLabelService.java" data-short-name="RtsLabelService.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/service/web/impl/RtsLabelService.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L142</span><span class="finding-cat">数据一致性</span></div><div class="finding-desc">在 `inboundParcelDao.save(inboundParcel)` 后新增 `parcelEventPublisher.publish(inboundParcel)`，但未见失败隔离/补偿。若发布异常，会造成“数据库已写入但后续流程中断”或事务回滚策略不明确，存在部分失败一致性风险。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>将发布改为事务提交后触发（如 `@TransactionalEventListener(phase = AFTER_COMMIT)` 或 outbox 模式），并对发布失败建立重试/死信处理，避免主流程因消息发布瞬时故障失败。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>模拟 `parcelEventPublisher.publish` 抛异常：校验 `process` 的事务行为与期望一致（要么整体回滚，要么持久化成功且有补偿重试记录）。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-65d5d31a235d" data-file-path="pos-service/src/main/java/com/miq/posservice/service/web/impl/WebInboundBatchServiceImpl.java" data-short-name="WebInboundBatchServiceImpl.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/service/web/impl/WebInboundBatchServiceImpl.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span> <span class="stat-chip stat-info">1 Info</span></span><span class="file-group-count">2 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L3233-3236</span><span class="finding-cat">性能隐患</span></div><div class="finding-desc">命中 [PERF-001] N+1 查询模式：在新增的 `computeParentCountsLegacy(...)` 中，对 `pageDtoList` 逐条循环时每次都执行 `inboundBatchRelationDao.findByParentBatchCodeIn(...)`，会在批次数量增大时放大数据库访问次数，形成可被滥用的性能退化面。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>改为批量查询并在内存分组聚合，避免循环内 DAO 访问。例如先一次性按 `parentBatchCode` 列表查询关系，再 `groupBy parentBatchCode` 计算各批次统计。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>构造 500/1000 个 parent batch 的分页结果，对比改造前后 SQL 次数与接口耗时；断言查询次数不随记录数线性增长。</p></div></div></details></div><div class="finding-card severity-info" data-severity="info"><div class="finding-header"><span class="sev-badge info">INFO</span><span class="finding-line" title="行号">L3359</span><span class="finding-cat">边界条件</span></div><div class="finding-desc">新增代码直接使用 `parentBatchData.getFacilityCode()`，当 `inboundBatchDao.findByBatchCode(parentBatchCode)` 返回 null（例如父批次不存在或已被并发删除）时会触发空指针，导致接口失败。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>在读取 `facilityCode` 前增加空值保护并返回可识别的业务异常，例如：`if (parentBatchData == null) { throw new RRException(&quot;Parent batch not found: &quot; + parentBatchCode); }`。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>新增用例：传入不存在的 `parentBatchCode` 调用 `queryChildListByParentBatchCode`，断言返回业务错误而非 NPE。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-726c7e140530" data-file-path="pos-service/src/main/java/com/miq/posservice/so/SorterLogSo.java" data-short-name="SorterLogSo.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/so/SorterLogSo.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">2 Major</span></span><span class="file-group-count">2 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L57</span><span class="finding-cat">边界条件</span></div><div class="finding-desc">在遍历 `sortIds` 时直接执行 `id.trim()`，当集合中存在 `null` 元素会触发 `NullPointerException`，导致查询请求失败。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>在构建谓词前增加空值与空白过滤，例如：`for (String id : sortIds) { if (id == null || id.trim().isEmpty()) { continue; } String val = id.trim(); ... }`；并在全部元素被过滤后返回 `cb.conjunction()` 或仅返回 `base` 规避非法 OR 条件。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>新增用例：`sortIds = Arrays.asList(&quot;901&quot;, null, &quot; &quot;)`，断言 `toSpec()` 不抛异常且仅对 `901` 生效。</p></div></div></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L58-70</span><span class="finding-cat">权限与访问控制</span></div><div class="finding-desc">原因：`buildSortIdSpec()` 将外部可控的 `sortIds` 直接拼入 `LIKE` 模式，未对 `%`、`_` 做转义，也未做白名单校验。攻击者可传入通配符值（如 `%`），使过滤条件被放大。
 ```java
+String val = id.trim();
 orPredicates.add(cb.like(path, val + &quot;,%&quot;));
 orPredicates.add(cb.like(path, &quot;%,&quot; + val));
 orPredicates.add(cb.like(path, &quot;%,&quot; + val + &quot;,%&quot;));
 ```
-影响：查询结果可能突破“按指定 sortId 精确过滤”的预期，返回更多 chuteId 记录，形成数据可见范围扩大风险（越权读取风险）。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>对 `sortIds` 做严格输入约束并转义 LIKE 通配符：1) 仅允许数字/字母等受控字符（例如 `^[0-9A-Za-z-]+$`）；2) 对 `%`、`_`、转义字符进行 escape 后再用于 `LIKE`；3) 对非法值直接拒绝。
+
+**影响：** 在上层接口未额外做严格数据范围约束时，查询结果可能被恶意放大，导致本不应可见的数据被检索到，形成越权读取/数据可见范围扩大风险。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>对 `sortIds` 做严格输入约束（仅允许数字/固定格式），并在 `LIKE` 前转义通配符与转义符本身；或改为规范化存储（拆分关联表）避免逗号字符串检索。
+
+示例（转义 + ESCAPE）：
 ```java
 private String escapeLike(String s) {
     return s.replace(&quot;\\&quot;, &quot;\\\\&quot;).replace(&quot;%&quot;, &quot;\\%&quot;).replace(&quot;_&quot;, &quot;\\_&quot;);
 }
 
-if (!val.matches(&quot;^[0-9A-Za-z-]+$&quot;)) {
-    throw new IllegalArgumentException(&quot;invalid sortId&quot;);
+String raw = id == null ? &quot;&quot; : id.trim();
+if (!raw.matches(&quot;\\d+&quot;)) {
+    continue; // 或直接抛出参数异常
 }
-String esc = escapeLike(val);
-orPredicates.add(cb.like(path, esc + &quot;,%&quot;, &#x27;\\&#x27;));
-orPredicates.add(cb.like(path, &quot;%,&quot; + esc, &#x27;\\&#x27;));
-orPredicates.add(cb.like(path, &quot;%,&quot; + esc + &quot;,%&quot;, &#x27;\\&#x27;));
-```</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>构造查询参数 `sortIds=[&quot;%&quot;]`、`sortIds=[&quot;_&quot;]`、`sortIds=[&quot;90%&quot;]`，验证修复前返回范围被放大；修复后应被拒绝或仅匹配字面值。</p></div></div></details></div></div></details></div>
+String val = escapeLike(raw);
+orPredicates.add(cb.like(path, val + &quot;,%&quot;, &#x27;\\&#x27;));
+orPredicates.add(cb.like(path, &quot;%,&quot; + val, &#x27;\\&#x27;));
+orPredicates.add(cb.like(path, &quot;%,&quot; + val + &quot;,%&quot;, &#x27;\\&#x27;));
+```</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>构造 `sortIds=[&quot;%&quot;]`、`sortIds=[&quot;901%&quot;]`、`sortIds=[&quot;_&quot;]` 请求，验证修复前结果集被明显放大；修复后应仅允许合法 sortId 格式并拒绝或正确转义通配符。</p></div></div></details></div></div></details></div>
     </div>
 
     <div id="panel-dp" class="report-panel" role="tabpanel" aria-labelledby="tab-dp">
       <div class="dp-shell"><div class="dp-header">
   <h1>数据权限分析报告</h1>
   <p class="subtitle">AI Code Review · 接口级别数据权限审计</p>
-  <div class="meta-row"><div class="meta-item">项目 <strong>pos-exchange-api</strong></div><div class="meta-item">涉及接口路径（自动汇总） <strong>InboundBatchCounterDao.findByParentBatchCodeAndChildBatchCodeIn(...) · SorterLogSo.toSpec() / SorterLogSo.buildSortIdSpec()</strong></div><div class="meta-item">报告日期 <strong>2026-05-25 16:03:01</strong></div><div class="meta-item">涉及角色标签 <strong>sortIds、chuteId、facilityCode、数据范围过滤</strong></div></div>
+  <div class="meta-row"><div class="meta-item">项目 <strong>pos-exchange-api</strong></div><div class="meta-item">涉及接口路径（自动汇总） <strong>/address/update | /external/address/update · InboundBatchCounterDao.findByChildBatchCode(String childBatchCode) · SorterLogSo.buildSortIdSpec(...)</strong></div><div class="meta-item">报告日期 <strong>2026-05-26 14:52:46</strong></div><div class="meta-item">涉及角色标签 <strong>operator、Dispatcher、fleetId、facilityCode、sortIds、chuteId、driver-leader</strong></div></div>
 </div>
 
 <div class="dp-body">
@@ -1563,16 +1581,16 @@ orPredicates.add(cb.like(path, &quot;%,&quot; + esc + &quot;,%&quot;, &#x27;\\&#
   <div class="dp-stats">
     
   <div class="summary-grid">
-    <div class="summary-card critical"><div class="count">1</div><div class="label">高风险（语义）</div></div>
-    <div class="summary-card high"><div class="count">1</div><div class="label">中风险（语义）</div></div>
+    <div class="summary-card critical"><div class="count">3</div><div class="label">高风险（语义）</div></div>
+    <div class="summary-card high"><div class="count">0</div><div class="label">中风险（语义）</div></div>
     <div class="summary-card medium"><div class="count">0</div><div class="label">低风险（语义）</div></div>
-    <div class="summary-card info"><div class="count">2</div><div class="label">接口总数（已解析路径）</div></div>
+    <div class="summary-card info"><div class="count">3</div><div class="label">接口总数（已解析路径）</div></div>
   </div>
   <div class="summary-grid" style="margin-top:8px;opacity:.92;">
-    <div class="summary-card critical"><div class="count">1</div><div class="label">Critical</div></div>
-    <div class="summary-card high"><div class="count">1</div><div class="label">Major</div></div>
+    <div class="summary-card critical"><div class="count">0</div><div class="label">Critical</div></div>
+    <div class="summary-card high"><div class="count">3</div><div class="label">Major</div></div>
     <div class="summary-card medium"><div class="count">0</div><div class="label">Minor+</div></div>
-    <div class="summary-card info"><div class="count">2</div><div class="label">权限类条数</div></div>
+    <div class="summary-card info"><div class="count">3</div><div class="label">权限类条数</div></div>
   </div>
 
   </div>
@@ -1586,75 +1604,110 @@ orPredicates.add(cb.like(path, &quot;%,&quot; + esc + &quot;,%&quot;, &#x27;\\&#
 
   <div class="dp-section">
     <div class="dp-section-title">接口权限审计总览</div>
-    <div class="table-wrap"><table class="dp-audit"><thead><tr><th>方法</th><th>路径</th><th>Service 方法</th><th>权限校验</th><th>数据范围</th><th>风险</th><th>问题描述</th></tr></thead><tbody><tr class="row-critical"><td style='white-space:nowrap;vertical-align:middle;'><span class="badge badge-service" style="background:#718096;color:#fff;font-size:.75rem;">Java 方法</span></td><td style='min-width:120px;'><code style="font-size:.82rem;word-break:break-all;">InboundBatchCounterDao.findByParentBatchCodeAndChildBatchCodeIn(...)</code></td><td style='min-width:160px;'><code style="font-size:.82rem;">findByParentBatchCodeAndChildBatchCodeIn(...)</code></td><td style='white-space:nowrap;'><span style="color:#dd6b20;">待复核</span></td><td style='min-width:140px;font-size:.85rem;'><span style="font-size:.85rem;">当前新增DAO方法本身不含facility过滤条件，默认可返回跨facility记录，是否越权完全依赖上层调用方。</span></td><td style='white-space:nowrap;'><div class="risk-zh">高风险（数据越权读取）</div><div style="margin-top:6px;"><span class="badge badge-critical">CRITICAL</span></div></td><td style='min-width:220px;'><ul class="issue-list"><li><strong>原因：</strong> 新增方法 <code>findByParentBatchCodeAndChildBatchCodeIn(String parentBatchCode, List&lt;String&gt; childBatchCodes)</code> 未包含 <code>facilityCode</code>/租户范围条件，数据访问天然是“跨facility”读取</li><li>若上层调用链未做严格角色与数据域过滤，将形成可被误用的越权读取入口</li><li><strong>影响：</strong> 调用方在未额外加范围约束时，可能返回同一 <code>parentBatchCode</code> 下多个 facility 的计数数据，导致租户/站点级数据可见范围扩大，属于高风险数据越权读取</li></ul></td></tr><tr class="row-major"><td style='white-space:nowrap;vertical-align:middle;'><span class="badge badge-service" style="background:#718096;color:#fff;font-size:.75rem;">Java 方法</span></td><td style='min-width:120px;'><code style="font-size:.82rem;word-break:break-all;">SorterLogSo.toSpec() / SorterLogSo.buildSortIdSpec()</code></td><td style='min-width:160px;'><code style="font-size:.82rem;">toSpec() / SorterLogSo.buildSortIdSpec()</code></td><td style='white-space:nowrap;'><span style="color:#dd6b20;">待复核</span></td><td style='min-width:140px;font-size:.85rem;'><span style="font-size:.85rem;">当前实现将未转义输入直接用于 LIKE，通配符可放大匹配集合。</span></td><td style='white-space:nowrap;'><div class="risk-zh">中风险（数据可见范围扩大/越权读取）</div><div style="margin-top:6px;"><span class="badge badge-high">HIGH</span></div></td><td style='min-width:220px;'><ul class="issue-list"><li>原因：<code>buildSortIdSpec()</code> 将外部可控的 <code>sortIds</code> 直接拼入 <code>LIKE</code> 模式，未对 <code>%</code>、<code>_</code> 做转义，也未做白名单校验</li><li>攻击者可传入通配符值（如 <code>%</code>），使过滤条件被放大</li><li>影响：查询结果可能突破“按指定 sortId 精确过滤”的预期，返回更多 chuteId 记录，形成数据可见范围扩大风险（越权读取风险）</li></ul></td></tr></tbody></table></div>
+    <div class="table-wrap"><table class="dp-audit"><thead><tr><th>方法</th><th>路径</th><th>Service 方法</th><th>权限校验</th><th>数据范围</th><th>风险</th><th>问题描述</th></tr></thead><tbody><tr class="row-major"><td style='white-space:nowrap;vertical-align:middle;'><span class="badge badge-post">POST</span></td><td style='min-width:120px;'><code style="font-size:.82rem;word-break:break-all;">/address/update | /external/address/update</code></td><td style='min-width:160px;'><code style="font-size:.82rem;">update(UpdateAddressReq, Label, LabelExt)</code></td><td style='white-space:nowrap;'><span style="color:#dd6b20;">待复核</span></td><td style='min-width:140px;font-size:.85rem;'><span style="font-size:.85rem;">地址变更后直接返回新标签字符串，新增返回路径未体现与标签读取相关的角色/归属二次校验。</span></td><td style='white-space:nowrap;'><div class="risk-zh">高风险（数据越权读取）</div><div style="margin-top:6px;"><span class="badge badge-high">HIGH</span></div></td><td style='min-width:220px;'><ul class="issue-list"><li><strong>原因：</strong> 变更后 <code>update(...)</code> 在地址变更时新增返回 <code>getNewAddressLabel(label)</code>，该返回值由 <code>DrawRouteUtils.generate(...)</code> 生成，属于新增的可对外返回数据面</li><li>但在新增代码中未见与返回敏感面绑定的二次权限/数据归属校验（如基于 <code>fleetId</code>/<code>facilityCode</code> 的可见性控制）</li><li><strong>影响：</strong> 若上层 Controller 将该返回值直接透传给调用方，则原本仅“更新地址”的接口可能被扩展为“获取路由标签内容”，导致低权限主体在具备更新入口时额外获得标签数据，形成越权读取/数据可见范围扩大风险</li></ul></td></tr><tr class="row-major"><td style='white-space:nowrap;vertical-align:middle;'><span class="badge badge-service" style="background:#718096;color:#fff;font-size:.75rem;">Java 方法</span></td><td style='min-width:120px;'><code style="font-size:.82rem;word-break:break-all;">InboundBatchCounterDao.findByChildBatchCode(String childBatchCode)</code></td><td style='min-width:160px;'><code style="font-size:.82rem;">findByChildBatchCode(String childBatchCode)</code></td><td style='white-space:nowrap;'><span style="color:#dd6b20;">待复核</span></td><td style='min-width:140px;font-size:.85rem;'><span style="font-size:.85rem;">当前新增 DAO 方法按 childBatchCode 直接查询，不含 fleetId/facilityCode 过滤条件，具备跨范围返回能力</span></td><td style='white-space:nowrap;'><div class="risk-zh">高风险（数据越权读取）</div><div style="margin-top:6px;"><span class="badge badge-high">HIGH</span></div></td><td style='min-width:220px;'><ul class="issue-list"><li>原因：新增方法 <code>findByChildBatchCode(String childBatchCode)</code> 未包含 <code>facilityCode</code>/租户范围条件，且注释明确为“across all facilities”，该数据访问能力本身可返回跨场地全量计数记录</li><li>若被 Web/Facade 读接口直接调用且未在上层强制做数据范围过滤，将形成越权读面</li><li>影响：具备普通查询权限的主体（如需按 <code>fleetId</code>/<code>facilityCode</code> 受限的角色）在缺失上层二次校验时，可能读取非所属场地数据，造成租户/场地维度数据泄露</li></ul></td></tr><tr class="row-major"><td style='white-space:nowrap;vertical-align:middle;'><span class="badge badge-service" style="background:#718096;color:#fff;font-size:.75rem;">Java 方法</span></td><td style='min-width:120px;'><code style="font-size:.82rem;word-break:break-all;">SorterLogSo.buildSortIdSpec(...)</code></td><td style='min-width:160px;'><code style="font-size:.82rem;">buildSortIdSpec(...)</code></td><td style='white-space:nowrap;'><span style="color:#dd6b20;">待复核</span></td><td style='min-width:140px;font-size:.85rem;'><span style="font-size:.85rem;">当前实现将用户输入直接用于 LIKE 模式，允许通过通配符扩大匹配范围。</span></td><td style='white-space:nowrap;'><div class="risk-zh">高风险（数据可见范围扩大/潜在越权读取）</div><div style="margin-top:6px;"><span class="badge badge-high">HIGH</span></div></td><td style='min-width:220px;'><ul class="issue-list"><li><strong>原因：</strong> 新增的 <code>buildSortIdSpec()</code> 直接将外部可控的 <code>sortIds</code> 元素拼入 <code>LIKE</code> 匹配模式，未对 <code>%</code>、<code>_</code> 等通配符做转义或白名单校验</li><li>攻击者可构造包含通配符的 <code>sortId</code>（如 <code>%</code>、<code>_</code>、<code>901%</code>）扩大匹配范围，绕过“按指定 sortId 精确过滤”的预期数据边界</li><li><strong>影响：</strong> 在上层接口未额外做严格数据范围约束时，查询结果可能被恶意放大，导致本不应可见的数据被检索到，形成越权读取/数据可见范围扩大风险</li></ul></td></tr></tbody></table></div>
   </div>
 
   
 
   <div class="dp-section">
     <div class="dp-section-title">端点详情</div>
-    <div class="dp-folds"><details class="issue-fold"><summary>SERVICE InboundBatchCounterDao.findByParentBatchCodeAndChildBatchCodeIn(...)</summary><div class="issue-fold-body">
+    <div class="dp-folds"><details class="issue-fold"><summary>POST /address/update | /external/address/update</summary><div class="issue-fold-body">
   <div class="issue-card">
     <div class="issue-header">
-      <span class="badge critical">Critical</span>
-      <span class="method-badge">SERVICE</span>
-      <span class="endpoint">InboundBatchCounterDao.findByParentBatchCodeAndChildBatchCodeIn(...)</span>
+      <span class="badge high">High</span>
+      <span class="method-badge">POST</span>
+      <span class="endpoint">/address/update | /external/address/update</span>
     </div>
     <div class="issue-body">
       <div class="section-title">问题描述</div>
-      <p class="loc-hint">关联位置：<code>pos-service/src/main/java/com/miq/posservice/dao/InboundBatchCounterDao.java L17</code></p>
-      <p class="desc">1. <strong>原因：</strong> 新增方法 <code>findByParentBatchCodeAndChildBatchCodeIn(String parentBatchCode, List&lt;String&gt; childBatchCodes)</code> 未包含 <code>facilityCode</code>/租户范围条件，数据访问天然是“跨facility”读取；若上层调用链未做严格角色与数据域过滤，将形成可被误用的越权读取入口。</p>
-      <div class="section-title">问题代码</div><pre><code>List&lt;InboundBatchCounter&gt; findByParentBatchCodeAndChildBatchCodeIn(String parentBatchCode, List&lt;String&gt; childBatchCodes);</code></pre>
+      <p class="loc-hint">关联位置：<code>pos-service/src/main/java/com/miq/posservice/service/UpdateAddressService.java L241-250</code></p>
+      <p class="desc">1. <strong>原因：</strong> 变更后 <code>update(...)</code> 在地址变更时新增返回 <code>getNewAddressLabel(label)</code>，该返回值由 <code>DrawRouteUtils.generate(...)</code> 生成，属于新增的可对外返回数据面；但在新增代码中未见与返回敏感面绑定的二次权限/数据归属校验（如基于 <code>fleetId</code>/<code>facilityCode</code> 的可见性控制）。</p>
+      <div class="section-title">问题代码</div><pre><code>if (addressChanged) {
+    return getNewAddressLabel(label);
+}</code></pre>
       <div class="two-col">
         <div class="impact-box">
           <h4>安全影响</h4>
-          <p>** 调用方在未额外加范围约束时，可能返回同一 <code>parentBatchCode</code> 下多个 facility 的计数数据，导致租户/站点级数据可见范围扩大，属于高风险数据越权读取。</p>
+          <p>** 若上层 Controller 将该返回值直接透传给调用方，则原本仅“更新地址”的接口可能被扩展为“获取路由标签内容”，导致低权限主体在具备更新入口时额外获得标签数据，形成越权读取/数据可见范围扩大风险。</p>
         </div>
         <div class="fix-box">
           <h4>修复建议</h4>
-          <p>1. 将该方法改为强制携带范围字段并在查询层固化过滤，避免调用方“忘记传范围”导致越权。</p><p>若确需跨facility查询，应拆分为受限内部专用方法，并在Service/Facade入口增加显式角色校验与审计日志（仅高权限角色可调用）。</p>
+          <ul class="list"><li>在返回新标签前增加与调用主体绑定的数据归属校验（至少校验 <code>facilityCode</code>/<code>fleetId</code> 与 <code>label</code> 的归属一致），并对“可返回标签内容”的角色做显式白名单控制；不满足时拒绝返回或仅返回操作结果。示例：</li></ul>
         </div>
       </div>
-      <div class="section-title">修复示意</div><pre><code>List&lt;InboundBatchCounter&gt; findByParentBatchCodeAndChildBatchCodeInAndFacilityCode(
-    String parentBatchCode, List&lt;String&gt; childBatchCodes, String facilityCode);</code></pre>
+      <div class="section-title">修复示意</div><pre><code>AuthUtil.requireRole(&quot;operator&quot;, &quot;Dispatcher&quot;);
+permissionService.checkLabelScope(label.getId(), LoginUserUtil.getCurUserId(),
+        LoginUserUtil.getFacilityCode(), LoginUserUtil.getFleetId());
+if (addressChanged) {
+    return getNewAddressLabel(label);
+}
+return &quot;&quot;;</code></pre>
     </div>
   </div>
 </div></details>
-<details class="issue-fold"><summary>SERVICE SorterLogSo.toSpec() / SorterLogSo.buildSortIdSpec()</summary><div class="issue-fold-body">
+<details class="issue-fold"><summary>SERVICE InboundBatchCounterDao.findByChildBatchCode(String childBatchCode)</summary><div class="issue-fold-body">
   <div class="issue-card">
     <div class="issue-header">
       <span class="badge high">High</span>
       <span class="method-badge">SERVICE</span>
-      <span class="endpoint">SorterLogSo.toSpec() / SorterLogSo.buildSortIdSpec()</span>
+      <span class="endpoint">InboundBatchCounterDao.findByChildBatchCode(String childBatchCode)</span>
     </div>
     <div class="issue-body">
       <div class="section-title">问题描述</div>
-      <p class="loc-hint">关联位置：<code>pos-service/src/main/java/com/miq/posservice/so/SorterLogSo.java L58-70</code></p>
-      <p class="desc">1. 原因：<code>buildSortIdSpec()</code> 将外部可控的 <code>sortIds</code> 直接拼入 <code>LIKE</code> 模式，未对 <code>%</code>、<code>_</code> 做转义，也未做白名单校验。攻击者可传入通配符值（如 <code>%</code>），使过滤条件被放大。</p>
-      <div class="section-title">问题代码</div><pre><code>orPredicates.add(cb.like(path, val + &quot;,%&quot;));
+      <p class="loc-hint">关联位置：<code>pos-service/src/main/java/com/miq/posservice/dao/InboundBatchCounterDao.java L23</code></p>
+      <p class="desc">1. 原因：新增方法 <code>findByChildBatchCode(String childBatchCode)</code> 未包含 <code>facilityCode</code>/租户范围条件，且注释明确为“across all facilities”，该数据访问能力本身可返回跨场地全量计数记录；若被 Web/Facade 读接口直接调用且未在上层强制做数据范围过滤，将形成越权读面。</p>
+      
+      <div class="two-col">
+        <div class="impact-box">
+          <h4>安全影响</h4>
+          <p>具备普通查询权限的主体（如需按 <code>fleetId</code>/<code>facilityCode</code> 受限的角色）在缺失上层二次校验时，可能读取非所属场地数据，造成租户/场地维度数据泄露。</p>
+        </div>
+        <div class="fix-box">
+          <h4>修复建议</h4>
+          <p>1. 将该 DAO 查询收敛为带范围条件的方法，并在服务层强制注入当前登录主体的数据范围参数。</p><p>同时在调用链增加权限断言（例如 <code>@PreAuthorize</code> 或 <code>AuthUtil.requireRole(...)</code>）并校验 <code>facilityCode/fleetId</code> 归属一致后再查询。</p>
+        </div>
+      </div>
+      <div class="section-title">修复示意</div><pre><code>List&lt;InboundBatchCounter&gt; findByChildBatchCodeAndFacilityCode(String childBatchCode, String facilityCode);</code></pre>
+    </div>
+  </div>
+</div></details>
+<details class="issue-fold"><summary>SERVICE SorterLogSo.buildSortIdSpec(...)</summary><div class="issue-fold-body">
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="badge high">High</span>
+      <span class="method-badge">SERVICE</span>
+      <span class="endpoint">SorterLogSo.buildSortIdSpec(...)</span>
+    </div>
+    <div class="issue-body">
+      <div class="section-title">问题描述</div>
+      <p class="loc-hint">关联位置：<code>pos-service/src/main/java/com/miq/posservice/so/SorterLogSo.java L60-65</code></p>
+      <p class="desc">1. <strong>原因：</strong> 新增的 <code>buildSortIdSpec()</code> 直接将外部可控的 <code>sortIds</code> 元素拼入 <code>LIKE</code> 匹配模式，未对 <code>%</code>、<code>_</code> 等通配符做转义或白名单校验。攻击者可构造包含通配符的 <code>sortId</code>（如 <code>%</code>、<code>_</code>、<code>901%</code>）扩大匹配范围，绕过“按指定 sortId 精确过滤”的预期数据边界。</p>
+      <div class="section-title">问题代码</div><pre><code>String val = id.trim();
+orPredicates.add(cb.like(path, val + &quot;,%&quot;));
 orPredicates.add(cb.like(path, &quot;%,&quot; + val));
 orPredicates.add(cb.like(path, &quot;%,&quot; + val + &quot;,%&quot;));</code></pre>
       <div class="two-col">
         <div class="impact-box">
           <h4>安全影响</h4>
-          <p>查询结果可能突破“按指定 sortId 精确过滤”的预期，返回更多 chuteId 记录，形成数据可见范围扩大风险（越权读取风险）。</p>
+          <p>** 在上层接口未额外做严格数据范围约束时，查询结果可能被恶意放大，导致本不应可见的数据被检索到，形成越权读取/数据可见范围扩大风险。</p>
         </div>
         <div class="fix-box">
           <h4>修复建议</h4>
-          <ul class="list"><li>对 <code>sortIds</code> 做严格输入约束并转义 LIKE 通配符：1) 仅允许数字/字母等受控字符（例如 <code>^[0-9A-Za-z-]+$</code>）；2) 对 <code>%</code>、<code>_</code>、转义字符进行 escape 后再用于 <code>LIKE</code>；3) 对非法值直接拒绝。</li></ul>
+          <p>1. 对 <code>sortIds</code> 做严格输入约束（仅允许数字/固定格式），并在 <code>LIKE</code> 前转义通配符与转义符本身；或改为规范化存储（拆分关联表）避免逗号字符串检索。</p><p>示例（转义 + ESCAPE）：</p>
         </div>
       </div>
       <div class="section-title">修复示意</div><pre><code>private String escapeLike(String s) {
     return s.replace(&quot;\\&quot;, &quot;\\\\&quot;).replace(&quot;%&quot;, &quot;\\%&quot;).replace(&quot;_&quot;, &quot;\\_&quot;);
 }
 
-if (!val.matches(&quot;^[0-9A-Za-z-]+$&quot;)) {
-    throw new IllegalArgumentException(&quot;invalid sortId&quot;);
+String raw = id == null ? &quot;&quot; : id.trim();
+if (!raw.matches(&quot;\\d+&quot;)) {
+    continue; // 或直接抛出参数异常
 }
-String esc = escapeLike(val);
-orPredicates.add(cb.like(path, esc + &quot;,%&quot;, &#x27;\\&#x27;));
-orPredicates.add(cb.like(path, &quot;%,&quot; + esc, &#x27;\\&#x27;));
-orPredicates.add(cb.like(path, &quot;%,&quot; + esc + &quot;,%&quot;, &#x27;\\&#x27;));</code></pre>
+String val = escapeLike(raw);
+orPredicates.add(cb.like(path, val + &quot;,%&quot;, &#x27;\\&#x27;));
+orPredicates.add(cb.like(path, &quot;%,&quot; + val, &#x27;\\&#x27;));
+orPredicates.add(cb.like(path, &quot;%,&quot; + val + &quot;,%&quot;, &#x27;\\&#x27;));</code></pre>
     </div>
   </div>
 </div></details></div>
@@ -1664,7 +1717,7 @@ orPredicates.add(cb.like(path, &quot;%,&quot; + esc + &quot;,%&quot;, &#x27;\\&#
 
   
 
-  <div class="dp-footer"><p>本报告由 AI Code Review 生成（data_permission 模式）。权限类 finding 涉及文件：<strong>pos-service/src/main/java/com/miq/posservice/dao/InboundBatchCounterDao.java、pos-service/src/main/java/com/miq/posservice/so/SorterLogSo.java</strong></p><p style="margin-top:4px;">生成时间：2026-05-25 16:03:01 · 项目：pos-exchange-api</p></div>
+  <div class="dp-footer"><p>本报告由 AI Code Review 生成（data_permission 模式）。权限类 finding 涉及文件：<strong>pos-service/src/main/java/com/miq/posservice/dao/InboundBatchCounterDao.java、pos-service/src/main/java/com/miq/posservice/service/UpdateAddressService.java、pos-service/src/main/java/com/miq/posservice/so/SorterLogSo.java</strong></p><p style="margin-top:4px;">生成时间：2026-05-26 14:52:46 · 项目：pos-exchange-api</p></div>
 
 </div>
 </div>
@@ -1997,9 +2050,9 @@ orPredicates.add(cb.like(path, &quot;%,&quot; + esc + &quot;,%&quot;, &#x27;\\&#
     function exportCsv() { alert('导出为 CSV 功能待实现'); }
 
     // Inject summary data (Task 5)
-    if (typeof updateSeveritySummary === 'function') updateSeveritySummary(2, 12, 4, 1);
-if (typeof renderCategoryChart === 'function') renderCategoryChart({"\u8fb9\u754c\u6761\u4ef6": 5, "\u5b89\u5168\u98ce\u9669": 3, "\u6570\u636e\u4e00\u81f4\u6027": 3, "\u5f02\u5e38\u5904\u7406": 2, "\u4e1a\u52a1\u903b\u8f91": 2, "\u6743\u9650\u4e0e\u8bbf\u95ee\u63a7\u5236": 2, "\u5411\u540e\u517c\u5bb9": 1, "\u6027\u80fd\u9690\u60a3": 1});
-if (typeof renderTopCriticals === 'function') renderTopCriticals([{"file": "pos-service/src/main/java/com/miq/posservice/dao/InboundBatchCounterDao.java", "line": "17", "severity": "critical", "category": "权限与访问控制", "description": "**原因：** 新增方法 `findByParentBatchCodeAndChildBatchCodeIn(String parentBatchCode, List<String> childBatchCodes)` 未包含 `facilityCode`/租户范围条件，数据访问天然是“跨facility”读取；若上层调用链未做严格角色与数据域过滤，将形成可被误用的越权读取入口。\n\n```java\nList<InboundBatchCounter> findByParentBatchCodeAndChildBatchCodeIn(String parentBatchCode, List<String> childBatchCodes);\n```\n\n**影响：** 调用方在未额外加范围约束时，可能返回同一 `parentBatchCode` 下多个 facility 的计数数据，导致租户/站点级数据可见范围扩大，属于高风险数据越权读取。", "suggestion": "将该方法改为强制携带范围字段并在查询层固化过滤，避免调用方“忘记传范围”导致越权。\n\n```java\nList<InboundBatchCounter> findByParentBatchCodeAndChildBatchCodeInAndFacilityCode(\n    String parentBatchCode, List<String> childBatchCodes, String facilityCode);\n```\n\n若确需跨facility查询，应拆分为受限内部专用方法，并在Service/Facade入口增加显式角色校验与审计日志（仅高权限角色可调用）。", "test_scenario": "新增权限回归测试：使用仅具单facility权限的账号调用对应业务入口，构造同 `parentBatchCode` 且跨facility的数据，断言结果仅包含授权 `facilityCode` 数据；未授权facility数据必须为0条。", "http_method": "UNKNOWN", "path_pattern": "UNKNOWN", "permission_tags": ["facilityCode", "数据范围过滤"], "java_entry_method": "InboundBatchCounterDao.findByParentBatchCodeAndChildBatchCodeIn(...)", "expected_permission": "普通业务角色仅可见其授权 facilityCode 范围内数据；不应默认跨facility可见。", "actual_behavior": "当前新增DAO方法本身不含facility过滤条件，默认可返回跨facility记录，是否越权完全依赖上层调用方。", "evidence_refs": ["pos-service/src/main/java/com/miq/posservice/dao/InboundBatchCounterDao.java:17"], "risk_label_zh": "高风险（数据越权读取）", "_aggregated_count": 1}, {"file": "pos-service/src/main/java/com/miq/posservice/service/inbound/InboundBatchCounterService.java", "line": "91-97", "severity": "critical", "category": "安全风险", "description": "存在 SQL 注入风险：`updateClause` 直接基于外部传入的 `cols` 拼接列名生成 `ON DUPLICATE KEY UPDATE` 语句，未校验 `cols` 是否严格属于白名单 `COUNT_COLUMNS`。攻击者若可影响 `cols` 内容，可构造恶意片段进入 SQL。", "suggestion": "在构造 SQL 前强制白名单校验，仅允许 `COUNT_COLUMNS` 中的列参与更新；若出现非法列立即拒绝处理并记录安全日志。示例：先执行 `if (!COUNT_COLUMNS.containsAll(cols)) { throw new IllegalArgumentException(\"invalid counter column\"); }`，并将 `updateClause` 改为基于 `COUNT_COLUMNS` 过滤生成（而不是直接遍历 `cols`）。", "test_scenario": "新增安全测试：传入 `cols` 包含非法值（如 `parcel_total_qty = 1, updated_at = NOW() --`）时，方法应抛出异常且不执行 `jdbcTemplate.update`；传入合法列集合时正常执行。", "http_method": "", "path_pattern": "", "permission_tags": [], "java_entry_method": "", "expected_permission": "", "actual_behavior": "", "evidence_refs": [], "risk_label_zh": "", "_aggregated_count": 1}]);
+    if (typeof updateSeveritySummary === 'function') updateSeveritySummary(1, 13, 5, 0);
+if (typeof renderCategoryChart === 'function') renderCategoryChart({"\u4e1a\u52a1\u903b\u8f91": 3, "\u8fb9\u754c\u6761\u4ef6": 3, "\u6743\u9650\u4e0e\u8bbf\u95ee\u63a7\u5236": 3, "\u5b89\u5168\u98ce\u9669": 2, "\u6570\u636e\u4e00\u81f4\u6027": 2, "API\u5951\u7ea6": 2, "\u5f02\u5e38\u5904\u7406": 2, "\u6027\u80fd\u9690\u60a3": 1, "\u914d\u7f6e\u53d8\u66f4": 1});
+if (typeof renderTopCriticals === 'function') renderTopCriticals([{"file": "pos-service/src/main/java/com/miq/posservice/service/inbound/InboundBatchCounterService.java", "line": "100-102", "severity": "critical", "category": "安全风险", "description": "存在 SQL 注入风险：`updateClause` 直接使用 `cols` 中的字符串拼接列赋值表达式，未校验列名白名单。若 `cols` 可被外部输入（如消息体污染、重放篡改）影响，攻击者可构造恶意片段进入 `ON DUPLICATE KEY UPDATE` 子句，造成任意 SQL 片段执行或语义篡改。", "suggestion": "对 `cols` 做严格白名单过滤，仅允许 `COUNT_COLUMNS` 中定义的列参与 SQL 构建；过滤后为空则直接返回。更稳妥方案是改为预定义分支 SQL（按固定列集合映射），避免把未验证标识符拼进语句。例如：`Set<String> safeCols = cols.stream().filter(COUNT_COLUMNS::contains).collect(Collectors.toSet());` 并基于 `safeCols` 生成 `updateClause`。", "test_scenario": "构造包含恶意列名的 `cols`（如 `\"parcel_total_qty = 1, updated_at = NOW() --\"`）调用 `applyEvent`，验证修复前 SQL 被污染、修复后该值被拒绝且不会进入 SQL。", "http_method": "", "path_pattern": "", "permission_tags": [], "java_entry_method": "", "expected_permission": "", "actual_behavior": "", "evidence_refs": [], "risk_label_zh": "", "_aggregated_count": 1}]);
 
     // Export dropdown toggle
     (function() {
