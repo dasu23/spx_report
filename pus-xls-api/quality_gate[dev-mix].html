@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pus-xls-api &nbsp;|&nbsp; 2026-05-25 17:03:04</div>
+      <div class="meta">pus-xls-api &nbsp;|&nbsp; 2026-05-26 15:07:37</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:2 &nbsp; 主要:22</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:17</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,8 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 2 Critical finding(s)</li>
-<li>AI Review: 22 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 1 Critical finding(s)</li>
+<li>AI Review: 17 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,41 +94,9 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">pus-facade/pus-facade-exchange/src/main/java/io/speedx/pus/facade/exchange/CainiaoPickupFacade.java:23-30</code>
+                    <code class="finding-loc">pus-facade-impl/pus-facade-impl-exchange/src/main/java/io/speedx/pus/facade/impl/exchange/controller/ExchangePudoTrkController.java:16-19</code>
                 </div>
-                <div class="finding-desc">原因：该 HTTP 入口实现中未见 `AuthUtil.requireRole()`、`@PreAuthorize` 或等效鉴权校验，方法可被直接调用。
-
-```java
-@Override
-public CainiaoPickupRo create(String msgType, String msgId, String fromCode, String partnerCode,
-                              String dataDigest, String logisticsInterface) {
-    log.info(&quot;[CainiaoPickup] scheduleNotify msgType={}, msgId={}, fromCode={}&quot;, msgType, msgId, fromCode);
-```
-
-影响：若网关/外层未强制拦截，未授权主体可直接触发揽收创建业务流程，造成越权调用与业务数据被恶意写入/篡改风险。
-
----
-
-**原因：**
-该新增 HTTP 入口仅声明了 `@PostMapping(&quot;/cainiao/pickup/create&quot;)` 和入参，变更中未看到 `@PreAuthorize`/`AuthUtil.requireRole()` 等访问控制约束，也未在接口契约层体现来源白名单或强制签名校验门禁。
-```java
-@PostMapping(&quot;/cainiao/pickup/create&quot;)
-CainiaoPickupRo create(
-        @RequestParam(&quot;partner_code&quot;) String partnerCode,
-        @RequestParam(&quot;data_digest&quot;)  String dataDigest,
-        ...);
-```
-**影响：**
-若实现层未补充严格鉴权，任意主体可直接调用该对外路径，存在伪造揽收调度通知、触发越权业务处理或放大攻击面的风险。</div>
-                <div class="finding-suggestion">💡 修复建议：为该入口增加强制鉴权与来源约束：1) 在 Controller/实现方法添加 `@PreAuthorize`（或等价网关策略）限制仅允许受信调用方；2) 在方法首行执行 `partner_code + data_digest` 签名验签与时间窗/重放校验；3) 增加 `from_code` 白名单校验并对失败请求统一拒绝。</div>
-            </div>
-            <div class="finding-card finding-critical">
-                <div class="finding-header">
-                    <span class="finding-badge">严重</span>
-                    <code class="finding-loc">pus-facade/pus-facade-exchange/src/main/java/io/speedx/pus/facade/exchange/ExchangePudoTrkFacade.java:17-19</code>
-                </div>
-                <div class="finding-desc">原因：失败轨迹推送入口未见任何认证/授权注解或显式角色校验，直接将请求参数传入业务服务执行。
-
+                <div class="finding-desc">原因：`pushFailureEvent` 作为 HTTP 入口直接调用业务服务，变更中未见 `AuthUtil.requireRole()`、`@PreAuthorize` 或任何数据范围校验逻辑。
 ```java
 @Override
 public ResponseObject&lt;Void&gt; pushFailureEvent(PudoTrkPushForm form) {
@@ -136,63 +104,66 @@ public ResponseObject&lt;Void&gt; pushFailureEvent(PudoTrkPushForm form) {
     return ResponseObject.success();
 }
 ```
-
-影响：攻击者在可达该入口时可伪造/批量触发失败事件推送，导致越权操作、业务通知污染或下游系统被滥用。
+影响：未授权主体一旦可达该接口，可能触发任意 bookingCode 的失败轨迹推送，形成越权操作与业务滥用；且缺少 `fleetId/facilityCode/userId` 约束会放大租户/组织边界风险。
 
 ---
 
-**原因：**
-新增 `innerApi` 写操作入口仅有 `@PostMapping` 与 `@Valid` 参数校验，未在变更中看到 `@PreAuthorize`/`AuthUtil.requireRole()` 等角色校验。
+**原因：** 新增内部接口 `POST /innerApi/pudo/trk/push-failure-event` 的 Facade 声明，但在该分片中未看到任何 `@PreAuthorize`、`AuthUtil.requireRole()` 或等效访问控制实现（Controller/Service 逻辑未出现在本 diff 片段）。
+
 ```java
 @PostMapping(&quot;/innerApi/pudo/trk/push-failure-event&quot;)
 ResponseObject&lt;Void&gt; pushFailureEvent(@RequestBody @Valid PudoTrkPushForm form);
 ```
-**影响：**
-若实现层同样缺少鉴权，非授权调用方可触发“手动推送失败轨迹”内部能力，造成内部接口越权调用与业务数据被非预期修改/推送。</div>
-                <div class="finding-suggestion">💡 修复建议：对该 POST 内部接口增加显式角色校验（如 `@PreAuthorize(&quot;hasAnyRole(...) &quot;)` 或 `AuthUtil.requireRole(...)`），并在网关层限制仅内网服务账号可访问 `/innerApi/**`；同时补充调用方身份审计日志。</div>
+
+**影响：** 若实现侧同样缺失强制角色校验，内部接口可能被越权调用，触发手动推送流程，造成业务滥用或数据操作面扩大。由于实现不在本分片，当前按高风险待确认处理。</div>
+                <div class="finding-suggestion">💡 修复建议：在 Facade/Controller 入口增加显式角色校验与数据范围校验：仅允许受信角色调用，并在进入 service 前按调用人身份过滤可操作 bookingCode 集合（绑定 `fleetId/facilityCode/userId`）。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/dto/StandardAddressMatchResult.java:29</code>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/event/PudoPickupFailedTrkEvent.java:21</code>
                 </div>
-                <div class="finding-desc">将 `StandardAddressMatchResult(Pattern pattern, DaysDimAddressStandard a)` 改为 `apply(DaysDimAddressStandard a)` 后，不再更新 `pattern` 字段；当同一对象被复用时，`pattern` 可能保留旧值，导致后续匹配分层逻辑使用过期模式。</div>
-                <div class="finding-suggestion">💡 修复建议：在 `apply` 中显式接收并更新 `pattern`（如 `apply(Pattern pattern, DaysDimAddressStandard a)` 并执行 `this.pattern = pattern;`），或确保对象生命周期为一次性并在代码中强约束不可复用。</div>
-            </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/event/PudoPickupFailedTrkEvent.java:22</code>
-                </div>
-                <div class="finding-desc">构造函数直接对 `trackingNumbers` 调用 `Collections.unmodifiableList(trackingNumbers)`，当调用方传入 `null` 时会在事件创建阶段触发 `NullPointerException`，导致事件发布链路中断。</div>
-                <div class="finding-suggestion">💡 修复建议：在构造函数中增加空值保护，并提供安全默认值，例如：`this.trackingNumbers = trackingNumbers == null ? Collections.emptyList() : Collections.unmodifiableList(new ArrayList&lt;&gt;(trackingNumbers));`。</div>
+                <div class="finding-desc">构造函数中直接调用 `Collections.unmodifiableList(trackingNumbers)`，当调用方传入 `null` 时会在事件创建阶段触发空指针异常，导致失败事件无法发布。</div>
+                <div class="finding-suggestion">💡 修复建议：在构造函数中增加空值保护，并给出明确语义，例如：`this.trackingNumbers = trackingNumbers == null ? Collections.emptyList() : Collections.unmodifiableList(new ArrayList&lt;&gt;(trackingNumbers));`。同时可对 `pickup`、`providerCode` 做 `Objects.requireNonNull` 校验，提前失败并输出可读错误。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/listener/PudoPickupFailedTrkEventListener.java:26</code>
                 </div>
-                <div class="finding-desc">事件处理入口直接访问 `event.getPickup().getBookingCode()`，未做空值保护；当 `event` 或 `pickup` 为空时会触发空指针，导致异步监听线程执行失败。</div>
-                <div class="finding-suggestion">💡 修复建议：在方法开头增加参数校验并快速返回，例如：`if (event == null || event.getPickup() == null) { log.warn(&quot;[PudoTrkPush] invalid event&quot;); return; }`；后续日志与调用统一使用已校验对象。</div>
-            </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/listener/PudoPickupFailedTrkEventListener.java:32-33</code>
-                </div>
-                <div class="finding-desc">`catch (Exception)` 后仅记录日志不重抛、无补偿/重试，`pushByEvent` 失败会被静默吞掉，可能造成 TRK 推送漏发（部分失败无恢复路径）。</div>
-                <div class="finding-suggestion">💡 修复建议：为失败场景增加可恢复机制：至少将失败事件持久化到重试队列/补偿表，或接入 Spring Retry（含最大重试次数与退避策略）；若当前链路要求失败可感知，应在可控范围内上抛并由统一告警处理。</div>
+                <div class="finding-desc">`onPudoPickupFailed` 直接访问 `event.getPickup().getBookingCode()`，当 `event` 或 `pickup` 为空时会触发空指针，异步监听线程失败并导致该次 TRK 推送中断。</div>
+                <div class="finding-suggestion">💡 修复建议：在方法入口增加空值保护并快速返回，例如：`if (event == null || event.getPickup() == null) { log.warn(&quot;[PudoTrkPush] invalid event&quot;); return; }`；随后再读取 `bookingCode` 并调用推送服务。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/properties/CainiaoProperties.java:43-46</code>
                 </div>
-                <div class="finding-desc">`Auth.enabled` 提供了可在运行时关闭签名鉴权的开关（默认 true，但可被配置改为 false），且注释明确“跳过 data_digest 校验”。这会使外部回调请求在缺少签名校验时仍可进入业务流程，形成认证绕过与伪造请求风险。</div>
-                <div class="finding-suggestion">💡 修复建议：移除生产可关闭的鉴权开关，改为“鉴权始终开启”；如确需联调开关，应增加多重保护：1) 仅在非生产 profile 生效；2) 启动时对生产环境强制校验 enabled=true；3) 关闭鉴权时拒绝启动或降级为仅白名单来源可访问。示例：在启动校验中对 `prod` 环境检测 `cainiao.auth.enabled`，若为 false 则抛异常阻止服务启动。</div>
+                <div class="finding-desc">新增了可动态配置的鉴权总开关 `auth.enabled`，并明确允许关闭签名校验（`false` 时跳过 `data_digest` 校验）。这会引入认证失效风险：一旦配置误改、灰度配置泄漏或配置中心被误操作，外部请求可在无签名校验下被系统接受。</div>
+                <div class="finding-suggestion">💡 修复建议：移除“关闭鉴权”的运行时开关，生产代码中强制执行签名校验；至少应增加强约束：
+1) 仅在非生产环境允许 `enabled=false`（启动时校验环境并 fail-fast）；
+2) 记录并告警任何关闭鉴权的配置变更；
+3) 在签名校验入口增加硬性保护，生产环境忽略该开关。
+示例：在初始化时校验 `if (isProd &amp;&amp; !auth.enabled) throw new IllegalStateException(...)`。</div>
             </div>
-            <p class="more-note">... 还有 17 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/PickupCreateService.java:23</code>
+                </div>
+                <div class="finding-desc">`resolveGroupWrapper` 方法签名在新增行中移除了 `storedMasterCode` 参数，属于不兼容接口变更。若仍有调用方按旧签名编译或通过反射/代理绑定，将直接编译失败或运行时找不到方法。</div>
+                <div class="finding-suggestion">💡 修复建议：保留兼容重载，逐步迁移调用方。例如新增默认桥接方法：`default PickupGroupWrapper resolveGroupWrapper(..., String storedMasterCode, String storedCleanCode, ...) { return resolveGroupWrapper(..., storedCleanCode, ...); }`，并在后续版本再移除旧签名。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/StandardAddressMatchService.java:18</code>
+                </div>
+                <div class="finding-desc">`matchByCleanCode` 新签名新增 `source`、`mode` 参数且原接口中的 `matchByMasterCode` 被删除，属于接口契约破坏式调整。若调用方/实现方未同步，易引发编译失败或运行时调用不匹配。</div>
+                <div class="finding-suggestion">💡 修复建议：提供向后兼容过渡层：保留旧签名并在内部路由到新签名（为 `source/mode` 设默认值），同时将 `matchByMasterCode` 标记 `@Deprecated` 后分阶段下线。</div>
+            </div>
+            <p class="more-note">... 还有 12 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
