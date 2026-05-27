@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-admin-api &nbsp;|&nbsp; 2026-05-26 17:37:46</div>
+      <div class="meta">pos-admin-api &nbsp;|&nbsp; 2026-05-27 09:53:47</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:3 &nbsp; 主要:16</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:6 &nbsp; 主要:21</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,8 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube analysis timed out after 1 minutes</li>
-<li>AI Review: 3 Critical finding(s)</li>
-<li>AI Review: 16 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 6 Critical finding(s)</li>
+<li>AI Review: 21 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,83 +94,114 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/inbound/InboundBatchCounterService.java:97-105</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/inbound/InboundBatchCounterService.java:99-105</code>
                 </div>
-                <div class="finding-desc">存在 SQL 注入风险：`updateClause` 直接由 `cols` 中的字符串拼接到 SQL 标识符与表达式中（`c + &quot; = &quot; + c + &quot; + 1&quot;`），且最终通过字符串拼接进入 `ON DUPLICATE KEY UPDATE` 子句。若 `cols` 来源可被外部消息或中间链路污染，攻击者可构造恶意列片段造成注入执行。</div>
-                <div class="finding-suggestion">💡 修复建议：对 `cols` 做强白名单校验，仅允许 `COUNT_COLUMNS` 内的固定列名参与 SQL 生成；拒绝或忽略非法列。建议在进入 `upsertCounter` 前做过滤并在空集合时直接返回。例如：`Set&lt;String&gt; safeCols = cols.stream().filter(COUNT_COLUMNS::contains).collect(Collectors.toSet()); if (safeCols.isEmpty()) return;`，后续 SQL 仅基于 `safeCols` 生成。</div>
+                <div class="finding-desc">存在 SQL 注入风险：`updateClause` 直接基于外部传入的 `cols` 拼接列名（`c + &quot; = &quot; + c + &quot; + 1&quot;`），且未校验 `cols` 必须属于白名单 `COUNT_COLUMNS`。一旦调用方传入恶意字符串，可污染 `ON DUPLICATE KEY UPDATE` 子句并执行非预期 SQL。</div>
+                <div class="finding-suggestion">💡 修复建议：对 `cols` 做强制白名单过滤后再拼接，或改为枚举映射生成固定 SQL。示例：先执行 `Set&lt;String&gt; safeCols = cols.stream().filter(COUNT_COLUMNS::contains).collect(Collectors.toSet());`，若 `safeCols` 为空则拒绝处理；`updateClause` 仅使用 `safeCols` 生成。进一步建议：将可更新列改为预定义分支模板，避免任何动态列名进入 SQL 字符串。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/report/impl/EventUploadProcessor.java:133-150</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/report/impl/EventUploadProcessor.java:134-149</code>
                 </div>
-                <div class="finding-desc">新增逻辑在 `trkApi.pushTrackingEvent(insertEventForm);` 成功后执行 `labelCostCalcService.costCalc(...)`，但将成本计算异常用 `catch (Exception e)` 吞掉并继续 `item.setMessage(&quot;Success&quot;)` 返回成功。这样会出现“事件已推送成功但费用未入账/漏算”的不一致状态，属于资金计算流程的完整性风险。</div>
-                <div class="finding-suggestion">💡 修复建议：将费用计算失败视为失败路径并与主流程保持一致性：1) 至少在费用计算失败时将任务标记为失败并返回错误；2) 更优是将“事件推送+费用计算”纳入可补偿事务（本地事务+重试/消息补偿），避免部分成功；3) 不要在该处捕获通用 Exception 后直接吞掉。示例：`catch (Exception e) { throw new RRException(&quot;cost calc failed&quot;, e); }`，并在上层统一失败处理与重试。</div>
+                <div class="finding-desc">新增逻辑在 `labelCostCalcService.costCalc(...)` 外层使用 `catch (Exception e)` 吞掉异常，仅记录日志后继续流程，导致上游仍会把该事件当作成功处理。由于该分支承担费用计算，任何运行时异常都会静默丢失计费动作，形成“事件成功但费用未入账”的不一致状态，属于资金计算错误风险。</div>
+                <div class="finding-suggestion">💡 修复建议：对费用计算失败改为显式失败并进入重试/补偿，而不是吞异常继续成功。建议至少：1) 抛出业务异常使任务失败可重试；或 2) 将失败记录到可靠补偿队列并标记当前任务为部分失败，禁止返回成功态。示例：`catch (Exception e) { throw new RRException(&quot;costCalc failed&quot;, e); }`，并在任务层实现幂等重试。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/UpdateAddressService.java:147-621</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/UpdateAddressService.java:500-621</code>
                 </div>
-                <div class="finding-desc">原因：新增/修改后的 `update(...)` 入口仍未在方法内体现任何角色鉴权或资源归属校验（仅有业务校验与状态流转），且该方法对应对外 POST 更新地址接口。若上游控制器或调用链存在放行/绕过，本方法会直接执行地址与附加信息更新。
+                <div class="finding-desc">原因：新增的 `driverNotes` 写入逻辑直接修改 `labelExt`（`labelExt.setDriverNote(req.getDriverNotes())`），在该变更片段中未看到与当前操作者相关的资源归属校验（如按 `facilityCode`/`userId` 校验该运单是否可修改），也未看到显式角色校验调用（如 `@PreAuthorize`/`AuthUtil.requireRole`）。
+影响：若上游入口鉴权或数据范围控制存在缺口，请求方可借此修改非本人/非本场站运单的司机备注并触发后续同步，形成越权写入风险。</div>
+                <div class="finding-suggestion">💡 修复建议：在 HTTP 入口或该 Service 方法内补充强制校验：1) 角色校验（仅允许特定角色调用）；2) 资源归属校验（`trackingNumber` 必须属于当前用户可管理的 `facilityCode`/组织范围）；3) 校验失败立即拒绝并审计。示例：在 Controller 使用 `@PreAuthorize`，并在 Service 内增加 `assertLabelOwnership(currentUser, label)`。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/impl/LabelServiceImpl.java:779-809</code>
+                </div>
+                <div class="finding-desc">原因：新增 `updateDeliveryInstruction` 可修改 `label.notes`、`labelExt.accessCode` 并触发下游事件，但未见角色鉴权与资源归属校验。
+影响：若被非授权调用，可导致任意运单投递指令/门禁码被篡改，且会触发后续系统同步，扩大影响面。
+```java
+label.setNotes(newNotes);
+labelDao.save(label);
+...
+labelExt.setAccessCode(req.getAccessCode());
+labelExtDao.save(labelExt);
+updateAddressService.triggerDmsAndEvent(...);
+```</div>
+                <div class="finding-suggestion">💡 修复建议：对该写操作增加强制鉴权与数据范围校验（角色 + 归属）：
+```java
+@PreAuthorize(&quot;hasRole(&#x27;CUSTOMER&#x27;)&quot;)
+public void updateDeliveryInstruction(UpdateDeliveryInstructionReq req){
+  Label label = ...;
+  AuthUtil.requireOwnership(label.getOrgId(), LoginUserUtil.getOrgId());
+}
+```
+同时对可写字段做最小化授权（如仅允许客户修改自身订单）。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/dao/InboundBatchCounterDao.java:17-24</code>
+                </div>
+                <div class="finding-desc">原因：新增方法 `findByParentBatchCodeAndChildBatchCodeIn(String parentBatchCode, List&lt;String&gt; childBatchCodes)` 未包含 `facilityCode`/租户范围条件，DAO 层会返回同一 parent 下跨 facility 的计数数据；若上层调用未二次收敛数据范围，将直接形成越权可见。
 
 ```java
-public String update(UpdateAddressReq req,Label label,LabelExt labelExt) throws Exception {
+List&lt;InboundBatchCounter&gt; findByParentBatchCodeAndChildBatchCodeIn(String parentBatchCode, List&lt;String&gt; childBatchCodes);
 ```
 
-影响：可导致未被授权主体修改他人运单地址、notes、driver note，并触发后续 DMS/轨迹事件，属于越权修改风险（高危）。</div>
-                <div class="finding-suggestion">💡 修复建议：在该方法或其唯一 HTTP 入口处强制增加鉴权与归属校验，至少包含：1）角色校验（如 `@PreAuthorize` 或等价 `AuthUtil.requireRole(...)`）；2）基于 `trackingNumber` 的数据归属校验（如 `facilityCode/fleetId/userId` 范围）。示例：
+影响：具备受限数据视图（按 facility 隔离）的调用方可能读取到非本 facility 的批次计数，造成跨租户/跨站点数据泄露。</div>
+                <div class="finding-suggestion">💡 修复建议：将该查询收敛到最小数据范围，优先改为强制带 `facilityCode` 的方法并替换调用点；若确需跨 facility，仅允许在受控后台角色路径调用并在 Service 层显式鉴权与审计。
+
 ```java
-@PreAuthorize(&quot;hasAnyRole(&#x27;OPERATOR&#x27;,&#x27;DISPATCHER&#x27;)&quot;)
-public String update(...) {
-    AuthScope scope = authService.currentScope();
-    ownershipValidator.checkLabelAccess(req.getTrackingNumber(), scope);
-    ...
-}
+List&lt;InboundBatchCounter&gt; findByParentBatchCodeAndChildBatchCodeInAndFacilityCode(
+    String parentBatchCode, List&lt;String&gt; childBatchCodes, String facilityCode);
 ```</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/inbound/InboundBatchCounterService.java:66-80</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/inbound/InboundBatchCounterService.java:65-71</code>
                 </div>
-                <div class="finding-desc">`applyEvent` 未对 `msg` 与 `msg.getEventId()` 做非空校验，直接参与 Redis key 与日志/DB 参数拼接。`msg==null` 会触发 NPE；`eventId==null` 会将不同事件落到同一个 `inbound:counter:event:null` 锁键，导致误判去重并丢计数。</div>
-                <div class="finding-suggestion">💡 修复建议：在方法入口增加参数校验并快速失败，例如：`if (msg == null || msg.getEventId() == null) { throw new IllegalArgumentException(&quot;eventId must not be null&quot;); }`；如需兼容旧消息，至少在 `eventId` 为空时跳过去重并记录 error 日志。</div>
+                <div class="finding-desc">`applyEvent(ParcelCounterMessage msg, Set&lt;String&gt; cols)` 未校验 `msg` 及 `msg.getEventId()`，后续直接拼接 Redis key 并访问 `msg` 字段，存在空指针风险，可能导致消费线程异常。</div>
+                <div class="finding-suggestion">💡 修复建议：在方法入口增加参数校验并快速失败，例如：`if (msg == null || msg.getEventId() == null) { throw new IllegalArgumentException(&quot;eventId required&quot;); }`；必要时对 `parent/child/facility` 也做非空校验。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-admin-api/src/main/java/com/miq/posadminapi/consumer/ParcelCounterConsumer.java:50-52</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/inbound/InboundBatchCounterService.java:69-79</code>
                 </div>
-                <div class="finding-desc">使用 `com.alibaba.fastjson.JSON.parseObject(jsonString, ParcelCounterMessage.class)` 直接反序列化来自 Kafka 的外部输入，未见任何安全模式/白名单约束。若运行环境中 Fastjson 安全配置不足（如未启用安全模式、历史漏洞版本），存在反序列化攻击面。</div>
-                <div class="finding-suggestion">💡 修复建议：避免直接使用 Fastjson 处理不可信消息；优先切换到 Jackson 并绑定严格 DTO。若短期无法替换，至少启用 Fastjson 安全模式、关闭 AutoType、限制可反序列化类型白名单，并在消费前增加消息签名/来源校验。</div>
+                <div class="finding-desc">先获取 Redis 去重锁再执行数据库 UPSERT；当 `upsertCounter(...)` 失败并触发事务回滚时，Redis 锁不会回滚，5 分钟内同一 `eventId` 会被直接跳过，导致该事件计数丢失（部分失败无补偿）。</div>
+                <div class="finding-suggestion">💡 修复建议：将 Redis 去重与 DB 写入改为可补偿流程：`try` 执行 UPSERT，`catch` 时显式删除 `redisKey` 后再抛出异常；或改为“先落库幂等键（唯一约束）后计数”的数据库幂等方案，避免跨存储不一致。示例：`try { upsert... } catch (Exception e) { stringRedisTemplate.delete(redisKey); throw e; }`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-admin-api/src/main/java/com/miq/posadminapi/consumer/ParcelCounterConsumer.java:54-55</code>
+                    <code class="finding-loc">pos-admin-api/src/main/java/com/miq/posadminapi/consumer/ParcelCounterConsumer.java:57</code>
                 </div>
-                <div class="finding-desc">`JSON.parseObject` 在输入为 `null`/`&quot;null&quot;` 等场景下可能返回 `null`，当前代码直接调用 `msg.getType()`，会触发空指针异常。</div>
-                <div class="finding-suggestion">💡 修复建议：在解析后立即做空值校验，再进入业务分支，例如：`if (msg == null) { log.error(&quot;...&quot;, jsonString); return; }`，并在后续访问 `msg` 前保持该前置条件。</div>
+                <div class="finding-desc">`JSON.parseObject` 在输入为 `null`/`&quot;null&quot;` 等场景可能得到 `msg == null`，随后直接调用 `msg.getType()` 存在空指针风险。当前该异常会被外层 `catch` 吞掉并当作成功消费，导致该消息被静默丢弃。</div>
+                <div class="finding-suggestion">💡 修复建议：在使用 `msg` 前增加空值校验并显式返回，例如：`if (msg == null) { log.error(...); return; }`；同时可对 `eventId/type/status` 做基础必填校验后再进入业务处理。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-admin-api/src/main/java/com/miq/posadminapi/consumer/ParcelCounterConsumer.java:65-68</code>
+                    <code class="finding-loc">pos-admin-api/src/main/java/com/miq/posadminapi/consumer/ParcelCounterConsumer.java:63-67</code>
                 </div>
-                <div class="finding-desc">消费处理异常被捕获后仅记录日志并吞掉，且显式说明不重试/无DLQ，失败事件会被直接丢弃，导致计数无法自动修复（数据一致性依赖人工补偿）。</div>
-                <div class="finding-suggestion">💡 修复建议：至少落地失败补偿机制之一：1) 抛出异常交给 Kafka 重试；2) 发送到 DLQ；3) 持久化失败事件并异步重放。若坚持吞异常，需确保可观测性与自动重放链路完整。</div>
+                <div class="finding-desc">业务处理异常被 `catch (Exception)` 后仅记录日志、不抛出异常。Kafka 监听方法正常返回会使消息被确认，若 `counterService.applyEvent` 因瞬时故障失败，将发生不可重试的计数丢失。</div>
+                <div class="finding-suggestion">💡 修复建议：对可重试异常不要吞没，记录后抛出运行时异常交给容器重试/错误处理器；或配置 `DefaultErrorHandler` + 重试/DLT。若确需丢弃，也应落失败表用于补偿重放。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">pos-admin-api/src/main/java/com/miq/posadminapi/controller/businessdata/PadAddressModifyController.java:89</code>
                 </div>
-                <div class="finding-desc">新增 `String base64Label = service.update(req, label, labelExt);` 但该结果未参与返回，且方法签名已改为 `ResponseObject&lt;String&gt;`。这会导致接口声明与实际响应语义不一致：调用方可能按“返回标签内容”解析，但实际拿到空成功体（或 null data）。</div>
-                <div class="finding-suggestion">💡 修复建议：将 `base64Label` 显式放入响应体，确保契约一致，例如：`return ResponseObject.success(base64Label);`。若本接口不应返回字符串，则回退方法签名为 `ResponseObject&lt;Void&gt;` 并移除该局部变量。</div>
+                <div class="finding-desc">方法签名已改为 `ResponseObject&lt;String&gt;`，且 `service.update(...)` 的返回值被赋给 `base64Label`，但该值未写入响应体，导致接口对外声明“返回字符串”却实际始终返回空成功体，存在契约不一致和功能缺失风险。</div>
+                <div class="finding-suggestion">💡 修复建议：将 `base64Label` 返回给调用方，保持签名与行为一致，例如：`return ResponseObject.success(base64Label);`。若业务不需要返回字符串，则应回退方法签名为 `ResponseObject&lt;Void&gt;` 并移除该局部变量。</div>
             </div>
-            <p class="more-note">... 还有 11 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 17 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
