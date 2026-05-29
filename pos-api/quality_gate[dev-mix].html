@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-api &nbsp;|&nbsp; 2026-05-29 00:14:06</div>
+      <div class="meta">pos-api &nbsp;|&nbsp; 2026-05-29 09:46:16</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:0</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:3 &nbsp; 主要:5</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -82,10 +82,100 @@
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube analysis timed out after 1 minutes</li></ul>
+            <ul><li>SonarQube analysis timed out after 1 minutes</li>
+<li>AI Review: 3 Critical finding(s)</li>
+<li>AI Review: 5 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
+        <div class="findings-section">
+            <h3>AI 代码审查发现</h3>
+            
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-api/src/main/java/com/miq/posapi/controller/api/DmsApiController.java:108</code>
+                </div>
+                <div class="finding-desc">异常分支将 `e.getMessage()` 直接返回给调用方：`ResponseObject.failure(e.getMessage())`。该做法可能把内部错误细节（下游系统报错、字段语义、内部实现信息）暴露到外部接口响应，构成敏感信息泄露面。</div>
+                <div class="finding-suggestion">💡 修复建议：对外返回通用错误码/文案，详细异常仅保留在服务端日志。例如：`return ResponseObject.failure(&quot;SYNC_DRIVER_NOTE_FAILED&quot;);`，并配套统一异常处理器映射错误码。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-api/src/main/java/com/miq/posapi/controller/api/DmsApiController.java:102-103</code>
+                </div>
+                <div class="finding-desc">**原因：**
+新增 `POST /syncDriverNote` 入口仅做 `@Valid` 参数校验，未看到 `AuthUtil.requireRole()` 或 `@PreAuthorize` 等鉴权控制，属于可直接调用的写操作入口。
+```java
+@PostMapping(&quot;/syncDriverNote&quot;)
+public ResponseObject&lt;String&gt; syncDriverNote(@RequestBody @Valid SyncDriverNoteReq req) {
+```
+**影响：**
+若网关/上游未强制拦截，未授权主体可调用该接口触发司机备注同步，造成业务数据被未授权修改（越权写入风险）。</div>
+                <div class="finding-suggestion">💡 修复建议：为该 POST 接口增加显式鉴权与最小权限控制，并在服务层补充调用者身份校验。例如：
+```java
+@PreAuthorize(&quot;hasAnyRole(&#x27;DISPATCHER&#x27;,&#x27;OPERATOR&#x27;)&quot;)
+@PostMapping(&quot;/syncDriverNote&quot;)
+public ResponseObject&lt;String&gt; syncDriverNote(@RequestBody @Valid SyncDriverNoteReq req) {
+    AuthUtil.requireRole(&quot;DISPATCHER&quot;, &quot;OPERATOR&quot;);
+    dmsService.syncDriverNote(req);
+    return ResponseObject.success();
+}
+```
+同时在 `dmsService.syncDriverNote` 内校验调用者与目标数据归属关系。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/inbound/InboundBatchCounterService.java:101-107</code>
+                </div>
+                <div class="finding-desc">存在 SQL 注入风险：`updateClause` 直接基于 `cols` 拼接列名进入 SQL，且未将 `cols` 严格限制在 `COUNT_COLUMNS` 白名单内。若上游可控 `cols`（例如消息重放/污染），可注入任意 SQL 片段进入 `ON DUPLICATE KEY UPDATE`。</div>
+                <div class="finding-suggestion">💡 修复建议：对 `cols` 做白名单过滤并拒绝非法列名，再构造 SQL；或改为固定模板 SQL（每个计数字段使用 CASE/参数控制）。示例：先 `safeCols = cols.stream().filter(COUNT_COLUMNS::contains).collect(...)`，若 `safeCols.size()!=cols.size()` 则抛异常并告警。</div>
+            </div>
+            
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/inbound/InboundBatchCounterService.java:70-73</code>
+                </div>
+                <div class="finding-desc">`applyEvent` 未校验 `msg` 与 `msg.getEventId()` 非空，`msg` 为空会直接 NPE；`eventId` 为空时会生成固定 Redis key（`inbound:counter:event:null`），导致不同事件错误去重、计数被跳过。</div>
+                <div class="finding-suggestion">💡 修复建议：在方法入口增加强校验并快速失败，例如：`Objects.requireNonNull(msg, &quot;msg must not be null&quot;);`、`if (StringUtils.isBlank(msg.getEventId())) { throw new IllegalArgumentException(&quot;eventId is required&quot;); }`，避免空值进入去重与计数流程。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">backend-common/src/main/java/com/miq/backendcommon/dto/track/TrackingCainiaoDGDRo.java:87</code>
+                </div>
+                <div class="finding-desc">`OperateLocation` 中字段名定义为 `facilltyCode`（少了一个 `i`），与常见上下游字段 `facilityCode` 不一致。该 DTO 用于反序列化时会导致 `facilityCode` 入参无法绑定，出现位置信息丢失或后续逻辑取值为空。</div>
+                <div class="finding-suggestion">💡 修复建议：将字段更正为 `private String facilityCode;`，并补充兼容映射避免历史调用中断，例如：`@JsonAlias(&quot;facilltyCode&quot;) private String facilityCode;`。同时增加单测覆盖 `facilityCode`/`facilltyCode` 两种入参。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/api/PusApi.java:104-105</code>
+                </div>
+                <div class="finding-desc">将底层异常信息 `e.getMessage()` 直接拼接到业务异常返回值中，可能把内部实现细节（下游服务报错内容、解析细节、内部字段名等）暴露给上游调用方，形成错误信息泄露风险。</div>
+                <div class="finding-suggestion">💡 修复建议：对外返回固定且去敏的错误文案，详细异常仅记录在服务端日志中。例如：`throw new RRException(&quot;PUS getByZipAndType exception&quot;, e);` 或统一返回通用错误码/错误消息，不回传底层 message。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/bo/Inbound/ParcelCountTuple.java:46-56</code>
+                </div>
+                <div class="finding-desc">`sumCounters` 使用 `int` 累加 8 个计数字段，在大批量行或单行值较大时存在整数溢出风险，可能产生负数或错误汇总值，导致统计结果异常。</div>
+                <div class="finding-suggestion">💡 修复建议：将累加变量改为 `long`，并在构造返回对象前做边界校验或显式转换。例如使用 `Math.addExact` 进行安全累加并在超界时抛出异常；若业务允许，直接将 `ParcelCountTuple` 字段类型升级为 `long`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/mail/impl/MailServiceImpl.java:46-72</code>
+                </div>
+                <div class="finding-desc">`sendPickupCoverageReport` 直接使用 `uncoveredZips.size()` 与 `String.join(&quot;, &quot;, uncoveredZips)`，当调用方传入 `uncoveredZips == null` 时会触发空指针，导致日报发送流程中断。</div>
+                <div class="finding-suggestion">💡 修复建议：在方法入口增加空值保护，并对空列表走降级分支。例如：`if (uncoveredZips == null) { uncoveredZips = java.util.Collections.emptyList(); }`，再继续构造邮件内容。</div>
+            </div>
+            
+        </div>
+        
 
   <div class="footer">
     由质量门禁引擎生成 &nbsp;|&nbsp; SpeedX CI/CD
