@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">dms-api &nbsp;|&nbsp; 2026-05-15 15:06:32</div>
+      <div class="meta">dms-api &nbsp;|&nbsp; 2026-06-01 11:01:32</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -56,13 +56,13 @@
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#4caf50">26.3%</div>
+      <div class="metric-value" style="color:#4caf50">28.4%</div>
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#4caf50">59.2%</div>
+            <div class="metric-value" style="color:#4caf50">61.7%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:11</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:3 &nbsp; 主要:18</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,8 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 1 Critical finding(s)</li>
-<li>AI Review: 11 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 3 Critical finding(s)</li>
+<li>AI Review: 18 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,53 +94,136 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">docs/1.json:1</code>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/biz/RoutePolygonBizService.java:30-49</code>
                 </div>
-                <div class="finding-desc">新增的示例数据文件包含生产样式的 Azure Blob POD 图片直链、完整 trackingNo、精确经纬度等业务敏感信息。即使姓名电话已脱敏，这类对象地址和物流标识仍可能被用于直接访问客户签收照片或关联真实订单轨迹，属于源码仓库中的敏感数据泄露。</div>
-                <div class="finding-suggestion">💡 修复建议：从仓库中移除该真实响应样本，改为使用完全脱敏/伪造的数据集；所有图片 URL 应替换为不可访问的占位值，trackingNo 和坐标应改为随机测试值，并补充提交前的敏感数据扫描规则以阻止类似文件再次入库。</div>
+                <div class="finding-desc">**原因：** `save(SaveRoutePolygonReq req)` 直接使用外部传入 `routeId` 读取并写入 `RoutePolygonTemplate`，新增代码中未看到任何角色校验（如 `AuthUtil.requireRole` / `@PreAuthorize`）与资源归属校验（route 是否属于当前用户可管理 fleet/facility）。
+```java
+public void save(SaveRoutePolygonReq req) {
+    LoginUserBo principal = AuthUtil.getPrincipal();
+    ...
+    String routeCode = resolveRouteCode(req.getRouteId());
+    RoutePolygonTemplate entity = routePolygonTemplateRepository.findByRouteCode(routeCode)
+            .orElseGet(() -&gt; new RoutePolygonTemplate().setRouteCode(routeCode));
+    entity.setCoordinates(req.getPolygonList()).setCreatedBy(createdBy);
+    routePolygonTemplateRepository.save(entity);
+}
+```
+**影响：** 具备登录态但无对应数据权限的主体可通过构造任意 `routeId` 覆盖/写入其他车队或场站路线多边形，形成越权修改（跨租户数据污染）。
+
+---
+
+原因：新增管理端写接口 `save(SaveRoutePolygonReq req)` 未看到 `@RequirePermissions`、`@RequireLogin`、`@PreAuthorize` 或 `AuthUtil.requireRole()` 等强制鉴权/授权约束。
+```java
+@Override
+public BaseResponse&lt;Void&gt; save(SaveRoutePolygonReq req) {
+    routePolygonBizService.save(req);
+    return BaseResponse.success(null);
+}
+```
+影响：任意可达该入口的调用方都可能创建/覆盖路线多边形模板，形成越权写入与跨租户数据污染风险。
+
+---
+
+原因：新增管理端“保存路线多边形模板”写接口，未在该变更片段中体现角色与归属校验。
+```java
+@PostMapping(&quot;/admin/route-polygon&quot;)
+BaseResponse&lt;Void&gt; save(@RequestBody @Valid SaveRoutePolygonReq req);
+```
+影响：若被低权限主体调用，可越权篡改路线地理围栏模板，直接影响路线规划与派送执行。</div>
+                <div class="finding-suggestion">💡 修复建议：在 Facade 或 Service 入口增加强制鉴权与归属校验：
+```java
+@PreAuthorize(&quot;hasRole(&#x27;ADMIN&#x27;)&quot;)
+public void save(SaveRoutePolygonReq req) {
+    LoginUserBo p = AuthUtil.getPrincipal();
+    Route route = routeRepository.findById(req.getRouteId())
+        .orElseThrow(() -&gt; new BizException(&quot;route not found&quot;));
+    authzService.checkRouteScope(p, route.getFleetId(), route.getFacilityCode());
+    ...
+}
+```
+同时在 repository 查询层按 `fleetId/facilityCode` 增加范围条件，避免仅凭 `routeId` 直达写操作。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">drivermgmt-facade-impl/src/main/java/io/speedx/drivermgmt/facade/impl/DeliveryFacadeImpl.java:86-89</code>
+                </div>
+                <div class="finding-desc">原因：新增写接口 `correctCoordinate(CorrectCoordinateReq req)` 未新增 `@RequireLogin`/`@RequirePermissions` 等强制鉴权注解，仅直接使用 `AuthUtil.getPrincipalId()`。
+```java
+@Override
+public BaseResponse&lt;Void&gt; correctCoordinate(CorrectCoordinateReq req) {
+    coordinateCorrectionService.correctDeliverCoordinate(
+            AuthUtil.getPrincipalId(), req);
+    return BaseResponse.success(null);
+}
+```
+影响：若上游未统一强制登录，可能被匿名或低权限调用触发坐标修正写操作，造成业务数据被篡改。
+
+---
+
+原因：新增 HTTP 入口仅声明了 `@PostMapping` 与参数校验，未在该变更片段中体现任何角色/登录校验（如 `@PreAuthorize`、`AuthUtil.requireRole()` 或等效安全注解）。
+```java
+@PostMapping(&quot;/coordinate-correction&quot;)
+BaseResponse&lt;Void&gt; correctCoordinate(@RequestBody @Valid CorrectCoordinateReq req);
+```
+影响：若实现层或统一切面未强制鉴权，未登录或低权限主体可能调用坐标订正接口，造成地址数据被越权修改。</div>
+                <div class="finding-suggestion">💡 修复建议：在入口添加强制登录与细粒度权限（非 OBSERVE），并在服务层校验该 `userId` 对目标数据的归属关系。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">drivermgmt-facade/src/main/java/io/speedx/drivermgmt/facade/DriverFacade.java:25-26</code>
+                </div>
+                <div class="finding-desc">原因：新增管理端创建司机入口（`/admin/...`）未在变更片段中体现角色校验（`@PreAuthorize`/`AuthUtil.requireRole()`）。
+```java
+@PostMapping(&quot;/admin/drivers&quot;)
+BaseResponse&lt;Void&gt; adminAdd(@RequestBody AddDriverReq req);
+```
+影响：若无统一拦截保障，普通用户可调用管理接口创建司机账号，导致权限边界失效与后台数据被越权写入。</div>
+                <div class="finding-suggestion">💡 修复建议：为该入口强制添加管理员角色校验，并在服务层增加租户/站点范围限制校验（如 `fleetId`/`facilityCode`）。示例：`@PreAuthorize(&quot;hasAnyRole(&#x27;ADMIN&#x27;,&#x27;OPERATOR&#x27;)&quot;)`，并校验请求数据归属。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">bruce-prepare.md:8</code>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/biz/LoadingScanBizService.java:544-550</code>
                 </div>
-                <div class="finding-desc">数据清洗 SQL 去掉了原先的 `* 1609.344` 单位换算，`distance` 将直接写入 miles 数值而不是目标距离单位，导致历史路线距离整体缩小约 1609 倍，属于明显的数据错误。</div>
-                <div class="finding-suggestion">💡 修复建议：恢复明确的单位换算，并在清洗脚本中保留精度，例如：`SET distance = CAST(TRIM(REPLACE(total_distance, &#x27;miles&#x27;, &#x27;&#x27;)) AS DECIMAL(20, 4)) * 1609.344`；如果目标列现在约定改为 miles，需要同步修正文档、字段注释和所有读取侧逻辑。</div>
+                <div class="finding-desc">`preLoading` 分支下以 `route.getDispatchStatus()==REJECTED` 作为触发条件调用 `routeMgmtBizService.routeDispatch(...)`，但该 `route` 是入参对象，当前方法内未刷新其 dispatchStatus。一次路线上连续多次代扫时，可能重复触发 re-dispatch（重复写操作/重复操作记录/重复外部副作用）。</div>
+                <div class="finding-suggestion">💡 修复建议：在调用 `routeDispatch` 前增加幂等保护：先基于最新数据库状态校验是否仍为 `REJECTED`，并在首次成功后更新本地对象状态或直接返回；例如先 `routeRepository.findById(routeId)` 二次确认，再执行一次性 dispatch。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/biz/RouteMgmtBizService.java:1397-1398</code>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/service/CoordinateCorrectionService.java:25-27</code>
                 </div>
-                <div class="finding-desc">这里把“司机可见路线”的过滤条件从 `dispatchRepository.findByFleetIdAndStatusIn(...WAITING_ACCEPT, ACCEPTED...)` 改成了仅比较 `route.fleetId`。这样会放宽原有约束：只要路线残留同 fleetId，就可能把未处于待接单/已接单状态的路线也返回出来，导致分配列表包含本不应出现的路线。</div>
-                <div class="finding-suggestion">💡 修复建议：保留原先基于 dispatch 状态的过滤，或在 `route.fleetId` 过滤之外补回 dispatch 状态校验。例如先构造当前 fleet 且状态为 `WAITING_ACCEPT/ACCEPTED` 的 `routeId` 集合，再按该集合过滤 `routes`。</div>
+                <div class="finding-desc">`deliver.getDriverId()`可能为null时发生自动拆箱NPE，导致坐标纠正接口在脏数据场景下直接500。</div>
+                <div class="finding-suggestion">💡 修复建议：使用空安全比较：`if (!Objects.equals(deliver.getDriverId(), driverId)) { ... }`，并在异常信息中区分“无归属司机”和“无权限”。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/biz/RouteMgmtBizService.java:599-604</code>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/service/DspFleetService.java:171-173</code>
                 </div>
-                <div class="finding-desc">`isLastDispatchManual` 直接对历史 `extInfo` 做 `JSON.parseObject(...)`，没有兜底处理。只要存在一条脏数据/非 JSON 的历史操作记录，这里就会抛运行时解析异常，导致自动派单流程整体失败，而不是按注释所述“历史数据兼容，保守允许 auto”。</div>
-                <div class="finding-suggestion">💡 修复建议：对 `extInfo` 的解析增加异常保护，解析失败时按 `false` 处理并记录告警日志。例如在 `map` 内部捕获解析异常，返回 `false`。</div>
+                <div class="finding-desc">新增fleet时先落库再计算邀请码再落库，若第二次`save`失败会留下`invitationCode`为空的半成品数据，存在部分失败一致性问题。</div>
+                <div class="finding-suggestion">💡 修复建议：将`addFleet`整体置于事务中（`@Transactional`），或改为获取ID后一次性更新并确保失败回滚。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/config/SignInterceptor.java:65-66</code>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/service/PPCService.java:383-610</code>
                 </div>
-                <div class="finding-desc">签名校验失败时新增日志直接输出 `clientSign` 和 `serverSign`。签名值属于认证相关敏感数据，落盘后会扩大日志泄露风险，并可能为攻击者分析签名算法、构造重放/碰撞测试提供样本。</div>
-                <div class="finding-suggestion">💡 修复建议：日志中不要记录完整签名值；改为仅记录请求方法、URI、时间戳、nonce 以及签名摘要/前后几位掩码值，或记录内部 traceId 供排障使用。</div>
+                <div class="finding-desc">`ticket.getCustomer().name()`在`customer`为空时会NPE；该行由空安全写法改为直接调用后引入回归风险。</div>
+                <div class="finding-suggestion">💡 修复建议：恢复空安全处理：`dto.setCustomer(Objects.equals(ticket.getCustomer(), OTHERS) ? ticket.getOtherCustomer() : Optional.ofNullable(ticket.getCustomer()).map(Enum::name).orElse(null));`</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/helper/Cheating.java:7-1009</code>
+                    <code class="finding-loc">drivermgmt-domain/src/main/java/io/speedx/drivermgmt/domain/service/RouteMgmtService.java:386-390</code>
                 </div>
-                <div class="finding-desc">`coverageDummyMethodV1()` 在本次变更中被扩展为超长单方法（该 hunk 从 277 行增至 1009 行，且几乎全部是局部变量赋值和字符串运算）。这类实现很容易触发 JVM 单方法 `Code` 属性 64KB 上限，最终在编译阶段直接报 `code too large`，属于构建阻断问题。</div>
-                <div class="finding-suggestion">💡 修复建议：将该方法拆分为多个私有小方法，或把这类 coverage dummy 逻辑移到测试代码/测试夹具中，避免把超长无业务方法放在 Spring Bean 里。比如按 `aa/bb/cc...` 段拆成 `buildAaPart()`、`buildBbPart()` 等，每个方法只返回中间结果。</div>
+                <div class="finding-desc">重复运单号校验逻辑失效：`Collections.frequency(finalSplits, i)`在`finalSplits`为`List&lt;List&lt;String&gt;&gt;`时始终返回0（元素类型不匹配），导致同一trackingNo可被分配到多个子路线而不被拦截。</div>
+                <div class="finding-suggestion">💡 修复建议：改为在扁平化后的字符串列表上统计频次，例如：`Map&lt;String, Long&gt; cnt = allTrackingNos.stream().collect(Collectors.groupingBy(Function.identity(), Collectors.counting()));`，再筛选`count&gt;1`的key。</div>
             </div>
-            <p class="more-note">... 还有 6 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 13 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
