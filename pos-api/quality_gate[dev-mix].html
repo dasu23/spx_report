@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-api &nbsp;|&nbsp; 2026-05-29 09:46:16</div>
+      <div class="meta">pos-api &nbsp;|&nbsp; 2026-06-01 10:05:00</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -62,7 +62,7 @@
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#ff9800">42.0%</div>
+            <div class="metric-value" style="color:#f44336">38.7%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:3 &nbsp; 主要:5</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:5 &nbsp; 主要:31</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,8 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube analysis timed out after 1 minutes</li>
-<li>AI Review: 3 Critical finding(s)</li>
-<li>AI Review: 5 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 5 Critical finding(s)</li>
+<li>AI Review: 31 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,86 +94,128 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">pos-api/src/main/java/com/miq/posapi/controller/api/DmsApiController.java:108</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/inbound/InboundBatchCounterService.java:99-106</code>
                 </div>
-                <div class="finding-desc">异常分支将 `e.getMessage()` 直接返回给调用方：`ResponseObject.failure(e.getMessage())`。该做法可能把内部错误细节（下游系统报错、字段语义、内部实现信息）暴露到外部接口响应，构成敏感信息泄露面。</div>
-                <div class="finding-suggestion">💡 修复建议：对外返回通用错误码/文案，详细异常仅保留在服务端日志。例如：`return ResponseObject.failure(&quot;SYNC_DRIVER_NOTE_FAILED&quot;);`，并配套统一异常处理器映射错误码。</div>
+                <div class="finding-desc">存在 SQL 注入风险：`updateClause` 直接使用外部传入的 `cols` 元素拼接 SQL 列表达式（`c + &quot; = &quot; + c + &quot; + 1&quot;`），未做白名单校验或参数化约束。若调用方可控 `cols`，可构造恶意列片段注入到 `ON DUPLICATE KEY UPDATE` 子句。</div>
+                <div class="finding-suggestion">💡 修复建议：对 `cols` 做严格白名单过滤，仅允许 `COUNT_COLUMNS` 中的列参与拼接；过滤后若为空应直接返回。示例：`Set&lt;String&gt; safeCols = cols.stream().filter(COUNT_COLUMNS::contains).collect(Collectors.toSet());`，并仅基于 `safeCols` 生成 `updateClause`。同时建议在过滤后对非法列记录告警日志。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">pos-api/src/main/java/com/miq/posapi/controller/api/DmsApiController.java:102-103</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/report/impl/EventUploadProcessor.java:133-155</code>
                 </div>
-                <div class="finding-desc">**原因：**
-新增 `POST /syncDriverNote` 入口仅做 `@Valid` 参数校验，未看到 `AuthUtil.requireRole()` 或 `@PreAuthorize` 等鉴权控制，属于可直接调用的写操作入口。
+                <div class="finding-desc">新增逻辑在 `trkApi.pushTrackingEvent` 后执行成本计算时，捕获 `Exception` 仅记录日志并继续将当前记录标记为 `Success`。这会在成本计算失败时产生“事件成功但费用未记账/错记账”的静默失败，属于资金计算一致性风险。</div>
+                <div class="finding-suggestion">💡 修复建议：将成本计算失败视为业务失败并中断成功路径，至少将该条记录标记失败并触发补偿/重试；不要在失败后继续 `item.setMessage(&quot;Success&quot;)`。示例：在 `catch` 中抛出业务异常，或设置失败状态并由上层统一重试。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-api/src/main/java/com/miq/posapi/controller/api/DmsApiController.java:100-101</code>
+                </div>
+                <div class="finding-desc">原因：新增 HTTP 写操作入口未看到 `AuthUtil.requireRole()` 或 `@PreAuthorize` 等角色校验，任意可访问到该控制器路径的调用方都可直接触发司机备注同步。
+
 ```java
 @PostMapping(&quot;/syncDriverNote&quot;)
 public ResponseObject&lt;String&gt; syncDriverNote(@RequestBody @Valid SyncDriverNoteReq req) {
 ```
-**影响：**
-若网关/上游未强制拦截，未授权主体可调用该接口触发司机备注同步，造成业务数据被未授权修改（越权写入风险）。</div>
-                <div class="finding-suggestion">💡 修复建议：为该 POST 接口增加显式鉴权与最小权限控制，并在服务层补充调用者身份校验。例如：
+
+影响：可能导致未授权主体执行业务写操作（越权修改/同步司机备注），扩大接口攻击面并破坏数据完整性。
+
+---
+
+原因：`syncDriverNote` 仅基于 `trackingNo` 查询并直接更新 `driverNote`，新增代码中未见任何角色校验（如 `@PreAuthorize`/`AuthUtil.requireRole`）与资源归属校验。
+```java
+public void syncDriverNote(SyncDriverNoteReq req) {
+    Label label = labelDao.findByTrackingNumber(req.getTrackingNo());
+    ...
+    labelExtDao.updateDriverNoteByLabelId(label.getId(), req.getDriverNote(), new Date());
+}
+```
+影响：一旦该服务被上层接口直接调用且缺少额外防护，攻击者可通过可猜测的运单号越权修改任意包裹司机备注，造成数据篡改。</div>
+                <div class="finding-suggestion">💡 修复建议：在入口方法增加显式鉴权与最小权限控制，并在服务层二次校验调用主体归属。例如：
 ```java
 @PreAuthorize(&quot;hasAnyRole(&#x27;DISPATCHER&#x27;,&#x27;OPERATOR&#x27;)&quot;)
 @PostMapping(&quot;/syncDriverNote&quot;)
-public ResponseObject&lt;String&gt; syncDriverNote(@RequestBody @Valid SyncDriverNoteReq req) {
-    AuthUtil.requireRole(&quot;DISPATCHER&quot;, &quot;OPERATOR&quot;);
-    dmsService.syncDriverNote(req);
-    return ResponseObject.success();
-}
+public ResponseObject&lt;String&gt; syncDriverNote(@RequestBody @Valid SyncDriverNoteReq req) { ... }
 ```
-同时在 `dmsService.syncDriverNote` 内校验调用者与目标数据归属关系。</div>
+同时在 `dmsService.syncDriverNote(req)` 内校验调用人对目标资源的归属关系（如 `userId/facilityCode`）。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/inbound/InboundBatchCounterService.java:101-107</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/impl/LabelServiceImpl.java:780-811</code>
                 </div>
-                <div class="finding-desc">存在 SQL 注入风险：`updateClause` 直接基于 `cols` 拼接列名进入 SQL，且未将 `cols` 严格限制在 `COUNT_COLUMNS` 白名单内。若上游可控 `cols`（例如消息重放/污染），可注入任意 SQL 片段进入 `ON DUPLICATE KEY UPDATE`。</div>
-                <div class="finding-suggestion">💡 修复建议：对 `cols` 做白名单过滤并拒绝非法列名，再构造 SQL；或改为固定模板 SQL（每个计数字段使用 CASE/参数控制）。示例：先 `safeCols = cols.stream().filter(COUNT_COLUMNS::contains).collect(...)`，若 `safeCols.size()!=cols.size()` 则抛异常并告警。</div>
+                <div class="finding-desc">原因：`updateDeliveryInstruction` 新增后可直接按 `trackingNumber` 修改 `Label.notes` 与 `LabelExt.accessCode`，但变更行中未见角色鉴权、调用方身份校验、资源归属校验。
+```java
+public void updateDeliveryInstruction(UpdateDeliveryInstructionReq req) throws Exception {
+    String trkNumber = TrkNumUtil.removeHeader(req.getTrackingNumber());
+    Label label = ...findByTrackingNumber(trkNumber)...;
+    ...
+    label.setNotes(newNotes);
+    ...
+    labelExt.setAccessCode(req.getAccessCode());
+    labelExtDao.save(labelExt);
+}
+```
+影响：若上游接口未严格限制，未授权主体可能篡改他人配送指令与门禁码，属于敏感业务字段越权写入。</div>
+                <div class="finding-suggestion">💡 修复建议：对该方法对应入口增加强制鉴权（角色+数据范围）并在服务层二次校验归属；对 `accessCode` 增加最小化暴露策略（仅特定角色可改）。建议使用 `@PreAuthorize` 并在方法内校验 `label` 所属租户/组织与当前用户一致。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/impl/PartnerLocationAdminServiceImpl.java:38-40</code>
+                </div>
+                <div class="finding-desc">原因：`batchEnable` 为批量状态变更操作（启用/停用网点），新增代码中未见角色鉴权与操作范围校验。
+```java
+public void batchEnable(BatchEnableSo so) {
+    partnerLocationDao.batchUpdateEnableOnly(so.getIds(), so.getEnable(), new Date());
+}
+```
+影响：若该服务被低权限入口调用，攻击者可批量改写网点可用状态，影响业务可用性与数据完整性。</div>
+                <div class="finding-suggestion">💡 修复建议：在入口增加管理员角色限制，并在服务层校验 `ids` 均在当前主体可管理范围内后再批量更新；建议引入审计字段（operatorId）并做变更审计。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/inbound/InboundBatchCounterService.java:70-73</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/inbound/InboundBatchCounterService.java:71-85</code>
                 </div>
-                <div class="finding-desc">`applyEvent` 未校验 `msg` 与 `msg.getEventId()` 非空，`msg` 为空会直接 NPE；`eventId` 为空时会生成固定 Redis key（`inbound:counter:event:null`），导致不同事件错误去重、计数被跳过。</div>
-                <div class="finding-suggestion">💡 修复建议：在方法入口增加强校验并快速失败，例如：`Objects.requireNonNull(msg, &quot;msg must not be null&quot;);`、`if (StringUtils.isBlank(msg.getEventId())) { throw new IllegalArgumentException(&quot;eventId is required&quot;); }`，避免空值进入去重与计数流程。</div>
+                <div class="finding-desc">先获取 Redis 去重锁再执行 DB UPSERT；当 `upsertCounter` 抛异常时，Redis 锁不会释放，导致同一 `eventId` 在 TTL（5 分钟）内被误判为重复并跳过，造成计数短期丢失。</div>
+                <div class="finding-suggestion">💡 修复建议：对 `upsertCounter` 增加异常处理并在失败时删除锁（仅删除当前 eventId 对应 key），或改为“成功落库后再写去重标记”的幂等方案；至少保证 DB 失败不会阻断重试。示例：`try { upsert... } catch (Exception e) { stringRedisTemplate.delete(redisKey); throw e; }`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">backend-common/src/main/java/com/miq/backendcommon/dto/track/TrackingCainiaoDGDRo.java:87</code>
+                    <code class="finding-loc">backend-common/src/main/java/com/miq/backendcommon/dto/track/TrackingCainiaoDGDRo.java:30-84</code>
                 </div>
-                <div class="finding-desc">`OperateLocation` 中字段名定义为 `facilltyCode`（少了一个 `i`），与常见上下游字段 `facilityCode` 不一致。该 DTO 用于反序列化时会导致 `facilityCode` 入参无法绑定，出现位置信息丢失或后续逻辑取值为空。</div>
-                <div class="finding-suggestion">💡 修复建议：将字段更正为 `private String facilityCode;`，并补充兼容映射避免历史调用中断，例如：`@JsonAlias(&quot;facilltyCode&quot;) private String facilityCode;`。同时增加单测覆盖 `facilityCode`/`facilltyCode` 两种入参。</div>
+                <div class="finding-desc">`OperateLocation` 中字段名写为 `facilltyCode`（双 l），与常见/既有语义 `facilityCode` 不一致，容易导致上游 JSON 无法正确反序列化到该字段或下游序列化产出错误字段名，出现设施编码丢失。</div>
+                <div class="finding-suggestion">💡 修复建议：将字段更名为 `facilityCode`，并评估兼容期是否需要加 `@JsonProperty(&quot;facilltyCode&quot;)` 兜底旧入参，例如：`@JsonProperty(&quot;facilltyCode&quot;) private String facilityCode;`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/api/PusApi.java:104-105</code>
+                    <code class="finding-loc">pos-api/src/main/java/com/miq/posapi/controller/api/DmsApiController.java:107</code>
                 </div>
-                <div class="finding-desc">将底层异常信息 `e.getMessage()` 直接拼接到业务异常返回值中，可能把内部实现细节（下游服务报错内容、解析细节、内部字段名等）暴露给上游调用方，形成错误信息泄露风险。</div>
-                <div class="finding-suggestion">💡 修复建议：对外返回固定且去敏的错误文案，详细异常仅记录在服务端日志中。例如：`throw new RRException(&quot;PUS getByZipAndType exception&quot;, e);` 或统一返回通用错误码/错误消息，不回传底层 message。</div>
+                <div class="finding-desc">异常分支将 `e.getMessage()` 直接返回给客户端，可能暴露内部实现细节（下游系统错误、字段信息、堆栈关键信息片段），形成信息泄露面。</div>
+                <div class="finding-suggestion">💡 修复建议：返回统一错误码与通用错误文案，详细异常仅保留在服务端日志中。例如：`return ResponseObject.failure(&quot;SYNC_DRIVER_NOTE_FAILED&quot;);`，并配套错误码映射。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/bo/Inbound/ParcelCountTuple.java:46-56</code>
+                    <code class="finding-loc">pos-api/src/main/java/com/miq/posapi/job/RefreshPartnerLocationCoverageJob.java:88-90</code>
                 </div>
-                <div class="finding-desc">`sumCounters` 使用 `int` 累加 8 个计数字段，在大批量行或单行值较大时存在整数溢出风险，可能产生负数或错误汇总值，导致统计结果异常。</div>
-                <div class="finding-suggestion">💡 修复建议：将累加变量改为 `long`，并在构造返回对象前做边界校验或显式转换。例如使用 `Math.addExact` 进行安全累加并在超界时抛出异常；若业务允许，直接将 `ParcelCountTuple` 字段类型升级为 `long`。</div>
+                <div class="finding-desc">`parseJobParams` 捕获宽泛 `Exception` 后仅记录日志并继续使用默认参数，属于异常吞没。参数格式错误时任务会在调用方无感知下按默认值执行，可能造成与预期不一致的批量回刷范围。</div>
+                <div class="finding-suggestion">💡 修复建议：对解析失败显式失败或至少标记任务失败并终止执行。例如在 catch 中抛出 `IllegalArgumentException`，或在调用处 `XxlJobHelper.handleFail(&quot;invalid jobParam&quot;)` 后 `return`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/mail/impl/MailServiceImpl.java:46-72</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/api/PusApi.java:101</code>
                 </div>
-                <div class="finding-desc">`sendPickupCoverageReport` 直接使用 `uncoveredZips.size()` 与 `String.join(&quot;, &quot;, uncoveredZips)`，当调用方传入 `uncoveredZips == null` 时会触发空指针，导致日报发送流程中断。</div>
-                <div class="finding-suggestion">💡 修复建议：在方法入口增加空值保护，并对空列表走降级分支。例如：`if (uncoveredZips == null) { uncoveredZips = java.util.Collections.emptyList(); }`，再继续构造邮件内容。</div>
+                <div class="finding-desc">新增异常处理将下游异常明文拼接到业务异常消息中：`throw new RRException(&quot;PUS getByZipAndType exception: &quot; + e.getMessage(), e);`。如果该消息最终返回到上层接口响应，会把内部错误细节（下游地址、解析失败细节、网络栈信息等）暴露给调用方，形成信息泄露面。</div>
+                <div class="finding-suggestion">💡 修复建议：对外返回固定、去敏的错误文案，保留详细异常仅写服务端日志并附带traceId。例如：`log.error(&quot;[PusApi] getByZipAndType exception, traceId={}&quot;, traceId, e); throw new RRException(&quot;PUS getByZipAndType failed&quot;);`。同时在全局异常处理器中统一屏蔽 `e.getMessage()` 直出。</div>
             </div>
-            
+            <p class="more-note">... 还有 26 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
