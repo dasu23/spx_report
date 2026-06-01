@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-exchange-api &nbsp;|&nbsp; 2026-05-29 14:44:22</div>
+      <div class="meta">pos-exchange-api &nbsp;|&nbsp; 2026-06-01 13:24:05</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -62,7 +62,7 @@
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#f44336">31.9%</div>
+            <div class="metric-value" style="color:#f44336">32.4%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:0</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:3</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -82,10 +82,73 @@
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube analysis timed out after 1 minutes</li></ul>
+            <ul><li>SonarQube analysis timed out after 1 minutes</li>
+<li>AI Review: 1 Critical finding(s)</li>
+<li>AI Review: 3 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
+        <div class="findings-section">
+            <h3>AI 代码审查发现</h3>
+            
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/web/impl/FixRouteScanServiceImpl.java:197</code>
+                </div>
+                <div class="finding-desc">新增 `info` 级日志将 `label` 与 `routeAccount` 整体序列化输出：`JSONUtil.toJsonStr(label)`、`JSONUtil.toJsonStr(routeAccount)`。这类对象通常包含运单号、账户标识、profile 信息及可能的业务敏感字段，存在明文落日志导致敏感数据泄露风险（日志平台/运维侧可见面通常较广）。</div>
+                <div class="finding-suggestion">💡 修复建议：禁止打印完整业务对象，改为最小必要字段且做脱敏处理，并降低到 `debug` 或受开关控制。示例：仅输出 `labelId`、`facilityCode`、脱敏后的 `trackingNumber`（如仅后4位）。</div>
+            </div>
+            
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerV2ServiceImpl.java:364-368</code>
+                </div>
+                <div class="finding-desc">新增区间校验直接对 `form.getEndNumber()` / `form.getStartNumber()` 做比较与减法，若任一值为 `null` 会发生自动拆箱 NPE，导致标签生成接口直接失败。</div>
+                <div class="finding-suggestion">💡 修复建议：在比较前增加非空校验并给出明确错误信息，例如：`if (form.getStartNumber() == null || form.getEndNumber() == null) { throw new RRException(&quot;Start Number and End Number are required.&quot;); }`，再执行大小和区间校验。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/so/SorterLogSo.java:51</code>
+                </div>
+                <div class="finding-desc">当 `sortIds` 非空时直接执行 `base.and(...)`，若 `super.toSpecWithAnd()` 返回 `null`（Spring Data Specification 常见约定），这里会触发空指针异常，导致查询接口失败。</div>
+                <div class="finding-suggestion">💡 修复建议：对 `base` 做空值保护后再组合条件，例如：`Specification&lt;SorterLog&gt; sortIdSpec = buildSortIdSpec(); return base == null ? sortIdSpec : base.and(sortIdSpec);`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/so/SorterLogSo.java:60</code>
+                </div>
+                <div class="finding-desc">**原因：**
+新增过滤条件把外部输入 `sortIds` 直接拼接进 `LIKE` 模式：
+```java
+orPredicates.add(cb.like(paddedPath, &quot;%,&quot; + id.trim() + &quot;,%&quot;));
+```
+当 `id` 包含 `%` 或 `_` 等通配符时，会被 SQL `LIKE` 当作通配规则而非字面值，导致本应按精确 SortID 过滤的条件被放大（例如输入 `%` 可匹配大量/全部记录）。
+
+**影响：**
+可见数据范围可能被扩大，造成查询层面的越权读取风险（数据范围控制被绕过）。</div>
+                <div class="finding-suggestion">💡 修复建议：对 `sortIds` 做白名单校验（例如仅允许数字/字母固定格式），并对 `LIKE` 通配符进行转义后再查询；或改为不依赖 `LIKE` 的精确匹配方案。
+
+示例：
+```java
+private String escapeLike(String s) {
+    return s.replace(&quot;\\&quot;, &quot;\\\\&quot;).replace(&quot;%&quot;, &quot;\\%&quot;).replace(&quot;_&quot;, &quot;\\_&quot;);
+}
+
+String raw = id.trim();
+if (!raw.matches(&quot;^[A-Za-z0-9-]+$&quot;)) {
+    continue; // 或抛出参数异常
+}
+String escaped = escapeLike(raw);
+orPredicates.add(cb.like(paddedPath, &quot;%,&quot; + escaped + &quot;,%&quot;, &#x27;\\&#x27;));
+```</div>
+            </div>
+            
+        </div>
+        
 
   <div class="footer">
     由质量门禁引擎生成 &nbsp;|&nbsp; SpeedX CI/CD
