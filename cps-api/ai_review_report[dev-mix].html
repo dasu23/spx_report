@@ -1230,7 +1230,7 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: cps-api | 生成时间: 2026-06-24 14:13:59</p>
+      <p class="hero-meta">服务: cps-api | 生成时间: 2026-06-25 11:59:08</p>
       <div class="top-criticals" id="top-criticals">
         <h3>Top 3 Critical 问题</h3>
         <ul id="top-criticals-list"></ul>
@@ -1252,181 +1252,223 @@
     <div id="panel-general" class="report-panel is-active" role="tabpanel" aria-labelledby="tab-general">
     <section class="summary">
       <h2>总体结论</h2>
-      <div id="summary-text" class="summary-body summary-preformatted"><div class="summary-condensed"><p>合并 <strong>42</strong> 个分片审查，共 <strong>0</strong> 条发现 （Critical 0 · Major 0 · Minor 0 · Info 0）。详细列表见下方「按文件的审查发现」；接口与数据权限维度见「权限与业务规则」页签。</p><details class="summary-raw-details"><summary>展开各分片原文结论</summary><pre class="summary-raw-pre">**分片 1**
+      <div id="summary-text" class="summary-body summary-preformatted"><div class="summary-condensed"><p>合并 <strong>44</strong> 个分片审查，共 <strong>22</strong> 条发现 （Critical 4 · Major 15 · Minor 1 · Info 2）。详细列表见下方「按文件的审查发现」；接口与数据权限维度见「权限与业务规则」页签。</p><details class="summary-raw-details"><summary>展开各分片原文结论</summary><pre class="summary-raw-pre">**分片 1**
 
-Security review failed, skipped.
+权限问题根因（汇总）：这组 mimic 管理接口把高敏感的“管理员代登/恢复管理员会话”能力主要放在方法体内用业务字段判断，缺少框架级强制授权与恢复前的二次身份状态校验。结果是接口既依赖外围鉴权链正确无误，又信任 token 中的历史管理员身份，导致越权入口和失效权限恢复风险同时出现。
+
+此外，两个接口都会把可直接使用的 JWT 作为响应体返回，放大了日志、代理、埋点和前端侧泄露后的重放风险。
+
+HTTP 入口清单（方法 + 路径）
+- POST /admin/mimic/start：存在新增权限风险。仅靠方法内 `userType` 判断，未见框架级角色鉴权；且响应体直接返回 mimic token。
+- POST /admin/mimic/stop：存在新增权限风险。恢复管理员会话前未重新校验原管理员账号状态/角色；且响应体直接返回新的管理员 token。
 
 **分片 2**
 
-Normal review failed, skipped.
+本分片新增的 mimic 接口具备基本的登录态与角色判断，`/admin/mimic/start`、`/admin/mimic/stop` 都有权限校验意图；但当前实现仍存在空指针、并发重复创建、会话切换部分失败及权限约束不够稳固的问题，建议优先补强参数校验与会话状态原子性。
 
 **分片 3**
 
-Security review failed, skipped.
+本分片仅包含 `cps-infrastructure/src/main/java/com/speedx/cps/bo/user/LoginUserBo.java` 的 4 个新增字段，均为数据承载字段定义；在当前 diff 范围内未出现可直接判定的 SQL 注入、越权放行、敏感日志、硬编码密钥、认证失效或并发安全问题。未发现需要报告的新增安全缺陷；且本分片 diff 未包含任何 HTTP 映射，故无 HTTP 入口清单。
 
 **分片 4**
 
-Normal review failed, skipped.
+本分片仅看到 LoginUserBo 新增 4 个字段，当前 diff 未暴露出明确的空指针、类型安全、异常处理或兼容性问题。就这段变更本身而言实现较安全，建议在后续联动代码中补充序列化/反序列化兼容性测试。
 
 **分片 5**
 
-Security review failed, skipped.
+本分片仅包含 2 处配置类变更，未发现基于新增/修改行可直接确认的安全问题。`SwaggerConfig` 新增 `@Profile(&quot;!prod &amp; !prod-au&quot;)` 反而降低了生产环境暴露 Swagger 的风险；`IntegrationConfig` 仅新增配置项注入，当前 diff 中看不到被不安全使用的证据。
 
 **分片 6**
 
-Normal review failed, skipped.
+本分片变更整体较小，未见明显编译或空指针类问题。主要需关注 Swagger 的环境启用条件过于依赖 profile 命名，以及新增集成配置默认空值可能把配置错误延后到运行期。
 
 **分片 7**
 
-Security review failed, skipped.
+本分片仅涉及 `OmsClient` 的内部集成调用，无新增 HTTP Controller 入口；全局端点清单中 `OmsClient.listAvailablePickupsByNetsuiteCodes()` 等方法均无 Controller 调用，因此未发现本 diff 可直接确认的越权/鉴权削弱问题。发现 2 处新增安全风险：批量缓存 key 可被滥用造成资源消耗，以及异常日志输出完整批量业务标识可能导致敏感业务数据泄露。
 
 **分片 8**
 
-Normal review failed, skipped.
+本分片仅涉及 OmsClient 的批量查询与缓存逻辑，未发现 HTTP 入口或权限放行风险。主要问题集中在外部响应健壮性和缓存键标准化上，建议优先修复响应结构校验的空指针风险。
 
 **分片 9**
 
-Security review failed, skipped.
+本分片新增了 mimic token 能力，但安全边界主要依赖 JWT 自带 claim，且对 mimic claim 解析异常采取静默降级，存在认证与代操作身份被错误接受的风险。当前 diff 未出现可识别的 `@GetMapping/@PostMapping/@RequestMapping` 新增或修改，因此无可列出的 HTTP 入口清单。
 
 **分片 10**
 
-Normal review failed, skipped.
+本分片整体改动较集中，但发现 1 处较明显的异常吞没问题：mimic token 解析失败会被静默降级为普通 token 分支，建议优先修正以避免认证链路隐性故障。
 
 **分片 11**
 
-Security review failed, skipped.
+本分片仅看到启动类配置变更，未发现新增硬编码密钥、SQL 注入或明确的越权代码；但包扫描范围收缩存在安全组件漏注册风险，需重点回归认证链路。
 
 **分片 12**
 
-Normal review failed, skipped.
+本分片主要风险集中在启动类的组件扫描范围收缩，可能导致 Spring Bean 丢失并引发启动或运行期故障。其余新增注解本身未见明确问题，但建议结合完整上下文做一次启动回归验证。
 
 **分片 13**
 
-Security review failed, skipped.
+本分片可见的 diff 仅包含 openspec 文档、Maven 依赖变更，以及一条扩大 `order_shipment` 收件人字段长度的 Flyway DDL；基于这些新增/修改行，未发现可直接落在本分片 diff 行上的 SQL 注入、越权放行、敏感信息泄露、硬编码密钥/Token、认证失效或 Redis 非原子安全问题。
+
+HTTP 入口清单（方法 + 路径）
+- POST /admin/mimic/start：仅在 openspec 文档中声明，实现未在本分片/diff 内，无法断言权限；从本分片新增行本身看，无可直接定位的新增权限风险代码。
+- POST /admin/mimic/stop：仅在 openspec 文档中声明，实现未在本分片/diff 内，无法断言权限；从本分片新增行本身看，无可直接定位的新增权限风险代码。
 
 **分片 14**
 
-Normal review failed, skipped.
+本分片可见的 diff 主要是 openspec 文档、依赖声明以及一条扩大字段长度的 SQL 迁移；基于当前提供的新增/修改行，未发现可直接定位到 diff 行的常规代码缺陷。需要注意的是，核心 Java 实现文件虽在变更列表中，但其具体 diff 未出现在本分片，故本次未对其实现细节作出问题报告。
 
 **分片 15**
 
-Security review failed, skipped.
+本分片仅看到 `OrderShipment` 实体对收件人姓名、电话、邮箱、地址字段新增 `EncryptFieldConverter` 及列长度调整，属于敏感信息加密增强；在当前提供的 diff 范围内，未发现新增/修改行直接引入的安全问题。未见 HTTP 映射变更，本分片无可列出的 HTTP 入口清单。
 
 **分片 16**
 
-Normal review failed, skipped.
+本分片变更整体较集中，但实体字段加密改造时去掉了原有明文长度校验，容易把输入边界问题后移到持久化阶段。建议补齐 Bean Validation 与列长度的协同校验。
 
 **分片 17**
 
-Security review failed, skipped.
+本分片发现 2 个与订单入参校验放宽相关的安全问题，核心风险是负数/极小值进入计费与履约链路，可能导致资金计算偏差或规则绕过。当前 diff 未出现可识别的 HTTP 映射注解，故无 HTTP 入口清单可列。
 
 **分片 18**
 
-Normal review failed, skipped.
+本分片整体改动较小，但 `OrderItemReq` 中删除数值下限校验会直接放宽非法订单项入参，存在明确的业务逻辑回归风险。建议补回最小值约束并增加边界测试。
 
 **分片 19**
 
-Security review failed, skipped.
+本分片仅看到新增枚举 `shippers-portal/src/main/java/com/speedx/shippers/enums/ClaimStatus.java`，未涉及 HTTP 入口、鉴权、SQL、密钥、日志或并发控制等安全敏感逻辑；基于当前 diff，未发现新增安全问题。
 
 **分片 20**
 
-Normal review failed, skipped.
+本分片仅包含新增的 ClaimStatus 枚举，变更范围小且实现完整；基于当前 diff 未发现会导致功能异常、边界错误或兼容性问题的新增/修改行。
 
 **分片 21**
 
-Security review failed, skipped.
+本分片仅涉及 `shippers-portal/src/main/java/com/speedx/shippers/facade/resp/TicketDetailResp.java` 中响应 DTO 新增字段，未出现 HTTP 入口、鉴权逻辑、SQL、日志、并发控制、异常处理或密钥/Token 相关变更。基于当前 diff，未发现新增安全问题。
 
 **分片 22**
 
-Normal review failed, skipped.
+本分片仅涉及 TicketDetailResp 新增响应字段，当前 diff 中未见明显的编译、边界、异常处理或业务逻辑问题。整体来看属于向后兼容的 DTO 扩展，风险较低。
 
 **分片 23**
 
-Security review failed, skipped.
+发现 2 个高危权限问题，根因是新增的 admin mimic HTTP 入口在接口声明层未体现任何强制角色校验，且这类高敏感身份切换能力默认攻击面过大。
+
+权限问题根因（汇总）：本次新增接口均属于 `/admin/*` 管理面身份模拟能力，但在 diff 可见范围内只新增了路由定义，未同步加入显式鉴权/会话归属约束。对于 POST 管理操作，若实现层也缺少统一拦截，将导致低权限用户直接调用或干扰管理员模拟会话。
+
+HTTP 入口清单（方法 + 路径）
+- POST /admin/mimic/start：存在新增权限风险；本分片可见新增入口但未体现角色校验，存在越权发起身份模拟的风险。
+- POST /admin/mimic/stop：存在新增权限风险；本分片可见新增入口但未体现角色校验，存在越权修改/终止模拟会话状态的风险。
 
 **分片 24**
 
-Normal review failed, skipped.
+本分片仅包含新增的 MimicFacade 接口定义，未见新增/修改行上的明显常规缺陷。接口声明本身类型使用正确，当前分片内无可直接定位的编译、异常处理或边界条件问题。
 
 **分片 25**
 
-Security review failed, skipped.
+本分片仅涉及 shippers-portal 中 TicketApiClient/TicketDetailDto 的字段映射扩展，新增代码为外部返回字段的解析与 DTO 承载，未发现新增 SQL 注入、越权、敏感信息泄露、硬编码密钥、并发安全或认证失效等安全问题。根据给定全局端点清单，本分片涉及的方法均无 Controller 直接暴露，且本次 diff 未引入新的 HTTP 映射或削弱现有鉴权/数据范围控制，因此无新增权限风险。
 
 **分片 26**
 
-Normal review failed, skipped.
+本分片新增变更主要是在 Ticket 详情 DTO 中补充理赔相关字段，并在 TicketApiClient 中做只读映射。基于当前 diff，未发现仅由新增/修改行直接引入的明确功能性、类型安全、异常处理或权限问题；同时本分片涉及的 TicketApiClient 方法无直接 HTTP 入口，未见新增权限放行风险。
 
 **分片 27**
 
-Security review failed, skipped.
+发现 4 个高风险权限问题，根因一致：该新增 Controller 暴露了 4 个查询入口，但在本分片可见代码中均未体现显式角色校验或基于当前用户身份的数据范围收敛，形成“HTTP 入口直接透传 service”的统一越权风险模式。对于涉及燃油系数、折扣、fuel fee、阈值等业务配置查询，若后续层未强制绑定 fleetId/facilityCode，调用方可通过构造请求扩大可见范围，导致跨组织数据泄露。
+
+HTTP 入口清单（方法 + 路径）
+- UNKNOWN UNKNOWN（`queryGrid`）：存在新增权限风险；实现未在本分片/diff 内展示具体映射路径，且当前可见代码未体现鉴权/数据范围控制，见 `queryGrid` finding。
+- UNKNOWN UNKNOWN（`queryDiscount`）：存在新增权限风险；实现未在本分片/diff 内展示具体映射路径，且当前可见代码未体现鉴权/数据范围控制，见 `queryDiscount` finding。
+- UNKNOWN UNKNOWN（`querySourceFuelFee`）：存在新增权限风险；实现未在本分片/diff 内展示具体映射路径，且当前可见代码未体现鉴权/数据范围控制，见 `querySourceFuelFee` finding。
+- UNKNOWN UNKNOWN（`queryThreshold`）：存在新增权限风险；实现未在本分片/diff 内展示具体映射路径，且当前可见代码未体现鉴权/数据范围控制，见 `queryThreshold` finding。
 
 **分片 28**
 
-Normal review failed, skipped.
+本分片新增的 FuelCoefficientPortalController 仅做 Facade 到 Service 的透传，变更行内未发现明确的编译、空指针、异常处理或业务逻辑问题。整体实现较为直接稳定，后续主要确认 Facade 上是否已完整定义路由与鉴权即可。
 
 **分片 29**
 
-Security review failed, skipped.
+本分片提供的 diff 仅涉及 `shippers-portal/src/main/java/com/speedx/orders/service/OrderService.java` 中一处查询条件删除：去掉了 `recipientName` 模糊匹配。基于仅审查新增/修改行的约束，未发现新增 SQL 注入、越权、敏感信息泄露、认证失效或其他安全风险；该变更整体上更偏向收缩查询面，而非放宽访问面。
 
 **分片 30**
 
-Normal review failed, skipped.
+本分片仅看到一处实质性逻辑变更：订单列表搜索条件删除了 `recipientName` 匹配，存在明显的查询契约收缩风险。未看到本 diff 中新增的权限放开问题。
 
 **分片 31**
 
-Security review failed, skipped.
+本分片仅涉及 `RpsLabelFormAssembler` 的一处字段映射变更，未发现新增 HTTP 入口或直接的鉴权代码变更。发现 1 处安全相关 API 契约风险：删除 `pickUpAccountNum` 赋值可能改变下游账号校验/归属语义；全局端点清单中的 `toCreateLabelForm()`、`toUpdateLabelForm()` 在本分片无 Controller 暴露，未见新增权限风险。
 
 **分片 32**
 
-Normal review failed, skipped.
+本分片仅看到 1 处实质变更，主要风险是创建 RPS label 的请求组装缺少 `pickUpAccountNum`，可能造成下游接口契约或业务路由异常。该类无 HTTP 入口，未发现需要单独报告的权限问题。
 
 **分片 33**
 
-Security review failed, skipped.
+权限问题根因（汇总）：本分片新增了 4 个 Customer Portal 的 POST 查询入口，但在可见 diff 中均只声明了 URL 映射与方法签名，未见任何显式角色校验或数据范围过滤约束。按照本次审查规则，POST 入口缺失 `@PreAuthorize`/`AuthUtil.requireRole()` 即构成高危越权风险；同时这类 grid 查询若未在实现层绑定当前用户的数据范围，容易演变为跨客户/跨租户读取。
+
+整体看，本分片主要风险集中在新暴露的 HTTP 查询入口缺少可见的访问控制证据，建议在 Controller/实现层统一补齐鉴权与基于当前登录用户的范围过滤。
+
+HTTP 入口清单（方法 + 路径）：
+1. POST /fuel-surcharges/fuel-coefficient/grid：存在权限与数据范围风险；实现未在本分片/diff 内，无法断言权限，且接口定义未见显式鉴权。
+2. POST /fuel-surcharges/fuel-coefficient/discount/grid：存在权限与数据范围风险；实现未在本分片/diff 内，无法断言权限，且接口定义未见显式鉴权。
+3. POST /fuel-surcharges/fuel-coefficient/source-fuel-fee/grid：存在权限与数据范围风险；实现未在本分片/diff 内，无法断言权限，且接口定义未见显式鉴权。
+4. POST /fuel-surcharges/fuel-coefficient/threshold/grid：存在权限与数据范围风险；实现未在本分片/diff 内，无法断言权限，且接口定义未见显式鉴权。
 
 **分片 34**
 
-Normal review failed, skipped.
+本分片仅新增了一个 Facade 接口定义，变更内容本身未见可直接定位到新增行的编译、异常处理、边界条件或明显业务逻辑问题。整体看接口声明清晰，当前 diff 下无需要报告的问题。
 
 **分片 35**
 
-Security review failed, skipped.
+本分片新增的 FuelCoefficientPortalService 已按当前登录用户的 `spxAccountNumbers` 解析 pickupAccountIds 后再查询 OMS，未见新增的明显数据范围放大或鉴权绕过逻辑；ShipperTicketService 本次仅为响应对象新增字段映射，单凭该 diff 无法断言权限削弱。已发现 1 处新增敏感业务标识日志输出风险，建议尽快脱敏处理。
 
 **分片 36**
 
-Normal review failed, skipped.
+本分片新增的燃油系数服务整体结构清晰，且 4 个公开查询方法均通过登录用户账号范围收敛数据，未发现明显权限放开问题。主要风险在于下游 OMS 解析账户时缺少异常收口，可能导致接口稳定性下降。
 
 **分片 37**
 
-Security review failed, skipped.
+本分片仅见 JWTFilter 新增 mimic 审计日志逻辑，未发现 SQL 注入、硬编码密钥或新增 HTTP 入口级越权代码；但存在敏感身份关系写入普通日志以及审计异常被吞掉的问题，建议按安全审计规范收敛。HTTP 入口清单（方法 + 路径）：本分片 diff 未出现 `@GetMapping/@PostMapping/@RequestMapping` 等新增或修改的 HTTP 映射，无法在本分片内识别具体入口。
 
 **分片 38**
 
-Normal review failed, skipped.
+本分片改动整体较小，主流程风险不高。发现 1 处异常处理上的可观测性问题，建议提升 mimic 审计日志失败时的告警能力。
 
 **分片 39**
 
-Security review failed, skipped.
+本分片仅看到 CommonFileController 的两处新增鉴权/输入校验：`POST /private-blob/upload` 与 `GET /private-blob/download` 都新增了 `LoginUserUtil.getRequiredUser()`，且下载接口补充了基本的 `fileUrl` 前缀校验；基于当前 diff，未发现新增的安全缺陷。
+
+HTTP 入口清单（方法 + 路径）
+- POST /private-blob/upload：无新增权限风险。本次变更新增登录态校验，未见权限被削弱；但更细粒度角色/资源范围控制不在本分片 diff 中，无法进一步断言。
+- GET /private-blob/download：无新增权限风险。本次变更新增登录态校验并增加 `fileUrl` 基本合法性校验，未见新增越权或认证绕过问题。
 
 **分片 40**
 
-Normal review failed, skipped.
+本分片变更整体较小，但 `CommonFileController` 中新增的下载路径校验与现有上传路径生成规则不一致，会直接导致部分已上传文件无法下载，属于明显功能回归。
 
 **分片 41**
 
-Security review failed, skipped.
+本分片仅包含新增请求对象 `cps-facade/src/main/java/com/speedx/cps/facade/model/req/MimicStartRequest.java`，新增内容只有一个 `targetEmail` 字段及 `@NotBlank` 校验；基于当前 diff 未发现 SQL 注入、硬编码密钥、敏感日志、认证失效或明确可落到新增/修改行的越权问题。该对象本身不构成 HTTP 入口，且本分片未出现 `@GetMapping/@PostMapping/@RequestMapping` 等可识别映射，因此无 HTTP 入口清单。
 
 **分片 42**
 
-Normal review failed, skipped.</pre></details></div></div>
+本分片仅包含新增的 `MimicStartRequest` DTO，变更范围很小；从当前 diff 看未发现会导致编译失败、运行异常或明显业务缺陷的问题。
+
+**分片 43**
+
+本分片仅看到 `UserInfoResp` 新增字段变更，未发现 SQL 注入、硬编码密钥或明确的鉴权绕过代码；但新增了模拟管理员身份信息出参，存在不必要的敏感信息暴露风险。由于本 diff 未出现 HTTP 映射注解，无法形成本分片的 HTTP 入口清单。
+
+**分片 44**
+
+本分片仅包含 UserInfoResp 新增字段，当前 diff 里未见会直接导致编译、空指针、异常处理或明显业务逻辑错误的问题。该变更属于响应模型扩展，整体较为安全。</pre></details></div></div>
       <div class="filter-row">
         <span class="filter-label">点击筛选:</span>
         <div class="chips">
-          <span class="chip critical filter-chip" data-filter="critical" onclick="filterBySeverity(this)">Critical: 0</span>
-          <span class="chip major filter-chip" data-filter="major" onclick="filterBySeverity(this)">Major: 0</span>
-          <span class="chip minor filter-chip" data-filter="minor" onclick="filterBySeverity(this)">Minor: 0</span>
-          <span class="chip info filter-chip" data-filter="info" onclick="filterBySeverity(this)">Info: 0</span>
-          <span class="chip">Total: 0</span>
+          <span class="chip critical filter-chip" data-filter="critical" onclick="filterBySeverity(this)">Critical: 4</span>
+          <span class="chip major filter-chip" data-filter="major" onclick="filterBySeverity(this)">Major: 15</span>
+          <span class="chip minor filter-chip" data-filter="minor" onclick="filterBySeverity(this)">Minor: 1</span>
+          <span class="chip info filter-chip" data-filter="info" onclick="filterBySeverity(this)">Info: 2</span>
+          <span class="chip">Total: 22</span>
         </div>
       </div>
     </section>
@@ -1474,14 +1516,26 @@ Normal review failed, skipped.</pre></details></div></div>
       </div>
     </div>
 
-    <h2 class="section-title subsection-title">按文件的审查发现</h2><div class="empty">当前分支未发现高风险问题，或无可审查 diff。</div>
+    <h2 class="section-title subsection-title">按文件的审查发现</h2><div class="findings-list-wrap"><details class="file-group findings-file-group" open="open" id="fg-20034d1eb2e6" data-file-path="cps-facade-impl/src/main/java/com/speedx/cps/facade/impl/MimicFacadeImpl.java" data-short-name="MimicFacadeImpl.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">cps-facade-impl/src/main/java/com/speedx/cps/facade/impl/MimicFacadeImpl.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">2 Major</span></span><span class="file-group-count">2 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L51</span><span class="finding-cat">异常处理</span></div><div class="finding-desc">这里直接调用 `request.getTargetEmail()`，但未对 `request` 本身做空值保护；若控制层在反序列化失败或空请求体场景下传入 null，会在该行触发空指针，导致接口返回 500 而不是明确的参数错误。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>在读取字段前先校验请求对象和关键字段，例如：`if (request == null || request.getTargetEmail() == null || request.getTargetEmail().trim().isEmpty()) { return BaseResponse.error(400, &quot;targetEmail is required&quot;); }`。如项目已接入参数校验，也可在请求模型上增加 `@NotBlank` 并在入口启用 `@Valid`。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>构造 `POST /admin/mimic/start` 的空请求体或缺失 `targetEmail` 字段，请求应返回 400 且不抛出 NPE。</p></div></div></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L63-120</span><span class="finding-cat">数据一致性</span></div><div class="finding-desc">`stopMimic` 先撤销当前 mimic token，再生成并存储新的 admin token；如果第一个步骤成功而第二个步骤失败，管理员会被直接踢出且无法恢复原会话，这是典型的多步操作部分失败问题，缺少补偿或降级路径。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>把“恢复管理员会话”设计为可补偿流程，例如先生成并尝试持久化新 admin token，成功后再撤销 mimic token；或在撤销后若存储新 token 失败，立即返回可重试标识并保留必要的恢复信息。更稳妥的做法是通过事务性 Redis/Lua 脚本统一切换会话状态。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>模拟 `distributedJwtService.revokeToken` 成功、`storeAccessToken(newAdminToken, ...)` 失败，确认管理员不会陷入既无 mimic token 又无 admin token 的不可恢复状态。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-a601a59ac757" data-file-path="cps-facade-impl/src/main/java/com/speedx/cps/facade/impl/shiro/JWTFilter.java" data-short-name="JWTFilter.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">cps-facade-impl/src/main/java/com/speedx/cps/facade/impl/shiro/JWTFilter.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span> <span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">2 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L111-115</span><span class="finding-cat">安全风险</span></div><div class="finding-desc">新增审计日志在 mimic 会话下记录了 `mimicAdminUsername` 与 `loginName`，且发生在鉴权成功后的公共过滤器路径上，会把管理员代登关系与访问轨迹写入普通 info 日志。该类身份映射属于敏感审计信息，若日志平台、运维账号或下游订阅者权限控制不足，可能造成用户身份关联关系泄露，扩大横向情报暴露面。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>将该日志降级为受控安全审计事件，不要直接在普通业务 info 日志中输出真实用户名；至少对管理员名/被代登用户名做脱敏或改记内部 userId/sessionId，并确保仅写入专用审计日志通道。例如：`log.info(&quot;[MIMIC] adminId={} -&gt; userId={} | {} {}&quot;, adminId, userId, method, path)`。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>构造 `isMimic=true` 的请求，验证应用普通 info 日志中不再出现明文管理员用户名和被代登用户名，仅在受控审计通道可见脱敏/ID 化记录。},{</p></div></div></details></div><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L118-119</span><span class="finding-cat">异常处理</span></div><div class="finding-desc">这里捕获了宽泛 `Exception` 后仅记录 debug 日志并继续放行成功登录流程。若 mimic 审计依赖该分支，主体读取失败、类型异常或会话异常都会被静默吞掉，导致高敏感操作缺失审计痕迹，削弱安全事件追踪与问责能力。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>不要静默吞掉审计失败；至少记录结构化 warn/error 并包含请求标识，必要时对 `isMimic=true` 场景执行失败关闭（fail-closed）或触发专用告警。例如仅捕获可预期异常类型，并在 mimic 会话审计失败时拒绝继续访问或写入补偿审计队列。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>模拟 `getSubject(...).getPrincipal()` 抛出异常或返回异常对象，验证系统会产生可检索的告警日志；若策略要求强审计，还应验证 mimic 请求被拒绝而非静默成功。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-2b2ffabda4fc" data-file-path="cps-facade-impl/src/main/java/com/speedx/cps/facade/impl/web/CommonFileController.java" data-short-name="CommonFileController.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">cps-facade-impl/src/main/java/com/speedx/cps/facade/impl/web/CommonFileController.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L55-57</span><span class="finding-cat">业务逻辑</span></div><div class="finding-desc">新增的 fileUrl 校验仅允许以 &quot;cps&quot; 开头，但上传接口对静态文件生成的路径为 &quot;static/{filename}&quot;。这会导致同一个控制器新上传的静态文件无法再通过下载接口获取 SAS URL，形成前后接口契约不一致的功能回归。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>将下载接口的前缀校验与上传接口生成规则保持一致，例如同时允许 &quot;cps/&quot; 与 &quot;static/&quot;（或统一上传路径规则后按统一前缀校验）。示例：`if (fileUrl == null || !(fileUrl.startsWith(&quot;cps/&quot;) || fileUrl.startsWith(&quot;static/&quot;))) { throw new BizException(&quot;File url is invalid&quot;); }`。如果历史数据中存在不带斜杠的旧格式，也需要一并兼容。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>1) 上传 `UploadFileReq.Type._STATIC` 文件后，使用返回/保存的 fileUrl 调用 `/private-blob/download` 应成功；2) 上传非 `_STATIC` 文件后下载也应成功；3) 对非法前缀如 `http://...`、空字符串调用时应返回业务异常。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-198e3af625a4" data-file-path="cps-facade/src/main/java/com/speedx/cps/facade/model/resp/UserInfoResp.java" data-short-name="UserInfoResp.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">cps-facade/src/main/java/com/speedx/cps/facade/model/resp/UserInfoResp.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L42-46</span><span class="finding-cat">安全风险</span></div><div class="finding-desc">新增响应字段 `mimicAdminUsername`、`mimicAdminId`、`mimicAdminEmail` 会把模拟登录管理员的身份信息直接暴露给前端/调用方。该类是用户信息响应模型，若对应接口面向被模拟用户会话返回这些字段，则会额外泄露管理员的邮箱和内部标识，扩大敏感身份信息暴露面；其中 `mimicAdminEmail` 尤其属于可直接用于账号枚举、社工钓鱼的敏感联系信息。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>仅保留业务必需的最小字段，避免在通用用户信息响应中返回管理员邮箱和内部ID。若前端仅需展示“当前为模拟态”，建议只返回 `isMimic` 与经过脱敏/泛化的审计标识，例如管理员显示名的脱敏版本；如确需返回，需按最小可见范围控制并补充字段级脱敏。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>补充接口测试：在普通用户、被模拟用户、非模拟用户三种场景下调用返回 `UserInfoResp` 的接口，验证默认不返回 `mimicAdminEmail`/`mimicAdminId`，或仅在明确授权场景下返回且已脱敏。</p></div></div></details></div></div></details><details class="file-group findings-file-group" id="fg-7775e769754b" data-file-path="cps-infrastructure/src/main/java/com/speedx/cps/configuration/IntegrationConfig.java" data-short-name="IntegrationConfig.java" data-worst-severity="info"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-info" aria-hidden="true"></span><span class="file-path-text">cps-infrastructure/src/main/java/com/speedx/cps/configuration/IntegrationConfig.java</span></span><span class="file-group-stats"><span class="stat-chip stat-info">1 Info</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-info" data-severity="info"><div class="finding-header"><span class="sev-badge info">INFO</span><span class="finding-line" title="行号">L34-35</span><span class="finding-cat">配置变更</span></div><div class="finding-desc">新增配置项 `exchange.oms.availablePickupsByNetsuiteBatch` 使用空字符串作为默认值。若下游把该值直接当作有效 exchange/router 名称使用，应用会在运行时而非启动时暴露错误，导致消息发送或集成调用失败，问题定位成本较高。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>如果该配置为必填，去掉 `:`, 并在启动阶段校验；或增加 `@PostConstruct`/`@Validated` 校验，明确在配置缺失时 fail-fast。若确实允许为空，建议在使用处显式分支处理并记录清晰日志。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>在未配置 `exchange.oms.availablePickupsByNetsuiteBatch` 的环境启动应用，并执行依赖该 exchange 的调用，验证系统是启动即失败还是运行期出现隐式错误。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-b9814d90da97" data-file-path="cps-infrastructure/src/main/java/com/speedx/cps/configuration/SwaggerConfig.java" data-short-name="SwaggerConfig.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">cps-infrastructure/src/main/java/com/speedx/cps/configuration/SwaggerConfig.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L16</span><span class="finding-cat">配置变更</span></div><div class="finding-desc">通过 `@Profile(&quot;!prod &amp; !prod-au&quot;)` 控制 Swagger Bean 的注册存在环境边界风险：Spring Boot 2.5 的 `@Profile` 虽支持 profile 表达式，但这里把禁用范围硬编码为仅 `prod` 和 `prod-au`，会导致类似 `production`、`pre-prod`、`uat-prodlike` 等未覆盖环境默认启用 Swagger。对外环境一旦 profile 命名不完全一致，就会把文档接口暴露出来，属于配置层面的功能异常风险。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>改为基于显式开关控制，而不是依赖环境名排除。例如增加 `@ConditionalOnProperty(name = &quot;swagger.enabled&quot;, havingValue = &quot;true&quot;, matchIfMissing = false)`，并仅在本地/测试配置中打开；如果必须用 profile，建议统一使用专门的 `swagger`/`dev`/`test` profile 白名单方式。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>分别以 `prod`、`prod-au`、`production`、`uat` profile 启动应用，验证 Swagger 相关 Bean 和 `/swagger-ui/**` 是否仅在预期环境启用。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-606a3ca62275" data-file-path="cps-infrastructure/src/main/java/com/speedx/cps/integration/OmsClient.java" data-short-name="OmsClient.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">cps-infrastructure/src/main/java/com/speedx/cps/integration/OmsClient.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">2 Major</span></span><span class="file-group-count">2 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L218-251</span><span class="finding-cat">安全风险</span></div><div class="finding-desc">新增批量查询缓存使用 `String.join(&quot;,&quot;, netsuiteCodes)` 作为 key，未对输入做规范化或长度限制。攻击者若能控制 `netsuiteCodes` 内容，可通过不同顺序的相同集合（如 `[A,B]` 与 `[B,A]`）持续制造不同 cache key，绕过缓存并在 1 小时内填充最多 500 个大 value，放大对下游 OMS 的请求压力，形成可利用的资源消耗型风险。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>对 `netsuiteCodes` 在生成 key 前进行去重、排序、长度上限校验，并对单次批量数量设置最大值；同时考虑使用稳定摘要作为 key，避免超长字符串占用内存。例如先 `distinct + sorted` 后再拼接，超过阈值直接拒绝请求。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>构造包含相同 netsuiteCode 但顺序不同的大量请求，验证是否产生大量不同缓存项；再构造超长 `netsuiteCodes` 列表，验证是否会导致缓存膨胀或下游 OMS 请求激增。},{</p></div></div></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L241-246</span><span class="finding-cat">异常处理</span></div><div class="finding-desc">解析 OMS 响应时直接调用 `rootNode.get(&quot;code&quot;).asInt()` 和 `rootNode.get(&quot;msg&quot;).asText()`，未校验字段是否存在。若 OMS 返回非预期结构（如 HTML 错页、空 JSON 或缺少 `code/msg` 字段），`rootNode.get(...)` 会返回 null，随后触发空指针异常，导致调用方得到不明确的 500 错误而不是可诊断的集成异常。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>在读取字段前显式校验响应结构，避免对 `null` 节点直接取值。例如：`JsonNode codeNode = rootNode.get(&quot;code&quot;); if (codeNode == null || !codeNode.canConvertToInt()) { throw new RRException(&quot;OMS availablePickupsByNetsuiteBatch invalid response: missing code&quot;); } JsonNode msgNode = rootNode.get(&quot;msg&quot;);`，并对原始响应做截断后记录，便于排查。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>模拟 OMS 返回 `{}`、`{&quot;data&quot;:[]}`、HTML 错误页等非标准响应，断言方法抛出明确的 `RRException`，且不会出现 `NullPointerException`。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-f54bbd2bbd2e" data-file-path="cps-infrastructure/src/main/java/com/speedx/cps/shiro/JWTUtil.java" data-short-name="JWTUtil.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">cps-infrastructure/src/main/java/com/speedx/cps/shiro/JWTUtil.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L263-267</span><span class="finding-cat">异常处理</span></div><div class="finding-desc">命中 [EXC-001]。`getMimicClaims` 捕获宽泛 `Exception` 后直接返回 `null`，把“普通非 mimic token”和“token 解析失败/签名异常/claim 类型异常”混为同一种结果。这样一来，调用方无法区分令牌是否已被篡改或解析失败，容易把异常 token 当作普通 token 继续走认证流程，造成认证失效场景被静默吞掉。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>仅对“非 mimic token”返回 `null`，对解析失败或签名校验异常应显式抛出认证异常并由上层拒绝请求。例如分别捕获 JWT 解析相关异常并转换为 `AuthenticationException`/自定义异常，避免默认降级为普通会话。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>构造一个 `isMimic=true` 但 `realUserId` 类型错误或签名损坏的 token，验证系统应拒绝该请求而不是按普通 token 继续认证。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-e4d5fb14b102" data-file-path="cps-web/src/main/java/com/speedx/cps/StartApplication.java" data-short-name="StartApplication.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">cps-web/src/main/java/com/speedx/cps/StartApplication.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L24-31</span><span class="finding-cat">配置变更</span></div><div class="finding-desc">将 `@SpringBootApplication.scanBasePackages` 从更宽泛的 `io.speedx` 收缩为仅 `io.speedx.azure`，会导致原先依赖组件扫描自动注册的安全相关 Bean（如鉴权拦截器、Realm、过滤器、异常处理器或安全配置）在运行时不再被加载。如果这些 Bean 位于 `io.speedx` 下但不在 `io.speedx.azure` 子包内，实际效果可能是认证/鉴权链条失效或部分安全控制被静默绕过。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>逐项核对所有安全关键 Bean 的包路径与注册方式；对必须启用的鉴权/过滤/异常处理组件，优先改为显式 `@Import` 或 `@Bean` 注册，避免依赖宽泛包扫描。补充启动集成测试，验证未认证请求仍会被拦截。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>启动应用后，对需鉴权接口发起未携带 JWT/携带非法 JWT 的请求，确认仍返回 401/403；同时校验安全相关 Bean（如 JWT Filter/Realm）已成功注入。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-7fa901aa7858" data-file-path="cps-web/src/main/java/com/speedx/cps/shiro/SimpleCustomRealm.java" data-short-name="SimpleCustomRealm.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">cps-web/src/main/java/com/speedx/cps/shiro/SimpleCustomRealm.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L129-136</span><span class="finding-cat">权限与访问控制</span></div><div class="finding-desc">**原因：** 认证阶段直接信任 token 中新增的 `isMimic/realUsername/realUserId/realEmail` 声明，并将其写入 `userInfo` 作为管理员代操作上下文，但本分片未看到任何与管理员身份、角色、可代操作范围绑定的二次校验。也就是说，只要能够生成或获得一个带这些声明的有效 JWT，系统就会把当前会话标记为 mimic。
+
+```java
+JWTUtil.MimicClaims mimicClaims = getJwtUtil().getMimicClaims(token);
+if (mimicClaims != null) {
+    userInfo.setIsMimic(true);
+    userInfo.setMimicAdminUsername(mimicClaims.getRealUsername());
+    userInfo.setMimicAdminId(mimicClaims.getRealUserId());
+    userInfo.setMimicAdminEmail(mimicClaims.getRealEmail());
+}
+```
+
+**影响：** 若 mimic token 的签发入口、密钥使用方或下游消费方存在缺口，攻击者可借由自带的 mimic 声明伪造“管理员代用户操作”身份，污染审计链路，甚至在依赖 `isMimic`/`mimicAdmin*` 做特权放行的代码中形成越权。当前实现把权限事实建立在可携带的 claim 上，而不是服务端可核验的授权关系上。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>不要仅凭 JWT claim 建立 mimic 管理员身份。应在认证时追加服务端校验：根据 `realUserId` 查询管理员账号、验证其当前状态/角色是否具备 mimic 权限，并校验该管理员是否被授权代操作当前 `clientUserId`。更稳妥的做法是仅在 token 中放一个 `mimicSessionId`，服务端从受控存储读取管理员-客户绑定关系。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>使用一个有效登录用户 token，伪造/替换 mimic 相关 claim（或使用不具备管理员角色的账号签发 mimic token），验证认证阶段必须拒绝而不是把会话标记为 `isMimic=true`。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-3cf7504a18fc" data-file-path="shippers-portal/src/main/java/com/speedx/orders/entity/OrderShipment.java" data-short-name="OrderShipment.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">shippers-portal/src/main/java/com/speedx/orders/entity/OrderShipment.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L127-157</span><span class="finding-cat">数据一致性</span></div><div class="finding-desc">对 recipientName、recipientPhone、recipientEmail、recipientAddress1 新增了 JPA 字段加密转换器，但同时移除了这些字段原有的 @Size 长度约束，仅保留扩大后的数据库列长度。这样会改变入库前的输入边界：应用层不再限制明文长度，若 EncryptFieldConverter 输出长度随明文增长，超长输入会在持久化阶段触发数据库截断/写入失败，形成运行时数据一致性问题。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>保留并按“明文最大长度”补充 Bean Validation 约束，同时确保与加密后列长度匹配。例如：recipientName/recipientEmail/recipientAddress1 继续添加 `@Size(max = 255)`，recipientPhone 添加 `@Size(max = 35)`；若加密后长度确实可能超过当前列长，应同步校准迁移脚本和 `@Column(length=...)`。最好补充一组针对边界长度明文的持久化测试。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>分别构造 recipientName=255/256 字符、recipientPhone=35/36 字符、recipientEmail=255/256 字符、recipientAddress1=255/256 字符的请求，验证：1) 合法边界值可成功保存并解密回原值；2) 超限值在应用层被校验拦截，而不是在数据库层报错。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-4d1a4648e9c1" data-file-path="shippers-portal/src/main/java/com/speedx/orders/facade/req/OrderCreateReq.java" data-short-name="OrderCreateReq.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">shippers-portal/src/main/java/com/speedx/orders/facade/req/OrderCreateReq.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L63-73</span><span class="finding-cat">安全风险</span></div><div class="finding-desc">将包裹 `length/width/height` 的最小值从 `0.1` 下调到 `0.01`，允许极小尺寸通过校验。对于依赖体积重、尺寸分级、渠道限运校验的订单场景，这会显著降低输入可信度，攻击者可利用 0.01 级别的尺寸构造异常低体积包裹以规避运费/规则校验，造成计费偏差或下游承运接口异常。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>确认业务是否真实需要支持 0.01 尺寸；若无强需求，应保持原有 `0.1` 下界。若确需放宽，需在服务层同步增加总体积、体积重、渠道最小尺寸等防滥用校验，避免仅靠单字段 Bean Validation 放行。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>补充创建订单校验测试：提交 `length=0.01,width=0.01,height=0.01`，验证是否会导致异常低运费、体积重为 0 或下游承运商接口报错；同时增加边界值 0.09/0.10/0.01 的回归测试。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-3b9d456b1e7f" data-file-path="shippers-portal/src/main/java/com/speedx/orders/facade/req/OrderItemReq.java" data-short-name="OrderItemReq.java" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">shippers-portal/src/main/java/com/speedx/orders/facade/req/OrderItemReq.java</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">1 Critical</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L34-42</span><span class="finding-cat">安全风险</span></div><div class="finding-desc">移除了 `unitWeight`、`unitValue`、`units` 的最小值校验后，请求体将允许 0、负数或异常偏小值进入后续订单/计费链路。该类字段通常参与运费、保价、赔付或库存/件数计算，放开下界约束会导致攻击者构造负货值、负件数或零重量订单，进而触发金额计算错误、风控绕过或下游系统异常。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>恢复对关键计费/计数字段的下界校验，并按业务语义分别约束：例如 `unitWeight` 使用 `@DecimalMin(&quot;0.1&quot;)` 或业务允许的最小正数；`unitValue` 使用 `@DecimalMin(&quot;0.01&quot;)`；`units` 使用 `@Min(1)`。若存在免费样品/零申报价等特例，应通过显式业务分支处理，而不是移除通用输入校验。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>新增接口参数校验测试：提交 `unitWeight=-1`、`unitValue=-0.01`、`units=0`、`units=-3` 的请求，断言统一被 4xx 拒绝；同时补充金额计算回归测试，验证不存在负金额/负件数入库。},{</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-8aacb8ac83e8" data-file-path="shippers-portal/src/main/java/com/speedx/orders/service/OrderService.java" data-short-name="OrderService.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">shippers-portal/src/main/java/com/speedx/orders/service/OrderService.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L197-199</span><span class="finding-cat">API契约</span></div><div class="finding-desc">模糊查询条件中移除了 `recipientName` 匹配，导致原本可按收件人姓名检索订单的请求在本次变更后返回结果显著减少。该变更直接改变了列表查询语义，属于对现有查询 API 行为的收缩，若前端搜索框或调用方仍将“收件人姓名”视为可搜索字段，会出现功能失效。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>若这是非预期回归，应保留 `cb.like(root.get(&quot;recipientName&quot;), like)` 条件；若因字段加密等原因必须移除，需同步更新接口文档、前端搜索提示与回归测试，并考虑提供替代检索字段。例如：`cb.or(cb.like(root.get(&quot;customerRefId&quot;), like), cb.like(root.get(&quot;trackingNumber&quot;), like), cb.like(root.get(&quot;trackingNumberShort&quot;), like), cb.like(root.get(&quot;recipientName&quot;), like))`。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>新增/更新列表检索测试：构造仅 `recipientName` 命中的订单，验证搜索关键字为收件人姓名时仍能命中；若产品确认不再支持该字段，则增加契约测试验证前端/接口文档不再宣称支持按收件人姓名搜索。</p></div></div></details></div></div></details><details class="file-group findings-file-group" id="fg-d8b7db7d014a" data-file-path="shippers-portal/src/main/java/com/speedx/orders/service/assembler/RpsLabelFormAssembler.java" data-short-name="RpsLabelFormAssembler.java" data-worst-severity="info"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-info" aria-hidden="true"></span><span class="file-path-text">shippers-portal/src/main/java/com/speedx/orders/service/assembler/RpsLabelFormAssembler.java</span></span><span class="file-group-stats"><span class="stat-chip stat-info">1 Info</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-info" data-severity="info"><div class="finding-header"><span class="sev-badge info">INFO</span><span class="finding-line" title="行号">L40</span><span class="finding-cat">API契约</span></div><div class="finding-desc">新增变更将 `pickUpAccountNum` 的赋值直接注释掉，导致创建标签请求不再向下游传递原本的提货账号字段。该字段通常承载账户归属/计费身份信息，静默移除会改变与下游 RPS 的安全相关契约：下游若据此做账号级校验、计费归属或调用方身份绑定，当前变更可能导致校验失效、落入默认账号或以更宽松路径处理请求。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>恢复对 `pickUpAccountNum` 的显式赋值，或在确认该字段废弃前同步更新下游接口契约与本地校验逻辑，避免以“置空/不传”方式触发下游默认行为。例如：`form.setPickUpAccountNum(req.getPickupAccountId());`。若确需移除，需补充代码注释说明安全影响，并在调用前增加对替代身份字段的必填校验。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>构造包含/不包含 `pickupAccountId` 的建单请求，验证下游 RPS 在账号缺失时不会自动落到默认账户、不会绕过账号归属校验，且返回明确失败而非成功创建标签。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-45a702c43fd2" data-file-path="shippers-portal/src/main/java/com/speedx/shippers/service/FuelCoefficientPortalService.java" data-short-name="FuelCoefficientPortalService.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">shippers-portal/src/main/java/com/speedx/shippers/service/FuelCoefficientPortalService.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L56-61</span><span class="finding-cat">异常处理</span></div><div class="finding-desc">新增的 pickup 账户解析逻辑直接调用 `omsClient.listAvailablePickupsByNetsuiteCodes(validCodes)`，但没有对远端调用异常或失败响应做降级/转换处理。该方法现在被 `queryGrid/queryDiscount/querySourceFuelFee/queryThreshold` 统一依赖，一旦 OMS 集成层抛出运行时异常，这几个查询接口都会直接 500，而不是返回当前类中已约定的业务错误响应。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>在调用 OMS client 时显式捕获可预期的远端异常并转换为稳定的 `BizException` 或 `BaseResponse.error(...)`。例如：`try { pickups = omsClient.listAvailablePickupsByNetsuiteCodes(validCodes); } catch (Exception e) { log.error(&quot;...&quot;, e); throw new BizException(502, &quot;Failed to resolve pickup accounts&quot;); }`。同时区分“无可用账户”和“下游调用失败”两类场景，避免都返回 403。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>模拟 `omsClient.listAvailablePickupsByNetsuiteCodes` 超时/抛异常，验证 4 个燃油系数查询接口返回受控错误码与错误信息，而不是未处理异常导致 500。</p></div></div></details></div></div></details></div>
     </div>
 
     <div id="panel-dp" class="report-panel" role="tabpanel" aria-labelledby="tab-dp">
       <div class="dp-shell"><div class="dp-header">
   <h1>数据权限分析报告</h1>
   <p class="subtitle">AI Code Review · 接口级别数据权限审计</p>
-  <div class="meta-row"><div class="meta-item">项目 <strong>cps-api</strong></div><div class="meta-item">涉及接口路径（自动汇总） <strong>服务 cps-api · 本次无可聚合路径的权限类接口（请检查 path_pattern）</strong></div><div class="meta-item">报告日期 <strong>2026-06-24 14:13:59</strong></div><div class="meta-item">涉及角色标签 <strong>见 role_data / findings</strong></div></div>
+  <div class="meta-row"><div class="meta-item">项目 <strong>cps-api</strong></div><div class="meta-item">涉及接口路径（自动汇总） <strong>/admin/mimic/stop · /fuel-surcharges/fuel-coefficient/grid · SimpleCustomRealm.doGetAuthenticationInfo(...)</strong></div><div class="meta-item">报告日期 <strong>2026-06-25 11:59:08</strong></div><div class="meta-item">涉及角色标签 <strong>isMimic、mimicAdminId、mimicAdminUsername、realUsername、realUserId、realEmail</strong></div></div>
 </div>
 
 <div class="dp-body">
@@ -1489,16 +1543,16 @@ Normal review failed, skipped.</pre></details></div></div>
   <div class="dp-stats">
     
   <div class="summary-grid">
-    <div class="summary-card critical"><div class="count">0</div><div class="label">高风险（语义）</div></div>
+    <div class="summary-card critical"><div class="count">3</div><div class="label">高风险（语义）</div></div>
     <div class="summary-card high"><div class="count">0</div><div class="label">中风险（语义）</div></div>
     <div class="summary-card medium"><div class="count">0</div><div class="label">低风险（语义）</div></div>
-    <div class="summary-card info"><div class="count">0</div><div class="label">接口总数（已解析路径）</div></div>
+    <div class="summary-card info"><div class="count">3</div><div class="label">接口总数（已解析路径）</div></div>
   </div>
   <div class="summary-grid" style="margin-top:8px;opacity:.92;">
-    <div class="summary-card critical"><div class="count">0</div><div class="label">Critical</div></div>
-    <div class="summary-card high"><div class="count">0</div><div class="label">Major</div></div>
+    <div class="summary-card critical"><div class="count">2</div><div class="label">Critical</div></div>
+    <div class="summary-card high"><div class="count">1</div><div class="label">Major</div></div>
     <div class="summary-card medium"><div class="count">0</div><div class="label">Minor+</div></div>
-    <div class="summary-card info"><div class="count">0</div><div class="label">权限类条数</div></div>
+    <div class="summary-card info"><div class="count">3</div><div class="label">权限类条数</div></div>
   </div>
 
   </div>
@@ -1512,21 +1566,139 @@ Normal review failed, skipped.</pre></details></div></div>
 
   <div class="dp-section">
     <div class="dp-section-title">接口权限审计总览</div>
-    <div class="empty">暂无可解析路径的「权限与访问控制」条目；请检查 path_pattern 与 HTTP 清单。</div>
+    <div class="table-wrap"><table class="dp-audit"><thead><tr><th>方法</th><th>路径</th><th>Service 方法</th><th>权限校验</th><th>数据范围</th><th>风险</th><th>问题描述</th></tr></thead><tbody><tr class="row-critical"><td style='white-space:nowrap;vertical-align:middle;'><span class="badge badge-post">POST</span></td><td style='min-width:120px;'><code style="font-size:.82rem;word-break:break-all;">/admin/mimic/stop</code></td><td style='min-width:160px;'><code style="font-size:.82rem;">stopMimic()</code></td><td style='white-space:nowrap;'><span style="color:#dd6b20;">待复核</span></td><td style='min-width:140px;font-size:.85rem;'><span style="font-size:.85rem;">代码仅信任 mimic token 中的管理员身份字段并直接签发新 token，未重新校验管理员账号状态与角色。</span></td><td style='white-space:nowrap;'><div class="risk-zh">高风险（失效管理员权限被重新恢复）</div><div style="margin-top:6px;"><span class="badge badge-critical">CRITICAL</span></div></td><td style='min-width:220px;'><ul class="issue-list"><li><strong>原因：</strong> 停止 mimic 后，代码直接依据当前 token 中携带的 <code>mimicAdminUsername/mimicAdminId</code> 生成新的管理员访问令牌，且未重新校验该原管理员账号当前是否仍然有效、是否仍具备管理员权限、是否被禁用/降权</li><li><strong>影响：</strong> 若管理员在 mimic 期间被禁用、删除或权限被回收，调用 <code>/admin/mimic/stop</code> 仍可恢复出新的管理员 token，导致权限回收失效，形成失效认证继续生效的问题</li><li>---
+
+<strong>原因：</strong> 新增的停止模拟入口同样只有 <code>@PostMapping(&quot;/admin/mimic/stop&quot;)</code>，未在接口声明上体现任何角色校验</li><li>对于会修改当前认证态/会话态的 POST 管理接口，缺失显式鉴权会导致任意已认证主体触发管理员会话状态变更</li><li><strong>影响：</strong> 若底层实现依赖当前会话中的 mimic 状态而未限制调用者身份，低权限用户可能借此探测、干扰或重置模拟态会话，造成认证状态混乱，甚至成为配合 <code>start</code> 接口进行权限切换链路的一环</li></ul></td></tr><tr class="row-critical"><td style='white-space:nowrap;vertical-align:middle;'><span class="badge badge-post">POST</span></td><td style='min-width:120px;'><code style="font-size:.82rem;word-break:break-all;">/fuel-surcharges/fuel-coefficient/grid</code></td><td style='min-width:160px;'><code style="font-size:.82rem;">queryGrid(GridRequest)</code></td><td style='white-space:nowrap;'><span style="color:#276749;">部分 / 需复核</span></td><td style='min-width:140px;font-size:.85rem;'><span style="font-size:.85rem;">本次新增接口定义中仅看到 URL 映射，未见任何显式角色校验或数据范围过滤约束，无法证明已限制访问范围。</span></td><td style='white-space:nowrap;'><div class="risk-zh">高风险（接口未显式鉴权，存在越权读取风险）</div><div style="margin-top:6px;"><span class="badge badge-critical">CRITICAL</span></div></td><td style='min-width:220px;'><ul class="issue-list"><li><strong>原因：</strong> 新增对外 HTTP 入口 <code>POST /fuel-surcharges/fuel-coefficient/grid</code>，但在本次 diff 可见代码中仅定义了 <code>@PostMapping</code>，未见 <code>AuthUtil.requireRole()</code>、<code>@PreAuthorize</code> 或其他显式角色校验声明</li><li>按照审查基线，POST 接口缺失角色校验属于高危越权风险</li><li><strong>影响：</strong> 若控制器/实现层未补充鉴权，任意已登录主体甚至误放行请求可能直接访问燃油系数列表</li><li>且该查询接口未体现任何基于用户身份的数据范围约束（如租户/客户维度过滤），存在扩大数据可见范围的风险</li><li>---
+
+<strong>原因：</strong> 新增的 HTTP 入口 <code>queryGrid(GridRequest request)</code> 直接将外部请求转发到 <code>fuelCoefficientPortalService.queryGrid(request)</code>，在当前 diff 可见代码中未看到任何角色校验注解（如 <code>@PreAuthorize</code>）或显式鉴权调用，也未体现基于 <code>fleetId</code> / <code>facilityCode</code> 的数据范围约束</li></ul></td></tr><tr class="row-major"><td style='white-space:nowrap;vertical-align:middle;'><span class="badge badge-service" style="background:#718096;color:#fff;font-size:.75rem;">Java 方法</span></td><td style='min-width:120px;'><code style="font-size:.82rem;word-break:break-all;">SimpleCustomRealm.doGetAuthenticationInfo(...)</code></td><td style='min-width:160px;'><code style="font-size:.82rem;">doGetAuthenticationInfo(...)</code></td><td style='white-space:nowrap;'><span style="color:#dd6b20;">待复核</span></td><td style='min-width:140px;font-size:.85rem;'><span style="font-size:.85rem;">代码只要从 token 中解析出 <code>isMimic=true</code> 及相关管理员 claim，就直接把当前登录态标记为 mimic，并未在本分片看到任何管理员角色或代操作范围校验。</span></td><td style='white-space:nowrap;'><div class="risk-zh">高风险（伪造代操作身份/权限边界缺失）</div><div style="margin-top:6px;"><span class="badge badge-high">HIGH</span></div></td><td style='min-width:220px;'><ul class="issue-list"><li><strong>原因：</strong> 认证阶段直接信任 token 中新增的 <code>isMimic/realUsername/realUserId/realEmail</code> 声明，并将其写入 <code>userInfo</code> 作为管理员代操作上下文，但本分片未看到任何与管理员身份、角色、可代操作范围绑定的二次校验</li><li>也就是说，只要能够生成或获得一个带这些声明的有效 JWT，系统就会把当前会话标记为 mimic</li><li><strong>影响：</strong> 若 mimic token 的签发入口、密钥使用方或下游消费方存在缺口，攻击者可借由自带的 mimic 声明伪造“管理员代用户操作”身份，污染审计链路，甚至在依赖 <code>isMimic</code>/<code>mimicAdmin*</code> 做特权放行的代码中形成越权</li><li>当前实现把权限事实建立在可携带的 claim 上，而不是服务端可核验的授权关系上</li></ul></td></tr></tbody></table></div>
   </div>
 
-  <div class="section"><div class="file-block endpoint-gap-block"><h3 class="api-surface-sub">Diff 中出现但未出现在「权限与访问控制」接口表中的路径（待核对）</h3><p class="inferred-hint">说明：由脚本从 diff 新增行中的 <code>@GetMapping</code> 等注解提取，未做类级路径拼接；未出现在上表可能表示本次无此类 finding、模型漏标 category/path，或该路径非 HTTP 面。请人工对照 Controller/Facade。</p><table><thead><tr><th>可疑漏列 API</th></tr></thead><tbody><tr><td><code>POST /admin/mimic/start</code></td></tr><tr><td><code>POST /admin/mimic/stop</code></td></tr><tr><td><code>POST /discount/grid</code></td></tr><tr><td><code>* /fuel-surcharges/fuel-coefficient</code></td></tr><tr><td><code>POST /grid</code></td></tr><tr><td><code>POST /source-fuel-fee/grid</code></td></tr><tr><td><code>POST /threshold/grid</code></td></tr></tbody></table></div></div>
+  <div class="section"><div class="file-block endpoint-gap-block"><h3 class="api-surface-sub">Diff 中出现但未出现在「权限与访问控制」接口表中的路径（待核对）</h3><p class="inferred-hint">说明：由脚本从 diff 新增行中的 <code>@GetMapping</code> 等注解提取，未做类级路径拼接；未出现在上表可能表示本次无此类 finding、模型漏标 category/path，或该路径非 HTTP 面。请人工对照 Controller/Facade。</p><table><thead><tr><th>可疑漏列 API</th></tr></thead><tbody><tr><td><code>POST /admin/mimic/start</code></td></tr><tr><td><code>POST /discount/grid</code></td></tr><tr><td><code>* /fuel-surcharges/fuel-coefficient</code></td></tr><tr><td><code>POST /grid</code></td></tr><tr><td><code>POST /source-fuel-fee/grid</code></td></tr><tr><td><code>POST /threshold/grid</code></td></tr></tbody></table></div></div>
 
   <div class="dp-section">
     <div class="dp-section-title">端点详情</div>
-    <div class="dp-folds"></div>
+    <div class="dp-folds"><details class="issue-fold"><summary>POST /admin/mimic/stop</summary><div class="issue-fold-body">
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="badge critical">Critical</span>
+      <span class="method-badge">POST</span>
+      <span class="endpoint">/admin/mimic/stop</span>
+    </div>
+    <div class="issue-body">
+      <div class="section-title">问题描述</div>
+      <p class="loc-hint">关联位置：<code>cps-facade-impl/src/main/java/com/speedx/cps/facade/impl/MimicFacadeImpl.java L46-121</code></p>
+      <p class="desc">1. <strong>原因：</strong> 停止 mimic 后，代码直接依据当前 token 中携带的 <code>mimicAdminUsername/mimicAdminId</code> 生成新的管理员访问令牌，且未重新校验该原管理员账号当前是否仍然有效、是否仍具备管理员权限、是否被禁用/降权。</p>
+      <div class="section-title">问题代码</div><pre><code>String adminUsername = currentUser.getMimicAdminUsername();
+Long adminId = currentUser.getMimicAdminId();
+...
+String newAdminToken = jwtUtil.generateAccessToken(adminUsername, adminId);</code></pre>
+      <div class="two-col">
+        <div class="impact-box">
+          <h4>安全影响</h4>
+          <p><strong> 若管理员在 mimic 期间被禁用、删除或权限被回收，调用 <code>/admin/mimic/stop</code> 仍可恢复出新的管理员 token，导致权限回收失效，形成失效认证继续生效的问题。
+
+---
+
+</strong>原因：<strong> 新增的停止模拟入口同样只有 <code>@PostMapping(&quot;/admin/mimic/stop&quot;)</code>，未在接口声明上体现任何角色校验。对于会修改当前认证态/会话态的 POST 管理接口，缺失显式鉴权会导致任意已认证主体触发管理员会话状态变更。
+
+
+
+</strong>影响：** 若底层实现依赖当前会话中的 mimic 状态而未限制调用者身份，低权限用户可能借此探测、干扰或重置模拟态会话，造成认证状态混乱，甚至成为配合 <code>start</code> 接口进行权限切换链路的一环。对身份恢复类接口而言，错误暴露同样属于高危访问控制缺陷。
+
+---
+
+<code>/admin/mimic/stop</code> 只校验当前登录态 <code>isMimic=true</code>，随后直接基于请求头中的 token 执行 <code>revokeToken</code>。该实现没有把待撤销 token 与当前会话中的 mimic 身份做一致性校验；若同一 mimic 用户持有多个 token 或请求头被替换，可能撤销到非当前会话 token，导致会话切换结果不可预期。</p>
+        </div>
+        <div class="fix-box">
+          <h4>修复建议</h4>
+          <ul class="list"><li>在生成新管理员 token 前，按 <code>adminId/adminUsername</code> 回查用户并校验：账号存在、状态为 ACTIVE、角色仍为 <code>PORTAL_ADMIN</code>。校验失败时仅撤销 mimic token，不再恢复管理员会话，并要求重新登录。</li></ul>
+        </div>
+      </div>
+      
+    </div>
+  </div>
+</div></details>
+<details class="issue-fold"><summary>POST /fuel-surcharges/fuel-coefficient/grid</summary><div class="issue-fold-body">
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="badge critical">Critical</span>
+      <span class="method-badge">POST</span>
+      <span class="endpoint">/fuel-surcharges/fuel-coefficient/grid</span>
+    </div>
+    <div class="issue-body">
+      <div class="section-title">问题描述</div>
+      <p class="loc-hint">关联位置：<code>shippers-portal/src/main/java/com/speedx/shippers/facade/FuelCoefficientPortalFacade.java L17-32</code></p>
+      <p class="desc">1. <strong>原因：</strong> 新增对外 HTTP 入口 <code>POST /fuel-surcharges/fuel-coefficient/grid</code>，但在本次 diff 可见代码中仅定义了 <code>@PostMapping</code>，未见 <code>AuthUtil.requireRole()</code>、<code>@PreAuthorize</code> 或其他显式角色校验声明。按照审查基线，POST 接口缺失角色校验属于高危越权风险。</p>
+      <div class="section-title">问题代码</div><pre><code>@PostMapping(&quot;/grid&quot;)
+@ApiOperation(value = &quot;Customer Portal fuel coefficient grid&quot;)
+BaseResponse&lt;GridResponse&lt;FuelCoefficientGridResponse&gt;&gt; queryGrid(@RequestBody GridRequest request);</code></pre>
+      <div class="two-col">
+        <div class="impact-box">
+          <h4>安全影响</h4>
+          <p><strong> 若控制器/实现层未补充鉴权，任意已登录主体甚至误放行请求可能直接访问燃油系数列表；且该查询接口未体现任何基于用户身份的数据范围约束（如租户/客户维度过滤），存在扩大数据可见范围的风险。
+
+---
+
+</strong>原因：<strong> 新增的 HTTP 入口 <code>queryGrid(GridRequest request)</code> 直接将外部请求转发到 <code>fuelCoefficientPortalService.queryGrid(request)</code>，在当前 diff 可见代码中未看到任何角色校验注解（如 <code>@PreAuthorize</code>）或显式鉴权调用，也未体现基于 <code>fleetId</code> / <code>facilityCode</code> 的数据范围约束。按照审查基线，查询类接口若未按用户身份过滤数据范围，容易导致返回全部燃油系数数据。
+
+
+
+</strong>影响：** 一旦上游 Facade 映射对外暴露且未在其他层强制校验，低权限用户可直接调用该入口查询超出自身所属 <code>fleetId</code> 或 <code>facilityCode</code> 范围的数据，构成高风险越权读取。由于本分片未展示接口映射与服务层过滤实现，当前无法证明其已被其他层安全兜底。</p>
+        </div>
+        <div class="fix-box">
+          <h4>修复建议</h4>
+          <p>1. 为该入口补充显式鉴权与数据范围控制，至少在 Controller/Facade 实现层增加角色校验注解，并在服务层基于当前登录用户注入查询范围后再执行查询。例如：</p><p>同时补充未授权访问返回 401/403 的统一校验。</p>
+        </div>
+      </div>
+      <div class="section-title">修复示意</div><pre><code>@PreAuthorize(&quot;hasAnyRole(&#x27;SHIPPER&#x27;,&#x27;ADMIN&#x27;)&quot;)
+@PostMapping(&quot;/grid&quot;)
+public BaseResponse&lt;GridResponse&lt;FuelCoefficientGridResponse&gt;&gt; queryGrid(@RequestBody GridRequest request) {
+    LoginUserBo user = LoginUserUtil.getLoginUser();
+    request.setCustomerCode(user.getCustomerCode());
+    return service.queryGrid(request);
+}</code></pre>
+    </div>
+  </div>
+</div></details>
+<details class="issue-fold"><summary>SERVICE SimpleCustomRealm.doGetAuthenticationInfo(...)</summary><div class="issue-fold-body">
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="badge high">High</span>
+      <span class="method-badge">SERVICE</span>
+      <span class="endpoint">SimpleCustomRealm.doGetAuthenticationInfo(...)</span>
+    </div>
+    <div class="issue-body">
+      <div class="section-title">问题描述</div>
+      <p class="loc-hint">关联位置：<code>cps-web/src/main/java/com/speedx/cps/shiro/SimpleCustomRealm.java L129-136</code></p>
+      <p class="desc">1. <strong>原因：</strong> 认证阶段直接信任 token 中新增的 <code>isMimic/realUsername/realUserId/realEmail</code> 声明，并将其写入 <code>userInfo</code> 作为管理员代操作上下文，但本分片未看到任何与管理员身份、角色、可代操作范围绑定的二次校验。也就是说，只要能够生成或获得一个带这些声明的有效 JWT，系统就会把当前会话标记为 mimic。</p>
+      <div class="section-title">问题代码</div><pre><code>JWTUtil.MimicClaims mimicClaims = getJwtUtil().getMimicClaims(token);
+if (mimicClaims != null) {
+    userInfo.setIsMimic(true);
+    userInfo.setMimicAdminUsername(mimicClaims.getRealUsername());
+    userInfo.setMimicAdminId(mimicClaims.getRealUserId());
+    userInfo.setMimicAdminEmail(mimicClaims.getRealEmail());
+}</code></pre>
+      <div class="two-col">
+        <div class="impact-box">
+          <h4>安全影响</h4>
+          <p>** 若 mimic token 的签发入口、密钥使用方或下游消费方存在缺口，攻击者可借由自带的 mimic 声明伪造“管理员代用户操作”身份，污染审计链路，甚至在依赖 <code>isMimic</code>/<code>mimicAdmin*</code> 做特权放行的代码中形成越权。当前实现把权限事实建立在可携带的 claim 上，而不是服务端可核验的授权关系上。</p>
+        </div>
+        <div class="fix-box">
+          <h4>修复建议</h4>
+          <ul class="list"><li>不要仅凭 JWT claim 建立 mimic 管理员身份。应在认证时追加服务端校验：根据 <code>realUserId</code> 查询管理员账号、验证其当前状态/角色是否具备 mimic 权限，并校验该管理员是否被授权代操作当前 <code>clientUserId</code>。更稳妥的做法是仅在 token 中放一个 <code>mimicSessionId</code>，服务端从受控存储读取管理员-客户绑定关系。</li></ul>
+        </div>
+      </div>
+      
+    </div>
+  </div>
+</div></details></div>
   </div>
 
   
 
   
 
-  <div class="dp-footer"><p>本报告由 AI Code Review 生成（data_permission 模式）。权限类 finding 涉及文件：<strong>（无）</strong></p><p style="margin-top:4px;">生成时间：2026-06-24 14:13:59 · 项目：cps-api</p></div>
+  <div class="dp-footer"><p>本报告由 AI Code Review 生成（data_permission 模式）。权限类 finding 涉及文件：<strong>cps-facade-impl/src/main/java/com/speedx/cps/facade/impl/MimicFacadeImpl.java、cps-web/src/main/java/com/speedx/cps/shiro/SimpleCustomRealm.java、shippers-portal/src/main/java/com/speedx/shippers/facade/FuelCoefficientPortalFacade.java</strong></p><p style="margin-top:4px;">生成时间：2026-06-25 11:59:08 · 项目：cps-api</p></div>
 
 </div>
 </div>
@@ -1859,9 +2031,9 @@ Normal review failed, skipped.</pre></details></div></div>
     function exportCsv() { alert('导出为 CSV 功能待实现'); }
 
     // Inject summary data (Task 5)
-    if (typeof updateSeveritySummary === 'function') updateSeveritySummary(0, 0, 0, 0);
-if (typeof renderCategoryChart === 'function') renderCategoryChart({});
-if (typeof renderTopCriticals === 'function') renderTopCriticals([]);
+    if (typeof updateSeveritySummary === 'function') updateSeveritySummary(4, 15, 1, 2);
+if (typeof renderCategoryChart === 'function') renderCategoryChart({"\u5b89\u5168\u98ce\u9669": 6, "\u5f02\u5e38\u5904\u7406": 5, "\u6743\u9650\u4e0e\u8bbf\u95ee\u63a7\u5236": 3, "\u914d\u7f6e\u53d8\u66f4": 3, "\u6570\u636e\u4e00\u81f4\u6027": 2, "API\u5951\u7ea6": 2, "\u4e1a\u52a1\u903b\u8f91": 1});
+if (typeof renderTopCriticals === 'function') renderTopCriticals([{"file": "cps-facade-impl/src/main/java/com/speedx/cps/facade/impl/MimicFacadeImpl.java", "line": "46-121", "severity": "critical", "category": "权限与访问控制", "description": "**原因：** 停止 mimic 后，代码直接依据当前 token 中携带的 `mimicAdminUsername/mimicAdminId` 生成新的管理员访问令牌，且未重新校验该原管理员账号当前是否仍然有效、是否仍具备管理员权限、是否被禁用/降权。\n\n```java\nString adminUsername = currentUser.getMimicAdminUsername();\nLong adminId = currentUser.getMimicAdminId();\n...\nString newAdminToken = jwtUtil.generateAccessToken(adminUsername, adminId);\n```\n\n**影响：** 若管理员在 mimic 期间被禁用、删除或权限被回收，调用 `/admin/mimic/stop` 仍可恢复出新的管理员 token，导致权限回收失效，形成失效认证继续生效的问题。\n\n---\n\n**原因：** 新增的停止模拟入口同样只有 `@PostMapping(\"/admin/mimic/stop\")`，未在接口声明上体现任何角色校验。对于会修改当前认证态/会话态的 POST 管理接口，缺失显式鉴权会导致任意已认证主体触发管理员会话状态变更。\n\n```java\n@PostMapping(\"/admin/mimic/stop\")\nBaseResponse<String> stopMimic();\n```\n\n**影响：** 若底层实现依赖当前会话中的 mimic 状态而未限制调用者身份，低权限用户可能借此探测、干扰或重置模拟态会话，造成认证状态混乱，甚至成为配合 `start` 接口进行权限切换链路的一环。对身份恢复类接口而言，错误暴露同样属于高危访问控制缺陷。\n\n---\n\n`/admin/mimic/stop` 只校验当前登录态 `isMimic=true`，随后直接基于请求头中的 token 执行 `revokeToken`。该实现没有把待撤销 token 与当前会话中的 mimic 身份做一致性校验；若同一 mimic 用户持有多个 token 或请求头被替换，可能撤销到非当前会话 token，导致会话切换结果不可预期。", "suggestion": "在生成新管理员 token 前，按 `adminId/adminUsername` 回查用户并校验：账号存在、状态为 ACTIVE、角色仍为 `PORTAL_ADMIN`。校验失败时仅撤销 mimic token，不再恢复管理员会话，并要求重新登录。", "test_scenario": "管理员发起 mimic 后，在后台将其账号禁用或移除 PORTAL_ADMIN 角色，再调用 POST /admin/mimic/stop；期望结果为停止 mimic 成功但不签发新的管理员 token，且后续需重新登录。", "http_method": "POST", "path_pattern": "/admin/mimic/stop", "permission_tags": ["isMimic", "mimicAdminId", "mimicAdminUsername"], "java_entry_method": "MimicFacadeImpl.stopMimic()", "expected_permission": "仅当原管理员账号当前仍有效且仍具备 PORTAL_ADMIN 权限时，才允许恢复管理员会话。", "actual_behavior": "代码仅信任 mimic token 中的管理员身份字段并直接签发新 token，未重新校验管理员账号状态与角色。", "evidence_refs": ["cps-facade-impl/src/main/java/com/speedx/cps/facade/impl/MimicFacadeImpl.java:91-93", "cps-facade-impl/src/main/java/com/speedx/cps/facade/impl/MimicFacadeImpl.java:111-121", "cps-facade/src/main/java/com/speedx/cps/facade/MimicFacade.java:18-20", "generic:mimic-session"], "risk_label_zh": "高风险（失效管理员权限被重新恢复）", "_aggregated_count": 2}, {"file": "cps-facade-impl/src/main/java/com/speedx/cps/facade/impl/MimicFacadeImpl.java", "line": "77-123", "severity": "critical", "category": "安全风险", "description": "接口将重新生成的管理员 JWT 明文放入响应体返回：`return BaseResponse.success(newAdminToken);`。该 token 可直接恢复管理员会话，敏感度高于普通用户 token；一旦响应被日志、监控、抓包或前端脚本泄露，将导致管理员账号被接管。", "suggestion": "不要在响应体中返回管理员访问令牌。应改为服务端重建受保护会话，或通过安全 Cookie 下发；如架构上必须返回，需最小化有效期并配合强绑定、一次性使用及严格脱敏审计。", "test_scenario": "调用 POST /admin/mimic/stop，检查响应体及各类日志链路中是否出现完整管理员 JWT；验证截获该 token 后能否在独立客户端直接恢复管理员权限。", "http_method": "POST", "path_pattern": "/admin/mimic/stop", "permission_tags": [], "java_entry_method": "", "expected_permission": "", "actual_behavior": "", "evidence_refs": [], "risk_label_zh": "", "_aggregated_count": 2}, {"file": "shippers-portal/src/main/java/com/speedx/orders/facade/req/OrderItemReq.java", "line": "34-42", "severity": "critical", "category": "安全风险", "description": "移除了 `unitWeight`、`unitValue`、`units` 的最小值校验后，请求体将允许 0、负数或异常偏小值进入后续订单/计费链路。该类字段通常参与运费、保价、赔付或库存/件数计算，放开下界约束会导致攻击者构造负货值、负件数或零重量订单，进而触发金额计算错误、风控绕过或下游系统异常。", "suggestion": "恢复对关键计费/计数字段的下界校验，并按业务语义分别约束：例如 `unitWeight` 使用 `@DecimalMin(\"0.1\")` 或业务允许的最小正数；`unitValue` 使用 `@DecimalMin(\"0.01\")`；`units` 使用 `@Min(1)`。若存在免费样品/零申报价等特例，应通过显式业务分支处理，而不是移除通用输入校验。", "test_scenario": "新增接口参数校验测试：提交 `unitWeight=-1`、`unitValue=-0.01`、`units=0`、`units=-3` 的请求，断言统一被 4xx 拒绝；同时补充金额计算回归测试，验证不存在负金额/负件数入库。},{", "http_method": "", "path_pattern": "", "permission_tags": [], "java_entry_method": "", "expected_permission": "", "actual_behavior": "", "evidence_refs": [], "risk_label_zh": "", "_aggregated_count": 1}]);
 
     // Export dropdown toggle
     (function() {
