@@ -45,11 +45,11 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">rps-job &nbsp;|&nbsp; 2026-06-24 10:15:01</div>
+      <div class="meta">rps-job &nbsp;|&nbsp; 2026-06-26 15:34:43</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
-      <span style="background:#4caf50;color:#fff;padding:4px 12px;border-radius:4px;font-weight:bold;">PASSED</span>
+      <span style="background:#f44336;color:#fff;padding:4px 12px;border-radius:4px;font-weight:bold;">FAILED</span>
     </div>
   </div>
 
@@ -62,7 +62,7 @@
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#4caf50">61.9%</div>
+            <div class="metric-value" style="color:#4caf50">61.4%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:0</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:4 &nbsp; 主要:16</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -82,10 +82,166 @@
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube analysis timed out after 1 minutes</li></ul>
+            <ul><li>SonarQube analysis timed out after 1 minutes</li>
+<li>AI Review: 4 Critical finding(s)</li>
+<li>AI Review: 16 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
+        <div class="findings-section">
+            <h3>AI 代码审查发现</h3>
+            
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">docs/biz/cainiao-config-routing.md:42-43</code>
+                </div>
+                <div class="finding-desc">文档新增了包含真实格式的签名密钥配置示例，并直接使用 `receiveSignKey` / `your-secret` 展示密钥字段。该文档位于仓库内，容易被开发、测试、外包或镜像系统长期传播，形成凭证管理误用示范；后续若有人按文档直接填入真实值提交，属于典型的密钥明文落库/入库风险，命中 [SEC-002]。</div>
+                <div class="finding-suggestion">💡 修复建议：不要在仓库文档中出现任何明文密钥示例值。将该字段改为占位符并明确要求从密钥管理系统注入，例如：`receiveSignKey: ${CAINIAO_RECEIVE_SIGN_KEY}`，同时在文档中补充“禁止提交真实密钥到 Git/Nacos 明文配置”的说明。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/builder/CalculateRateRequestBuilder.java:503-516</code>
+                </div>
+                <div class="finding-desc">新增实现删除了基于 `sortCodeDto.getSurchargeCode()` 的回退逻辑，改为仅依赖 `coverageSurchargeDataSource.findValid(...)` 命中结果，否则直接返回 `DeliveryAreaSurchargeType.NONE`。这会把上游 OMS 已判定的 DAS/EDAS 信息静默降级为 NONE，属于计费安全风险：攻击者或异常调用方只要构造一个无法命中本地覆盖表、但 `sortCodeDto` 已携带 surchargeCode 的请求，即可绕过附加费计入，导致运费少算。相关变更代码：
+```java
+DeliveryAreaSurchargeType getDeliveryAreaSurchargeType(SortCodeDto sortCodeDto, RpsCalculateRateRequest request) {
+    String zipCode = sortCodeDto.getZipCode();
+    String country = request.getRecipientCountry();
+    Long customerId = request.getOrgId();
+    Date date = request.getShipDate();
+    if (coverageSurchargeDataSource.findValid(date, DeliveryAreaSurchargeType.EDAS.name(), zipCode, country, customerId, request.getDspCode())) {
+        return DeliveryAreaSurchargeType.EDAS;
+    }
+    if (coverageSurchargeDataSource.findValid(date, DeliveryAreaSurchargeType.DAS.name(), zipCode, country, customerId, request.getDspCode())) {
+        return DeliveryAreaSurchargeType.DAS;
+    }
+    return DeliveryAreaSurchargeType.NONE;
+}
+```
+该问题直接影响费率计算结果，符合“资金计算错误”高危场景。</div>
+                <div class="finding-suggestion">💡 修复建议：恢复安全回退策略：当本地覆盖表未命中时，继续校验并使用上游 `sortCodeDto.getSurchargeCode()`，同时对白名单枚举做严格校验，避免非法值注入。例如：
+```java
+DeliveryAreaSurchargeType type = queryCoverage(...);
+if (type != DeliveryAreaSurchargeType.NONE) {
+    return type;
+}
+if (StrUtil.isNotBlank(sortCodeDto.getSurchargeCode())) {
+    return safeParse(sortCodeDto.getSurchargeCode());
+}
+return DeliveryAreaSurchargeType.NONE;
+```
+并补充审计日志/告警，记录“覆盖表未命中但上游带 surchargeCode”的场景，便于发现配置缺口。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/module/rate/CainiaoUspsRateModule.java:20-40</code>
+                </div>
+                <div class="finding-desc">新增的 USPS 费率模块在创建面单时直接将 `postage_base`、`postage_amount` 置为 `BigDecimal.ZERO`，并清空 `rate_version`、`rate_id`，等于绕过费率查询与费率标识绑定。若该模块被用于真实出单链路，调用方可在未完成有效计费校验的情况下生成 0 运费标签，属于资金计算错误风险。
+
+问题代码：
+```java
+context.getCreateLabelValue().setPushLabelInfoPostageRetailer(PushLabelInfoPostageForm.builder()
+        .postage_base(BigDecimal.ZERO)
+        .postage_amount(BigDecimal.ZERO)
+        .rate_version(null)
+        .rate_id(null)
+        .surcharges(new ArrayList&lt;&gt;())
+        .build());
+context.getCreateLabelValue().setPostageBase(BigDecimal.ZERO);
+context.getCreateLabelValue().setRateId(null);
+```</div>
+                <div class="finding-suggestion">💡 修复建议：不要以固定 0 金额作为默认费率返回。应显式调用真实费率计算/查询逻辑；若该产品当前不支持计费，直接抛出业务异常阻断出单，而不是返回 0 运费。示例：
+```java
+throw new IllegalStateException(&quot;USPS rate is not available for current product&quot;);
+```
+或在成功获取有效 `rateId/rateVersion/postageAmount` 后再写入上下文。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/OmsCreateLabelCmd.java:311-314</code>
+                </div>
+                <div class="finding-desc">**原因：** 新增逻辑直接信任请求体中的 `createLabelForm.getDspCode()`，并优先覆盖原有基于 `CustomerAccountConfig`/路由策略解析出的承运渠道，没有看到任何对该 `dspCode` 是否属于当前 customer/account 可用范围的校验，也没有看到与 `productCode`、客户配置、资源归属的绑定校验。
+
+```java
+if (StrUtil.isNotBlank(createLabelForm.getDspCode())) {
+    String dspCode = createLabelForm.getDspCode();
+    context.setDspCode(dspCode);
+    return dspCode;
+}
+```
+
+**影响：** 调用 `/label/create-label`（以及同一服务方法对应的其他入口）时，攻击者可通过构造任意 `dspCode` 影响后续 `sortCodeModule`、`productModule` 等模块选择，存在跨租户/跨渠道下单、绕过既有路由限制、访问本不应开放的 DSP 能力的越权风险；若不同 DSP 对应不同计费/面单/下游账号，还可能进一步导致错误计费或调用未授权的外部渠道。
+
+---
+
+**原因：** 变更后 `getProductModule(productCode,dspCode)` 将模块选择显式绑定到外部可控的 `dspCode`，但在本次 diff 中未看到任何新增的鉴权或数据范围校验来约束该组合是否合法。由于上游 `dspCode` 已可由请求直接指定，这里会把未校验的渠道标识继续传入产品模块。
+
+```java
+IProductModule productModule = functionModuleFactory.getProductModule(productCode,dspCode);
+```
+
+**影响：** 即使原有 `productCode` 合法，攻击者仍可能通过篡改 `dspCode` 进入不属于当前账号的产品实现分支，造成产品矩阵校验、计费、面单生成逻辑在错误租户/错误渠道下执行，扩大前述越权面的影响范围。</div>
+                <div class="finding-suggestion">💡 修复建议：不要直接信任前端传入的 `dspCode`。应在接受该字段前增加白名单与归属校验：1）校验 `dspCode` 是否在当前 customerAccount 允许的渠道集合内；2）校验其与 `productCode` 的组合是否被当前账号授权；3）若无明确业务要求，优先仍以服务端路由策略结果为准，忽略外部传值。示例：
+```java
+String requestedDspCode = createLabelForm.getDspCode();
+if (StrUtil.isNotBlank(requestedDspCode)) {
+    if (!customerDspAuthService.isAllowed(context.getCustomerAccount(), productCode, requestedDspCode)) {
+        throw new RRException(&quot;dspCode is not allowed for current account&quot;, ResponseCode.NO_PERMISSION);
+    }
+    context.setDspCode(requestedDspCode);
+    return requestedDspCode;
+}
+```
+同时补充审计日志与告警，记录被拒绝的越权尝试。</div>
+            </div>
+            
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">rps-common/src/main/java/io/speedx/rps/common/form/exchange/cainiao/CainiaoCreateLabelForm.java:27-60</code>
+                </div>
+                <div class="finding-desc">将 `trackingNumber` 的输入校验从最大 18 位放宽到 50 位，但同一字段的 Swagger 文档仍声明 `Max-length: 40`，且示例值明显更短。该变更会导致服务端接受更长的追踪号，而上下游若仍按旧长度（18/40）进行存储、签名、路由或第三方接口调用，可能出现截断、校验绕过或请求落到异常分支。对标签创建这类外部集成场景，输入边界放宽属于安全相关 API 契约变更，应同步验证所有消费方与下游约束。</div>
+                <div class="finding-suggestion">💡 修复建议：统一 `trackingNumber` 的真实长度约束与文档说明，并在进入下游系统前增加显式长度/字符集校验。若业务确需放宽到 50，建议同步更新 `@ApiModelProperty` 文档、相关 DTO/数据库字段/第三方请求构造逻辑，并补充拒绝超出下游限制值的保护校验。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">rps-common/src/main/java/io/speedx/rps/common/form/exchange/cainiao/ExternalInfo.java:7-10</code>
+                </div>
+                <div class="finding-desc">新建的 `ExternalInfo` 作为外部请求承载对象，两个字段均未设置任何输入约束：`crossBorderMode` 可被注入超长或异常内容，`getLabelFromAE` 可为空并触发三态逻辑歧义。对于面向外部集成的表单对象，这种“裸 DTO”会把不受控输入直接暴露给后续业务判断和第三方请求拼装，容易造成异常处理缺陷或被利用触发非预期流程。</div>
+                <div class="finding-suggestion">💡 修复建议：在 `ExternalInfo` 上补充最小必要校验与语义约束：对 `crossBorderMode` 限制长度并优先改为枚举类型；对 `getLabelFromAE` 明确默认值策略，若必须由调用方显式指定则使用 `@NotNull`。同时在消费该对象的服务层增加兜底校验，避免仅依赖控制器层。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/OmsCreateLabelCmd.java:311-315</code>
+                </div>
+                <div class="finding-desc">这里新增了“请求中传入 dspCode 时直接采用”的分支，并立即写入 context，但没有看到任何与 customer/product/courier 维度的合法性校验。相比原先完全由路由策略解析 DSP，这会把创建标签的路由决定权暴露给外部入参：调用方只要传入任意非空 dspCode，就会绕过既有 CHANNEL_ROUTING_STRATEGY，后续 sort code、product matrix、rate/label module 都会按该 DSP 执行，容易导致标签走错承运通道或命中不属于该客户的配置。</div>
+                <div class="finding-suggestion">💡 修复建议：在接受 createLabelForm.getDspCode() 前增加白名单校验，至少校验该 dspCode 是否属于当前 customerAccount + productCode + courierCode 可用的 DSP 集合；若不合法应抛出明确业务异常。示例：`String requested = createLabelForm.getDspCode(); if (StrUtil.isNotBlank(requested)) { if (!routingValidator.isAllowed(context.getCustomerAccount(), productCode, requested)) { throw new RRException(&quot;dspCode is not allowed for current customer/product&quot;, ResponseCode.PARAM_ERROR); } context.setDspCode(requested); return requested; }`。同时补充与 CHANNEL_ROUTING_STRATEGY 的优先级说明。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/OmsUpdateLabelCmd.java:162</code>
+                </div>
+                <div class="finding-desc">这里把 `rpsLabel.getDspCode().name()` 作为新增参数传给 `getProductModule(...)`，但未做空值保护。历史数据或异常标签记录若 `dspCode` 为空，更新标签流程会在这里直接触发空指针，导致整个 updateLabel 失败。该风险是本次新增代码引入的，因为旧逻辑只依赖 productCode。</div>
+                <div class="finding-suggestion">💡 修复建议：在调用 `.name()` 前显式判空，并定义兼容策略：要么回退到旧的 `getProductModule(productCode)` 路径，要么抛出可识别的业务异常而不是 NPE。示例：`String dspCode = Optional.ofNullable(rpsLabel.getDspCode()).map(Enum::name).orElseThrow(() -&gt; new RRException(&quot;dspCode is missing for label update&quot;, ResponseCode.OPERATION_ERROR)); IProductModule productModule = functionModuleFactory.getProductModule(courierExt.getProductCode(), dspCode);`</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/module/FunctionModuleFactory.java:195-199</code>
+                </div>
+                <div class="finding-desc">`getProductModule` 方法签名改为由调用方传入 `dspCode` 后，删除了原先通过 `omsProductService.getProduct(productCode)` 获取 DSP 的兜底逻辑，但新增代码没有对 `dspCode` 做空值校验。若现有调用方仍只保证 `productCode` 非空、未同步传入 `dspCode`，这里会直接走到默认 `return genericProductModule`，把本应路由到特定 DSP 的产品错误地交给通用模块处理，属于静默业务偏差，且比直接抛错更难排查。</div>
+                <div class="finding-suggestion">💡 修复建议：在方法入口补充 `dspCode` 非空校验，至少与其他工厂方法保持一致：`if (StringUtils.isBlank(dspCode)) { throw new RRException(&quot;DspCode code is empty&quot;); }`。如果需要兼容旧调用方，建议保留原有重载 `getProductModule(String productCode)`，内部查询 product 后再委托到新方法，避免存量调用出现错误路由。</div>
+            </div>
+            <p class="more-note">... 还有 11 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+        </div>
+        
 
   <div class="footer">
     由质量门禁引擎生成 &nbsp;|&nbsp; SpeedX CI/CD
