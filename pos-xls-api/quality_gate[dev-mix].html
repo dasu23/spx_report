@@ -45,11 +45,11 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-xls-api &nbsp;|&nbsp; 2026-06-24 14:21:12</div>
+      <div class="meta">pos-xls-api &nbsp;|&nbsp; 2026-06-27 16:49:03</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
-      <span style="background:#4caf50;color:#fff;padding:4px 12px;border-radius:4px;font-weight:bold;">PASSED</span>
+      <span style="background:#f44336;color:#fff;padding:4px 12px;border-radius:4px;font-weight:bold;">FAILED</span>
     </div>
   </div>
 
@@ -62,7 +62,7 @@
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#4caf50">50.7%</div>
+            <div class="metric-value" style="color:#ff9800">40.2%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:0</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:6 &nbsp; 主要:41</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -82,10 +82,236 @@
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube analysis timed out after 1 minutes</li></ul>
+            <ul><li>SonarQube analysis timed out after 1 minutes</li>
+<li>AI Review: 6 Critical finding(s)</li>
+<li>AI Review: 41 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
+        <div class="findings-section">
+            <h3>AI 代码审查发现</h3>
+            
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/report/impl/PtcScanReportProcessor.java:111-118</code>
+                </div>
+                <div class="finding-desc">**原因：** 新增处理器从 `task.getRemark()` 读取 `facilityCode`，仅对查询参数做格式/时间校验，然后直接进入导出流程；当前变更中未见任何对 `facilityCode` 非空、合法性、以及查询对象是否属于该 facility 的访问控制校验。
+
+```java
+PtcScanReportSearchDto searchDto = JSONUtil.toBean(task.getBusinessData(), PtcScanReportSearchDto.class);
+Date snapshotTime = new Date();
+if (searchDto.getEndTime() != null &amp;&amp; searchDto.getEndTime().after(snapshotTime)) {
+    searchDto.setEndTime(snapshotTime);
+}
+posContainerParcelScanHistoryService.validateReportSearchParam(searchDto);
+```
+
+**影响：** 若任务创建端允许篡改 `remark` 或提交跨站点 tracking/container 条件，异步 worker 将按传入 facilityCode 导出 PtC 扫描历史，导致跨站点扫描轨迹泄露。
+
+---
+
+**原因：** 新增处理器直接使用 `task.getRemark()` 作为 `facilityCode` 查询指定时间范围内的全部 `InboundParcel`，但没有对 `facilityCode` 与任务/用户归属做任何校验。
+
+```java
+SortDetailQuery query = JSON.parseObject(task.getBusinessData(), SortDetailQuery.class);
+String facilityCode = task.getRemark();
+...
+List&lt;InboundParcel&gt; parcels = inboundParcelDao.findByScanFacilityCodeAndTimeRange(
+        facilityCode, startUtc, endUtc);
+```
+
+**影响：** 只要能创建或篡改异步任务，攻击者即可指定任意 facilityCode 导出该站点某时间段内全部分拣明细，造成大规模跨租户数据泄露。该导出还会联表补充 label、route、operator 等敏感运营信息，影响面更大。</div>
+                <div class="finding-suggestion">💡 修复建议：在 `parseSearchDto` 或 `process` 开始处强制校验 `task.getRemark()`/`facilityCode` 非空且属于当前任务上下文；同时在 `exportPtcScanReportByPage/BySlice` 的 service/DAO 层强制附带 facilityCode 过滤，不允许仅依赖搜索条件。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/web/impl/WebInboundSortStatServiceImpl.java:28-141</code>
+                </div>
+                <div class="finding-desc">**原因：** 新增 `queryArriveStatistics(String facilityCode, Date startTime, Date endTime)` 直接使用调用方传入的 `facilityCode` 查询到达统计，没有将其绑定到当前登录用户的 `facilityCode`，也没有任何角色/数据范围校验。调用方若可控该参数，即可查询任意仓的到达统计。
+
+```java
++    public ArriveStatResp queryArriveStatistics(String facilityCode, Date startTime, Date endTime) {
++        ...
++        List&lt;FacilityArrivalCount&gt; facilityRows = arrivalSortCounterDao.groupByScanFacility(
++                facilityCode, startTime, endTime);
++        ...
++        List&lt;RouteArrivalCount&gt; routeRows = arrivalSortCounterDao.groupByRouteCode(
++                facilityCode, startTime, endTime);
++```
+
+**影响：** 会导致跨仓运营统计数据越权读取，攻击者可遍历 facilityCode 获取其他仓的吞吐、路由分布等敏感经营数据。</div>
+                <div class="finding-suggestion">💡 修复建议：不要信任外部传入的 `facilityCode` 作为查询范围。应优先使用 `LoginUserUtil.getCurFacilityCode()`，或仅允许具备跨仓查看权限的管理员传入其他仓编码，并显式校验角色。示例：
+```java
+String curFacilityCode = LoginUserUtil.getCurFacilityCode();
+if (!curFacilityCode.equals(facilityCode) &amp;&amp; !AuthUtil.hasRole(&quot;ADMIN&quot;)) {
+    throw new RRException(&quot;no permission&quot;);
+}
+```
+同时建议在入口层增加权限注解。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-xls-api/src/main/java/com/miq/posreportapi/controller/ReportTaskJobDebugController.java:44-65</code>
+                </div>
+                <div class="finding-desc">**原因：** 新增了可直接触发后台任务执行的 HTTP 入口，但在该方法及类上未看到任何 `AuthUtil.requireRole()`、`@PreAuthorize` 或其他鉴权/环境限制措施。任意能够访问该服务的调用方都可能直接调用：
+
+```java
+@PostMapping(&quot;/run&quot;)
+public Map&lt;String, Object&gt; run() {
+    log.info(&quot;[debug] manual trigger of ReportTaskJob.execute(){}&quot;);
+    boolean ok = reportTaskJob.execute();
+```
+
+该接口会手动执行 `ReportTaskJob.execute()`，等价于触发一次任务扫描、状态变更和异步处理，不属于只读调试能力。
+
+**影响：** 未授权用户可越权触发批处理任务，导致后台任务被提前/重复执行，可能引发任务状态篡改、批量报表生成、资源消耗放大，甚至造成服务可用性下降。若测试/调试接口被误发布到生产或内网共享环境，风险进一步扩大。</div>
+                <div class="finding-suggestion">💡 修复建议：为该入口增加强制鉴权与环境隔离，至少满足其一：1）在方法上增加 `@PreAuthorize` 或等效角色校验；2）仅在 `local/test` profile 下注册该 Controller；3）增加来源白名单或管理端口隔离。示例：
+```java
+@Profile({&quot;local&quot;,&quot;test&quot;})
+@RestController
+@RequestMapping(&quot;/debug/report-task&quot;)
+public class ReportTaskJobDebugController {
+
+    @PreAuthorize(&quot;hasRole(&#x27;ADMIN&#x27;)&quot;)
+    @PostMapping(&quot;/run&quot;)
+    public Map&lt;String, Object&gt; run() { ... }
+}
+```
+若必须在非测试环境保留，需补充幂等/频控保护，避免被重复触发。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/report/impl/DispatchReportProcessor.java:53-61</code>
+                </div>
+                <div class="finding-desc">**原因：** 新增的异步报表处理器仅校验 `dispatchId` 是否存在及状态是否为删除，但没有在当前变更行中看到任何基于 `task.getFacilityCode()` 与 `dispatch` 归属关系的数据范围校验，也没有角色/权限断言。只要任务创建阶段能写入任意 `dispatchId`，worker 就会继续生成该 dispatch 的完整报表。
+
+```java
+Dispatch dispatch = webDispatchService.findDataById(id);
+if (dispatch == null) {
+    throw new RRException(String.format(&quot;Dispatch is not found, Id is %s&quot;, id));
+}
+if (DispatchStatusEnum.DELETED.name().equals(dispatch.getStatus())) {
+    throw new RRException(String.format(&quot;Dispatch is Close, Dispatch Id is %s&quot;, dispatch.getDispatchId()));
+}
+```
+
+**影响：** 若上游任务创建接口对 `businessData`/`facilityCode` 约束不严，攻击者可通过构造他人 `dispatchId` 触发异步导出，造成跨站点/跨租户 dispatch 明细越权读取。该问题会在异步链路中绕过原同步接口可能依赖的登录态隔离。
+
+---
+
+**原因：** 新增处理器对 `PickupDownloadDto` 仅做了 `ids` 非空校验，没有校验这些 ID 是否全部属于当前任务的 `facilityCode`/当前操作者可见范围，也没有任何角色断言。
+
+```java
+PickupDownloadDto dto = parseBusinessData(task, PickupDownloadDto.class);
+if (CollUtil.isEmpty(dto.getIds())) {
+    throw new RRException(&quot;ids must not be empty&quot;);
+}
+```
+
+**影响：** 一旦上游可提交任意 ID 列表，攻击者可混入其他站点/其他用户可见范围外的 pickup 记录，异步导出完整数据池，形成批量越权读取。由于这是“按 ID 选择导出”，风险比普通列表导出更高，容易精准枚举敏感记录。</div>
+                <div class="finding-suggestion">💡 修复建议：在 `validateBusiness` 或 `parseParams` 中增加资源归属校验，至少校验 `dispatch` 是否属于 `task.getFacilityCode()` 可见范围；若存在角色体系，还应在创建任务入口和处理器两侧同时校验。示例：
+```java
+Dispatch dispatch = webDispatchService.findDataById(id);
+if (dispatch == null) {
+    throw new RRException(&quot;Dispatch not found&quot;);
+}
+if (!Objects.equals(dispatch.getFacilityCode(), task.getFacilityCode())) {
+    throw new RRException(&quot;No permission to export this dispatch&quot;);
+}
+```
+并补充 service 层按 facilityCode 过滤的查询接口，避免仅靠前端传参。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/report/impl/PosContainerDownloadReportProcessor.java:60-72</code>
+                </div>
+                <div class="finding-desc">**原因：** 新增处理器只解析 `containerId`，随后直接调用 `posContainerService.getScanReport(containerId, task.getFacilityCode())`，但在当前变更中没有看到对 `containerId` 与 `task.getFacilityCode()` 归属关系的显式校验。注释还明确写了 `facilityCode` 可为空，这进一步削弱了租户边界。
+
+```java
+Long containerId = parseBusinessData(task, Long.class, &quot;containerId&quot;);
+// facilityCode 可为空
+ContainerScanReportDto dto;
+try {
+    dto = posContainerService.getScanReport(containerId, task.getFacilityCode());
+} catch (IllegalArgumentException e) {
+    throw new RRException(&quot;Container not found: &quot; + containerId);
+}
+```
+
+**影响：** 如果 service 内部未强制按 facilityCode 过滤，攻击者可通过猜测/枚举 `containerId` 导出其他站点容器扫描报表；即使 service 部分依赖传入 facilityCode，允许空值也可能触发更宽松的查询路径，导致跨租户数据泄露。
+
+---
+
+**原因：** 新增处理器根据 `batchId` 直接查询 `ReceivingBatch` 并生成报表，但没有校验该 batch 是否属于 `task.getFacilityCode()` 或当前操作者的数据范围。
+
+```java
+Long batchId = parseBusinessData(task, Long.class, &quot;batchId&quot;);
+ReceivingBatch receivingBatch = webReceivingBatchService.findDataById(batchId);
+if (receivingBatch == null) {
+    throw new RRException(&quot;ReceivingBatch not found: &quot; + batchId);
+}
+String batchCode = receivingBatch.getBatchCode();
+ReceivingBatchReportBo reportBo = webReceivingBatchService.getBatchReport(batchCode);
+```
+
+**影响：** 任意可提交异步任务的人只要知道其他 batchId，即可导出他站收货批次及包裹/容器明细，造成跨站点业务数据泄露。
+
+---
+
+**原因：** 新增处理器通过 `batchId` 获取 `InboundBatch` 并生成 return batch 报表，但没有校验该批次是否属于当前任务 `facilityCode` 的可见范围。
+
+**影响：** 攻击者可利用可枚举的 `batchId` 导出其他站点的 inbound/return parcel 明细，形成跨租户越权读取。由于报表通常包含批次与包裹详情，泄露面较大。</div>
+                <div class="finding-suggestion">💡 修复建议：将 `facilityCode` 设为必填，并在处理器中先校验容器归属，再调用报表生成逻辑；同时要求 `PosContainerService.getScanReport` 在 DAO 查询层强制附带 facilityCode 条件，空 facilityCode 直接拒绝。</div>
+            </div>
+            
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/api/DmsApi.java:337-338</code>
+                </div>
+                <div class="finding-desc">`pushContainers` 在记录日志时直接调用 `containers.size()`，当调用方传入 `null` 时会在真正发起 DMS 请求前触发空指针，导致整个推送流程异常中断。该方法注释说明是通用 DMS 推送入口，但这里没有做任何空参保护。</div>
+                <div class="finding-suggestion">💡 修复建议：在构造请求和打印日志前先校验入参，例如：`if (containers == null || containers.isEmpty()) { throw new RRException(&quot;containers must not be empty&quot;); }`；如果业务允许空集合，则日志改为 `containers == null ? 0 : containers.size()`，并明确是否跳过调用 DMS。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/api/DmsApi.java:361-406</code>
+                </div>
+                <div class="finding-desc">新增的 `pushLabels` 在异常时记录完整 `InternalParcelsReq` JSON：`log.error(&quot;[DmsApi] pushLabels error url={} req={}&quot;, url, reqJson, e);`。按注释该接口用于小包/Label 维度推送，通常会包含 parcel/label 标识等可用于追踪包裹的敏感业务数据。将整包请求落日志会导致敏感物流数据在日志系统中长期暴露。</div>
+                <div class="finding-suggestion">💡 修复建议：移除完整请求体日志，改为记录批次数量、请求摘要或脱敏后的标识；必要时仅在受控调试开关下输出脱敏内容。示例：`log.error(&quot;[DmsApi] pushLabels error url={} parcelCount={}&quot;, url, req.getParcels() == null ? 0 : req.getParcels().size(), e);`</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/bo/PtcScanReportExcelBo.java:74-86</code>
+                </div>
+                <div class="finding-desc">3 个导出字段的 getter 都直接调用 `DateUtils.getDateStrByZone(..., zoneId, ...)`，但这里没有对 `zoneId` 做兜底。该 BO 是新建的报表导出对象，若上游未赋值 `zoneId`，导出过程中访问这些 getter 时很可能触发空指针或日期转换异常，导致整份 Excel 导出失败。</div>
+                <div class="finding-suggestion">💡 修复建议：在 getter 中增加空值保护，至少保证 `zoneId` 或日期为空时返回空字符串或按默认时区格式化。例如：`if (ascanDate == null || StringUtils.isBlank(zoneId)) { return &quot;&quot;; }`，其余两个 getter 同样处理；如果业务允许，也可在构造/装配 BO 时强制注入默认时区。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/config/FacilityConfigProperties.java:34-35</code>
+                </div>
+                <div class="finding-desc">该类声明了 `TYPE_REF`、并引入了 `ObjectMapper` / `@Value` / `@PostConstruct` 等用于解析 `facility.configs` JSON 的依赖，但当前新增代码中既没有对应配置字段，也没有任何解析逻辑。按类注释描述，这里应承载通用“功能模块→仓库列表”的动态配置；实际实现却完全退化为对 `DmsPushConfig` 的简单转发。一旦其他调用方按注释或命名预期接入 `facility.configs`，将出现配置不生效且难以及时发现的功能异常。</div>
+                <div class="finding-suggestion">💡 修复建议：二选一修复：1）若保留通用配置能力，补齐 `facility.configs` 的注入、JSON 解析、刷新后的容错与查询逻辑；例如维护 `Map&lt;String, List&lt;String&gt;&gt; configs` 并基于 feature key 判断。2）若当前仅支持 DMS 开关，删除未使用的 JSON 解析相关成员/导入，并收敛类注释，避免对外暴露错误契约。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/dao/PosContainerParcelScanHistoryCustomDaoImpl.java:44</code>
+                </div>
+                <div class="finding-desc">`queryPtcReportWithCount` 将分页总数硬编码为 `100000`，返回给上层的 `Page` 元数据不再反映真实结果集大小。若上层基于 `total/pages` 做导出、翻页边界或任务拆分控制，攻击者可借此绕过基于真实总量的限制，持续请求超出实际范围的数据页，放大数据枚举与资源消耗风险。</div>
+                <div class="finding-suggestion">💡 修复建议：改为执行独立的 `COUNT(*)` 查询返回真实总数，或在无法接受 count 开销时明确返回 Slice/游标分页对象，避免伪造总量元数据。例如新增 `SELECT COUNT(1)` 与相同过滤条件的统计查询。</div>
+            </div>
+            <p class="more-note">... 还有 37 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+        </div>
+        
 
   <div class="footer">
     由质量门禁引擎生成 &nbsp;|&nbsp; SpeedX CI/CD
