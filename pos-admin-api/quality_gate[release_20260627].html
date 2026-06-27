@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-admin-api &nbsp;|&nbsp; 2026-06-27 11:05:31</div>
+      <div class="meta">pos-admin-api &nbsp;|&nbsp; 2026-06-27 11:34:14</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:3 &nbsp; 主要:25</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:4 &nbsp; 主要:25</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,7 +83,7 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube analysis timed out after 1 minutes</li>
-<li>AI Review: 3 Critical finding(s)</li>
+<li>AI Review: 4 Critical finding(s)</li>
 <li>AI Review: 25 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
@@ -94,100 +94,98 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/api/DmsApi.java:337-398</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/api/DmsApi.java:337-397</code>
                 </div>
-                <div class="finding-desc">新增日志在调用外部 DMS 前直接记录完整请求体 `req`，其中容器推送注释已明确包含箱号、地址、经纬度、排序等业务数据；这些属于敏感物流/位置数据，写入 info/error 日志后会扩大可见面，并在日志平台、备份、排障导出中长期留存，构成敏感数据泄露风险。</div>
-                <div class="finding-suggestion">💡 修复建议：禁止记录完整请求体，改为仅记录必要的最小化字段（如数量、业务主键摘要、traceId）。例如将 `req` 替换为脱敏后的统计信息，error 日志也不要输出完整 body。</div>
+                <div class="finding-desc">新增日志在异常场景下直接打印完整请求体 `req`。根据注释与入参结构，`pushContainers` 会上传容器号、地址、经纬度、排序等物流敏感数据；一旦下游异常或被恶意构造触发报错，这些数据会进入错误日志，形成敏感业务数据泄露风险。</div>
+                <div class="finding-suggestion">💡 修复建议：避免记录完整请求报文，改为仅记录必要的非敏感摘要字段，例如数量、业务主键脱敏值和 traceId。示例：`log.error(&quot;[DmsApi] pushContainers error url={} containerCount={}&quot;, url, containers == null ? 0 : containers.size(), e);`</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/dao/PosContainerParcelScanHistoryCustomDaoImpl.java:35-54</code>
+                </div>
+                <div class="finding-desc">原生 SQL 在拼接 `where` 片段后直接追加 `LIMIT`，但 `buildWhere()` 返回的条件末尾没有保证空格，导致当 `where` 非空时会生成 `... :endTimeLIMIT :pageSize ...` 或 `... :containerNums)LIMIT ...` 这类非法 SQL。若该查询用于报表/导出入口，攻击者只需提交触发对应分支的查询参数即可稳定触发数据库语法异常，形成可远程利用的拒绝服务风险。</div>
+                <div class="finding-suggestion">💡 修复建议：在拼接 SQL 时显式补齐分隔空格，不要依赖 `where` 字符串尾部格式。例如：`String idSubSql = &quot;SELECT h.id&quot; + BASE_FROM + where + &quot; LIMIT :pageSize OFFSET :offset&quot;;`，并统一让 `BASE_FROM`/`where` 的边界由模板控制。建议同时为 DATE 模式、trackingNumbers 模式、containerNums 模式分别增加 SQL 生成单测。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
                     <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/web/impl/WebInboundSortStatServiceImpl.java:29-141</code>
                 </div>
-                <div class="finding-desc">**原因：** 新增 `queryArriveStatistics(String facilityCode, Date startTime, Date endTime)` 直接使用调用方传入的 `facilityCode` 查询到达统计，没有将其与当前登录用户所属仓进行绑定，也没有任何角色/数据范围校验。调用者只需替换参数即可读取其他仓的到达量、路由分布等统计数据。
+                <div class="finding-desc">**原因：** 新增 `queryArriveStatistics(String facilityCode, Date startTime, Date endTime)` 直接使用调用方传入的 `facilityCode` 查询到达统计，没有将其绑定到当前登录用户的 `facilityCode`，也没有任何角色/数据范围校验。调用方可通过修改参数读取任意仓的到达统计。
 
 ```java
 List&lt;FacilityArrivalCount&gt; facilityRows = arrivalSortCounterDao.groupByScanFacility(
         facilityCode, startTime, endTime);
+...
 List&lt;RouteArrivalCount&gt; routeRows = arrivalSortCounterDao.groupByRouteCode(
         facilityCode, startTime, endTime);
 ```
 
-**影响：** 会导致跨租户/跨仓统计数据越权读取，泄露其他仓的业务规模与路由结构，属于高风险信息泄露。当前分片未给出 Controller 映射，无法断言具体 URL，但该公开 Service 方法已具备越权查询能力。</div>
-                <div class="finding-suggestion">💡 修复建议：不要信任外部传入的 `facilityCode` 作为最终查询范围。应优先使用 `LoginUserUtil.getCurFacilityCode()`，或校验调用方是否具备跨仓查看权限后才允许查询指定仓。示例：
-```java
-String curFacilityCode = LoginUserUtil.getCurFacilityCode();
-if (!curFacilityCode.equals(facilityCode)) {
-    throw new RRException(&quot;No permission to query other facility statistics&quot;);
-}
-```
-若确需支持跨仓角色，需显式校验角色并记录审计日志。</div>
+**影响：** 会造成跨仓统计数据越权读取，泄露其他 facility 的到达量、路由分布等运营数据；若该能力暴露给前端或报表接口，攻击者可批量枚举仓编码获取全网统计。</div>
+                <div class="finding-suggestion">💡 修复建议：不要信任外部传入的 `facilityCode` 作为最终查询范围；应优先使用 `LoginUserUtil.getCurFacilityCode()` 或基于角色校验允许的 facility 列表，并对跨仓查询仅开放给明确授权的管理员角色。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/web/impl/WebDispatchLmContainerServiceImpl.java:40-126</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/web/impl/WebDispatchLmContainerServiceImpl.java:40-128</code>
                 </div>
-                <div class="finding-desc">**原因：** 新增的 `getContainerInfo(String containerNo)` 直接按外部传入的 `containerNo` 查询箱号、箱内运单号、shipment/driver 信息，并原样返回，但变更代码中没有任何角色校验、也没有基于当前登录人的 `facilityCode`/资源归属做数据范围过滤。只要调用方能触达该 Service，就可以枚举或猜测 `containerNo` 读取任意箱子的目的地、司机名、ATD/ETA 及箱内 trackingNos。
+                <div class="finding-desc">**原因：** 新增的 `getContainerInfo(String containerNo)` 直接按外部传入的 `containerNo` 查询箱号、箱内运单号、shipment/driver 信息，但变更代码中没有任何基于当前登录人 `facilityCode`、资源归属或角色的校验/过滤。只要调用方能进入该 Service，就可枚举任意箱号读取跨仓箱目的地、司机名、ATD/ETA 及箱内 trackingNos。
 
 ```java
-PosContainer container = posContainerDao.findByContainerNum(containerNo);
-List&lt;PosContainerParcel&gt; parcels = posContainerParcelDao.findByContainerNum(containerNo);
-DispatchContainerV2 dcv2 = dispatchContainerV2Dao.findFirstByContainerNumOrderByCreatedAtDesc(containerNo);
-```
-
-**影响：** 会导致跨仓/跨归属的数据越权读取，泄露物流箱号关联的包裹清单与运输信息，属于高风险业务数据泄露。当前分片未给出 Controller 映射，无法断言具体 URL，但该公开 Service 方法已形成可复用的越权读取入口。</div>
-                <div class="finding-suggestion">💡 修复建议：在该方法入口增加显式鉴权与数据范围校验：先获取当前用户所属 `facilityCode`/角色，再校验 `containerNo` 对应箱子是否属于当前仓或当前用户可见范围；不满足时返回无权限错误。示例：
-```java
-PosContainer container = posContainerDao.findByContainerNum(containerNo);
-if (container == null) { ... }
-String curFacilityCode = LoginUserUtil.getCurFacilityCode();
-if (!curFacilityCode.equals(container.getDestination())) {
-    throw new RRException(&quot;No permission to access this container&quot;);
+public ContainerInfoVO getContainerInfo(String containerNo) {
+    PosContainer container = posContainerDao.findByContainerNum(containerNo);
+    ...
+    List&lt;PosContainerParcel&gt; parcels = posContainerParcelDao.findByContainerNum(containerNo);
+    ...
+    DispatchContainerV2 dcv2 = dispatchContainerV2Dao.findFirstByContainerNumOrderByCreatedAtDesc(containerNo);
+    ...
 }
 ```
-若存在上层 HTTP 入口，还应在 Controller/Facade 层补充 `@PreAuthorize` 或统一权限注解。</div>
+
+**影响：** 会导致物流箱及包裹明细的越权读取，攻击者可通过猜测/遍历 `containerNo` 获取非本人/非本仓的 shipment 与 tracking 数据，属于高风险数据越权访问。</div>
+                <div class="finding-suggestion">💡 修复建议：在查询前增加显式的身份与数据范围校验，至少校验当前用户对该 `containerNo` 所属仓/目的地是否有访问权限；若存在 Controller 入口，还应在入口层增加 `@PreAuthorize` 或等效角色校验。示例：先根据 `containerNo` 查出容器后，校验 `LoginUserUtil.getCurFacilityCode()` 是否与容器归属仓/允许访问范围一致，不一致则拒绝访问。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/api/DmsApi.java:371-372</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/dao/PosContainerParcelScanHistoryCustomDaoImpl.java:43</code>
                 </div>
-                <div class="finding-desc">`syncDispatchLm` 记录日志时直接访问 `req.getFacility()`，当调用方传入 `null` 的 `req` 时会立即触发空指针；同时后续还会访问 `req.getContainers()`。这是新增 DMS 推送入口的显式空参崩溃风险。</div>
-                <div class="finding-suggestion">💡 修复建议：在序列化和日志前先校验 `req` 非空，例如：`Assert.notNull(req, &quot;DispatchLmSyncReq must not be null&quot;);` 或抛出 `RRException`。若还要求关键字段非空，建议同时校验 `facility`、`containers`。</div>
+                <div class="finding-desc">分页查询 `queryPtcReportWithCount` 将总数硬编码为 `100000`，返回的 `Page` 元数据与真实数据量不一致。调用方若依赖 `totalElements/totalPages` 做翻页、导出或边界判断，会出现最后一页判断错误、页码越界仍显示可翻页等功能异常。</div>
+                <div class="finding-suggestion">💡 修复建议：补充真实 count 查询并将结果传入 `PageImpl`，例如基于相同 `BASE_FROM + where` 生成 `SELECT COUNT(1)` 的 native query；若出于深分页优化不想每次 count，可改为返回 Slice/游标分页接口，而不是伪造 `Page` 总数。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">pos-admin-api/src/main/java/com/miq/posadminapi/consumer/ParcelCounterConsumer.java:82-89</code>
                 </div>
-                <div class="finding-desc">基于 `eventId` 的去重锁在调用任何业务处理前就通过 Redis `SETNX + TTL` 永久占位 5 分钟；但后续两个处理分支都各自 `catch (Exception)` 仅记录日志、不回滚去重键。这样一旦 `counterService.applyEvent(...)` 或 `sortScanStatService.applyEvent(...)` 因瞬时异常失败，同一消息在 TTL 内被重放时会直接命中去重并跳过，导致事件被静默丢弃，形成可被异常/故障触发的拒绝服务式数据丢失风险。该问题是新增去重逻辑引入的并发/状态一致性缺陷。</div>
-                <div class="finding-suggestion">💡 修复建议：仅在事件处理成功后再写入去重标记，或在任一处理分支失败时删除当前 `redisKey` 以允许重试；更稳妥的是把“去重标记写入 + 业务处理结果确认”设计为可恢复流程，例如使用处理中/已完成两阶段状态，只有全部成功后才置为已完成。至少应在 `catch` 中补充 `delete(redisKey)` 或将失败抛出给上层重试。</div>
+                <div class="finding-desc">基于 Redis 的 5 分钟去重锁在业务处理前即写入成功标记，但后续两个核心处理分支 `counterService.applyEvent(...)` / `sortScanStatService.applyEvent(...)` 都被 `catch (Exception)` 吞掉且不回滚该去重键。这样一旦任一处理因瞬时异常失败，消息在 TTL 内重放会被 `dedup hit` 直接丢弃，形成“失败即永久跳过（至少 5 分钟）”的竞态窗口，导致安全相关统计/审计数据被静默漏记，破坏事件处理完整性。该问题是新增去重逻辑直接引入的并发一致性风险。</div>
+                <div class="finding-suggestion">💡 修复建议：仅在两个处理分支都成功后再写入去重标记，或在处理失败时显式删除当前 `redisKey` 以允许重试；更稳妥的是将“去重判定 + 处理状态”设计为可恢复状态机，例如使用 Redis/Lua 或数据库幂等表记录 `PROCESSING/SUCCESS/FAILED`，避免失败后被 TTL 锁死。至少应在 `catch` 中按事件粒度执行补偿删除。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/bo/PtcScanReportExcelBo.java:76-88</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/bo/PtcScanReportExcelBo.java:74-86</code>
                 </div>
-                <div class="finding-desc">3 个字符串 getter 都直接调用 `DateUtils.getDateStrByZone(..., zoneId, ...)`，但新增类中 `ascanDate` / `containerDate` / `operationTime` / `zoneId` 都没有空值保护。导出报表时只要任一时间字段或 `zoneId` 未赋值，就可能在 getter 执行阶段触发空指针，导致整份 Excel 导出失败。</div>
-                <div class="finding-suggestion">💡 修复建议：在 getter 中增加空值兜底，避免把格式化逻辑建立在字段必填的假设上，例如：`if (ascanDate == null || StringUtils.isBlank(zoneId)) { return &quot;&quot;; }`，其余两个 getter 同样处理；如果业务上允许缺失时区，也可退化为系统默认时区格式化。</div>
-            </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/dao/PosContainerParcelScanHistoryCustomDaoImpl.java:43</code>
-                </div>
-                <div class="finding-desc">`queryPtcReportWithCount` 将分页结果总数硬编码为 `100000`，返回的 `Page` 元数据不再反映真实记录数。若上层基于 `Page.getTotalElements()/getTotalPages()` 做导出上限、翻页边界或访问控制判断，调用方会在错误的分页边界上继续请求，形成契约失真并可能绕过依赖“真实总数”的保护逻辑。</div>
-                <div class="finding-suggestion">💡 修复建议：返回真实 count，或若出于性能原因不提供总数，应改为返回 `Slice`/游标分页模型，避免伪造 `Page` 元数据。例如补充 `COUNT(*)` 查询，或将接口签名改为不承诺 total 的分页对象。</div>
+                <div class="finding-desc">3 个字符串 getter 都直接调用 `DateUtils.getDateStrByZone(..., zoneId, ...)`，但新增类中 `ascanDate` / `containerDate` / `operationTime` / `zoneId` 都没有空值保护。导出报表时只要任一时间字段或 `zoneId` 为空，就可能在 getter 执行阶段触发空指针，导致整份 Excel 导出失败。</div>
+                <div class="finding-suggestion">💡 修复建议：在 getter 中增加空值兜底，避免把格式化逻辑建立在字段必填的假设上，例如：`if (ascanDate == null || StringUtils.isBlank(zoneId)) { return null; }`，其余两个 getter 同样处理；如果业务上要求必填，则应在构造/装配该 BO 时显式校验并给出可读错误。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/dto/stat/ArriveStatQuery.java:13-20</code>
                 </div>
-                <div class="finding-desc">新增查询 DTO 仅校验了 startTime/endTime 非空，但未限制时间区间合法性（如 startTime &lt; endTime）及最大查询跨度。统计类接口若直接使用该 DTO 进行数据库聚合/导出，攻击者可构造超大时间范围或反向区间请求，触发重型查询，放大资源消耗并造成可用性风险。</div>
-                <div class="finding-suggestion">💡 修复建议：在 DTO 或服务层补充安全边界校验：1）校验 startTime 必须早于 endTime；2）限制最大查询窗口（如 1 天/7 天）；3）必要时对“精确到10分钟”做对齐校验。可增加自定义校验注解或在入口处显式校验。</div>
+                <div class="finding-desc">新增查询 DTO 仅校验了 startTime/endTime 非空，但未对时间区间关系、最大跨度、未来时间等做任何约束。若后续直接用于统计查询，攻击者可提交超大时间窗口或 startTime &gt; endTime 的异常参数，触发全表/大范围扫描，形成可利用的资源消耗型风险。</div>
+                <div class="finding-suggestion">💡 修复建议：在 DTO 或入口层增加安全边界校验：至少校验 startTime &lt; endTime、时间跨度上限（如 1 天/7 天）、禁止未来时间或过早历史时间。可补充自定义校验注解，或在 Service/Controller 中显式 reject 非法区间。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/dto/stat/EncodingStatQuery.java:13-20</code>
+                </div>
+                <div class="finding-desc">该统计查询对象只做了非空校验，缺少时间范围合法性与窗口大小限制。编码统计通常会聚合大量扫描数据，若未限制查询跨度，容易被恶意构造超大时间区间请求放大数据库/报表计算压力，造成拒绝服务风险。</div>
+                <div class="finding-suggestion">💡 修复建议：补充参数边界控制：校验 startTime &lt; endTime，并限制最大查询跨度；必要时按业务粒度要求校验“精确到10分钟”的取值合法性，避免异常时间值进入下游查询。</div>
             </div>
             <p class="more-note">... 还有 20 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
