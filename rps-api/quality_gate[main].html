@@ -45,11 +45,11 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">rps-api &nbsp;|&nbsp; 2026-06-22 09:51:32</div>
+      <div class="meta">rps-api &nbsp;|&nbsp; 2026-06-30 18:36:08</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
-      <span style="background:#4caf50;color:#fff;padding:4px 12px;border-radius:4px;font-weight:bold;">PASSED</span>
+      <span style="background:#f44336;color:#fff;padding:4px 12px;border-radius:4px;font-weight:bold;">FAILED</span>
     </div>
   </div>
 
@@ -62,7 +62,7 @@
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#4caf50">61.7%</div>
+            <div class="metric-value" style="color:#4caf50">62.2%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:0</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:3 &nbsp; 主要:51</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -82,10 +82,105 @@
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube analysis timed out after 1 minutes</li></ul>
+            <ul><li>SonarQube analysis timed out after 1 minutes</li>
+<li>AI Review: 3 Critical finding(s)</li>
+<li>AI Review: 51 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
+        <div class="findings-section">
+            <h3>AI 代码审查发现</h3>
+            
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">rps-api/src/main/java/io/speedx/rps/api/config/ConfigInterceptor.java:43</code>
+                </div>
+                <div class="finding-desc">**原因：** 新增了对路径 `/label/internal/download/**` 的拦截器放行配置，但本分片 diff 未展示该路径对应控制器/方法上的 `@PreAuthorize`、`AuthUtil.requireRole()`、Inner API Key 校验或其他等效鉴权措施。该变更会直接扩大未经过当前拦截器校验的攻击面，属于典型的鉴权绕过风险。
+
+```java
++                        &quot;/label/internal/download/**&quot;,
+```
+
+**影响：** 若该下载接口承载标签文件、面单、批量导出结果或其他内部资源，攻击者可在缺少上层补充鉴权的情况下直接访问下载内容，导致未授权读取内部文件/业务数据；若该接口原本依赖当前拦截器完成认证，则本次变更会造成实际匿名可达或弱认证可达。</div>
+                <div class="finding-suggestion">💡 修复建议：不要直接将 `/label/internal/download/**` 加入全局放行列表。应改为：1）仅对确认为内部调用的最小路径放行，并在对应入口强制校验 `InnerApiKeyInterceptor` 或签名；或 2）移除此放行配置，保持统一鉴权链路。若必须放行，请在对应 Controller 方法上补充明确的权限校验，例如 `@PreAuthorize(...)`，并校验下载资源归属。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/service/oms/impl/ZipCodeSurchargeServiceImpl.java:89-94</code>
+                </div>
+                <div class="finding-desc">新增变更将 `enableBillingZoneMatrix` 开关判断整体注释掉，导致无论调用方是否显式关闭该能力，都会强制走 `getZipCodeSurchargeByCache(...)` 分支并优先返回缓存中的 surcharge 结果。这会绕过原有的业务安全边界/配置隔离：当某些租户、产品或场景依赖 `enableBillingZoneMatrix=false` 来禁止使用该附加费数据源时，当前实现会在未授权启用的情况下继续应用缓存数据，可能造成费率/附加费被错误套用，属于资金计算错误风险。</div>
+                <div class="finding-suggestion">💡 修复建议：恢复对 `enableBillingZoneMatrix` 的显式判断，确保仅在开关开启时才读取 billing-zone 相关缓存；若需要灰度放量，应增加受控配置并记录审计，而不是直接注释条件。示例：`if (BooleanUtil.isTrue(enableBillingZoneMatrix)) { ... }`。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/OmsVoidLabelCmd.java:341-343</code>
+                </div>
+                <div class="finding-desc">**原因：** 变更将原本仅对 `SPX` 渠道执行的 `pushLogService.saveVoidLabelToPos(rpsLabel, rpsLabel.getOrgId())` 放开为对所有 DSP 都执行，但当前新增代码未见任何按 `dspCode`、租户配置或调用主体权限的限制。
+
+```java
+//if (DspCode.SPX.equals(rpsLabel.getDspCode())) {
+    pushLogService.saveVoidLabelToPos(rpsLabel, rpsLabel.getOrgId());
+//}
+```
+
+这会把原先受渠道边界约束的外部副作用扩展到全部作废接口入口。对于 `/label/void-label*` 与 `/ags/label/void-label*`，一旦调用方具备基础作废能力，就可能额外触发不属于该渠道/租户预期的 POS 推送。
+
+**影响：** 扩大了外部系统操作面，可能导致非 SPX 标签在作废时被错误同步到 POS，形成跨渠道越权操作或错误状态传播；若 POS 侧按推送即执行，可能造成未授权的外部状态变更、审计污染，甚至影响后续财务/履约流程。</div>
+                <div class="finding-suggestion">💡 修复建议：恢复渠道边界校验，至少按 `rpsLabel.getDspCode()` 白名单控制可推送的 DSP；若确需放开，必须增加基于租户配置和调用主体权限的显式授权判断，并补充审计日志。例如：
+```java
+if (DspCode.SPX.equals(rpsLabel.getDspCode())
+        &amp;&amp; Boolean.TRUE.equals(canPushVoidToPos(rpsLabel.getOrgId(), rpsLabel.getDspCode()))) {
+    pushLogService.saveVoidLabelToPos(rpsLabel, rpsLabel.getOrgId());
+}
+```</div>
+            </div>
+            
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">rps-api/src/main/java/io/speedx/rps/api/controller/api/AddressValidationApiController.java:30-69</code>
+                </div>
+                <div class="finding-desc">通过块注释直接移除了整个地址校验 API 的依赖注入与入口方法，编译虽可能通过，但该控制器对外将不再暴露原有接口，属于破坏性 API 变更；现有调用方会收到 404/无路由，业务能力被直接下线。</div>
+                <div class="finding-suggestion">💡 修复建议：如果目标是临时下线接口，建议显式保留方法并返回明确的停用响应（如 503/业务错误码），同时补充变更说明；如果不是有意下线，应恢复 `@Autowired` 与 `@RequestMapping` 方法。示例：保留方法体并 `throw new RRException(&quot;address validation api is temporarily unavailable&quot;)`，避免静默消失。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">rps-api/src/main/java/io/speedx/rps/api/controller/api/SackApiController.java:35-45</code>
+                </div>
+                <div class="finding-desc">生成 sack label 的控制器方法被整体注释，直接切断了 `generateSackLabelCmd` 的 HTTP 入口。根据清单提交流程规则，`generateSackLabelCmd` 属于 manifest 相关能力的一部分，接口消失会导致相关业务流程无法继续。</div>
+                <div class="finding-suggestion">💡 修复建议：如果该能力仍被业务依赖，应恢复 `@RequestMapping(&quot;/generate-label&quot;)` 方法；若需要禁用，请在方法内返回明确错误并同步通知调用方，不要通过注释移除路由。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">rps-api/src/main/java/io/speedx/rps/api/controller/api/UserApiController.java:59-143</code>
+                </div>
+                <div class="finding-desc">用户 API 中整段对外方法被块注释，导致原有“Get courier list”能力从控制器层消失。该类变更会让现有客户端在无兼容提示的情况下失去接口，属于破坏性契约变更。</div>
+                <div class="finding-suggestion">💡 修复建议：恢复原接口，或保留路由并返回明确的废弃说明；若要替换为新接口，请采用版本化路径并保留旧接口过渡期。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">rps-api/src/main/resources/templates/zpl/203dpi/spx_v5.zpl:16</code>
+                </div>
+                <div class="finding-desc">将固定二维码指令 `^FO610,20^BQ,2,7^FDQA,{{qr_code}}^FS` 替换为 `{{qr_section}}` 后，模板新增了一个必填占位片段契约；但本分片未看到对应默认兜底或兼容输出。若渲染侧未同步为所有 SPX v5 标签提供 `qr_section`，最终标签会直接缺失二维码区域或输出未替换占位符，导致面单不可扫。</div>
+                <div class="finding-suggestion">💡 修复建议：在渲染器中为 `qr_section` 提供向后兼容默认值，例如当未显式传入时回退到原始二维码 ZPL：`^FO610,20^BQ,2,7^FDQA,${qr_code}^FS`；同时为模板渲染增加占位符完整性校验，发现 `{{qr_section}}` 未替换时直接失败而不是生成坏标签。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">rps-api/src/main/resources/templates/zpl/203dpi/spx_v5.zpl:52-56</code>
+                </div>
+                <div class="finding-desc">底部字段整体下移后，`customer_initial_name`、`creation_date`、`item_type` 的 Y 坐标分别改为 1103/1162/1163，而标签总高度仍是 `^LL1218`。这使底部内容距离页尾仅剩约 55px，且 `creation_date` 与 `item_type` 几乎同一水平线，稍有字体放大、打印机边距或多语言字符高度差就可能发生裁切或重叠，影响面单可读性。</div>
+                <div class="finding-suggestion">💡 修复建议：重新核对底部区域布局，至少为页尾保留稳定安全边距，并避免相邻字段共享几乎相同的 Y 坐标。建议结合渲染探针/快照测试验证极端场景；若确需下移，考虑同步调整 `^LL` 或压缩上方可变区域。</div>
+            </div>
+            <p class="more-note">... 还有 46 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+        </div>
+        
 
   <div class="footer">
     由质量门禁引擎生成 &nbsp;|&nbsp; SpeedX CI/CD
