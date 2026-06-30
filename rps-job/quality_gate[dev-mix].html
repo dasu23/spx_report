@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">rps-job &nbsp;|&nbsp; 2026-06-30 10:34:26</div>
+      <div class="meta">rps-job &nbsp;|&nbsp; 2026-06-30 10:55:22</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -62,7 +62,7 @@
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#4caf50">61.4%</div>
+            <div class="metric-value" style="color:#4caf50">61.7%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:3 &nbsp; 主要:18</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:5 &nbsp; 主要:17</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,8 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube analysis timed out after 1 minutes</li>
-<li>AI Review: 3 Critical finding(s)</li>
-<li>AI Review: 18 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 5 Critical finding(s)</li>
+<li>AI Review: 17 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -96,34 +96,44 @@
                     <span class="finding-badge">严重</span>
                     <code class="finding-loc">docs/biz/cainiao-config-routing.md:42-43</code>
                 </div>
-                <div class="finding-desc">文档新增了可直接复制的 Nacos 配置示例，其中包含明文签名密钥字段 `receiveSignKey: &quot;your-secret&quot;`。虽然示例值不是生产真实密钥，但该变更明确引导将签名密钥以明文形式存放在配置中心；一旦 Nacos 访问控制、导出、日志或配置快照泄露，攻击者可伪造菜鸟请求签名，导致接口认证被绕过。</div>
-                <div class="finding-suggestion">💡 修复建议：避免在文档和配置设计中使用明文密钥方案。改为要求 `receiveSignKey` 从专用密钥管理系统/KMS 注入，或至少使用加密配置（如 Nacos 加密配置）并在应用侧解密；文档示例应明确标注“密文/引用占位符”，例如 `receiveSignKey: ${CAINIAO_SIGN_KEY_CIPHERTEXT}`。</div>
+                <div class="finding-desc">文档新增了包含真实格式的签名密钥配置示例，将 `receiveSignKey` 作为明文直接放入 Nacos YAML。虽然示例值为占位符，但该写法会引导后续实现把签名密钥以明文配置、明文传播和可能明文打印的方式落地，属于敏感凭证暴露风险；一旦配置中心权限边界或日志审计配置不当，会直接泄露用于请求验签的密钥。</div>
+                <div class="finding-suggestion">💡 修复建议：不要在设计/配置示例中以明文字段承载密钥。改为引用密钥管理方案，例如 KMS/加密配置项/环境变量注入，并在代码侧仅接收解密后的运行时值。示例可改为 `receiveSignKeyRef: &quot;kms://cainiao/partnerA/signKey&quot;` 或明确标注“需使用加密配置，不得明文存储/打印”。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/module/billing/CainiaoUspsBillingZoneModule.java:16-22</code>
+                    <code class="finding-loc">openspec/changes/spx-pi-6994-cainiao-l2l-label/proposal.md:7</code>
                 </div>
-                <div class="finding-desc">新增实现将 USPS 计费分区无条件固定为 `0`，完全忽略 `userExt`、`productResp`、`sortCode` 以及 `productMatrix` 等输入。计费分区通常直接参与运费/账单计算，固定返回默认值会导致所有请求落入同一分区，存在系统性资金计算错误风险。
+                <div class="finding-desc">变更说明明确提出将“签名密钥等全部从 DB 迁移到 Nacos `exchange.cainiao` 配置段”。这意味着新增设计将敏感密钥集中存放于普通业务配置中，若未配套加密存储、最小权限访问和日志脱敏，配置中心泄露将直接导致验签密钥泄露，攻击者可伪造菜鸟请求。</div>
+                <div class="finding-suggestion">💡 修复建议：在方案中补充强制安全要求：签名密钥必须使用加密配置或外部密钥管理服务保存；配置类、刷新监听、异常日志中禁止输出密钥值；仅授予最小范围读取权限。若必须经 Nacos 下发，应使用密文存储并在应用侧解密。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/module/billing/CainiaoUspsBillingZoneModule.java:16-21</code>
+                </div>
+                <div class="finding-desc">新增实现将 billing zone 直接硬编码为 `0`，绕过了基于 `productMatrix` 的实际分区计算逻辑。billing zone 通常直接参与运费/计费规则选择，固定返回默认值会导致所有该渠道面单请求落入同一计费分区，存在系统性资金计算错误风险。
 
 问题代码：
 ```java
-public void lookupBillingZone(OmsCreateLabelContext context, CustomerProductMatrixResp productMatrix) throws Exception {
-    context.getCreateLabelValue().setZone(0);
-}
-
-public Integer getBillingZone(UserExt userExt, ProductResp productResp, SortCodeDto sortCode) {
-    return 0;
-}
+context.getCreateLabelValue().setZone(0);
 ```</div>
-                <div class="finding-suggestion">💡 修复建议：按 USPS 实际计费规则基于目的地/产品/分拣码计算 zone，禁止使用硬编码默认值作为正式逻辑。若当前业务确实不存在 zone，应显式增加能力开关或产品白名单，并在进入计费链路前校验该产品允许 `zone=0`；否则应在无法计算时抛出业务异常而不是静默回退。建议补充单元测试覆盖不同邮编/产品返回不同 zone，以及无法命中规则时失败而非默认 0。</div>
+                <div class="finding-suggestion">💡 修复建议：不要使用固定值作为计费分区。应基于 `productMatrix`、目的地/邮编或 `sortCode` 等业务输入调用既有分区解析逻辑；若 Cainiao USPS 场景确实无 zone 概念，也应显式抛出受检异常或增加渠道级开关，并确保后续计费链路不会把 `0` 当作有效计费分区参与运费计算。建议补充类似：先校验 `productMatrix` 是否包含有效 zone 映射，缺失时 fail-fast。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/module/rate/CainiaoUspsRateModule.java:20-41</code>
+                </div>
+                <div class="finding-desc">新增的 USPS 费率模块在创建面单时无条件将 `postage_base`、`postage_amount` 置为 `BigDecimal.ZERO`，并清空 `rate_version`/`rate_id`。这会绕过正常费率查询与费率标识绑定，导致后续若该金额被用于计费、对账或下游出单请求，出现 0 运费出单/计费不一致的资金安全风险。</div>
+                <div class="finding-suggestion">💡 修复建议：不要以固定 0 金额作为默认费率返回。应显式调用受信任的费率计算流程；若 USPS/Cainiao 场景暂不支持计费，直接抛出业务异常并阻断出单，而不是返回 0 金额。例如：当无法获取有效 `rateId` 或 `rateVersion` 时抛出 `BizException(&quot;rate not available&quot;)`。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
                     <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/OmsCreateLabelCmd.java:311-314</code>
                 </div>
-                <div class="finding-desc">**原因：** 新增逻辑允许直接信任客户端传入的 `createLabelForm.getDspCode()`，并立即写入 `context` 后作为后续 `functionModuleFactory.getSortCodeModule(dspCode)` 等路由依据使用，但变更中未见任何对白名单、租户归属或调用方权限的校验。这样会把原本由服务端根据 `customerAccount`/`productCode` 推导的渠道选择，降级为可由请求方覆盖。
+                <div class="finding-desc">**原因：** 新增逻辑允许直接信任请求体中的 `createLabelForm.getDspCode()`，并在未见任何鉴权/归属校验的情况下覆盖服务端原有 `resolveDspCode` 路由结果：
 
 ```java
 if (StrUtil.isNotBlank(createLabelForm.getDspCode())) {
@@ -133,62 +143,69 @@ if (StrUtil.isNotBlank(createLabelForm.getDspCode())) {
 }
 ```
 
-**影响：** 调用 `/label/create-label` 的请求方可通过伪造 `dspCode` 强制切换承运商/渠道处理链，可能绕过既有账号路由策略与渠道隔离，导致越权使用未授权 DSP、错误计费/面单生成，甚至访问到不属于当前客户账号的数据与配置。全局端点清单还显示同一服务方法也被 `/ags/label/create-label` 复用，因此该风险同时影响该入口。</div>
-                <div class="finding-suggestion">💡 修复建议：不要直接信任请求体中的 `dspCode`。应仅允许服务端根据 `customerAccount + productCode` 解析渠道；若业务必须支持显式传入，则需在此处增加严格校验：1）校验 `dspCode` 是否在服务端白名单；2）校验该 `customerAccount` 是否被授权使用该 `dspCode`；3）校验与 `productCode`、场景配置一致，否则拒绝请求。例如：
+该变更把原本由服务端根据 `customerAccount`/`productCode`/路由策略决定的渠道选择，降级为可由外部调用方指定。对创建面单这类写操作而言，这属于典型的服务端授权边界下沉：调用方只要能访问创建接口，就可能构造任意 `dspCode` 触发不同承运商/渠道模块。
+
+**影响：** 攻击者或低权限调用方可通过篡改 `dspCode` 绕过既有渠道路由限制，访问本不应开放的 DSP 能力，导致跨租户/跨渠道下单、错误计费、错误面单生成，甚至调用到受限外部承运商配置。若不同 `dspCode` 绑定不同账号或资费，风险可进一步扩大为越权使用第三方物流资源。</div>
+                <div class="finding-suggestion">💡 修复建议：不要直接信任客户端传入的 `dspCode`。应仅在服务端白名单和账户归属校验通过后才允许覆盖默认路由；否则忽略该字段并继续走原有策略解析。示例：
+
 ```java
-String requestedDsp = createLabelForm.getDspCode();
-if (StrUtil.isNotBlank(requestedDsp)) {
-    if (!allowedDspService.isAllowed(context.getCustomerAccount(), productCode, requestedDsp)) {
-        throw new BizException(&quot;unauthorized dspCode&quot;);
+private String resolveDspCode(OmsCreateLabelContext context, CreateLabelForm form, String productCode) {
+    if (StrUtil.isNotBlank(form.getDspCode())) {
+        String requested = form.getDspCode();
+        if (!authorizedDspService.isAllowed(context.getCustomerAccount(), productCode, requested)) {
+            throw new BizException(&quot;unauthorized dspCode&quot;);
+        }
+        context.setDspCode(requested);
+        return requested;
     }
-    context.setDspCode(requestedDsp);
-    return requestedDsp;
+    // fallback to server-side routing
 }
 ```
-并补充审计日志记录被接受/拒绝的渠道覆盖行为。</div>
+
+同时在控制器/Facade 层补充角色校验，确保创建面单接口对调用主体有明确授权。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">rps-common/src/main/java/io/speedx/rps/common/form/exchange/cainiao/CainiaoCreateLabelForm.java:27-59</code>
+                    <code class="finding-loc">rps-common/src/main/java/io/speedx/rps/common/enums/PortOfEntryType.java:38</code>
                 </div>
-                <div class="finding-desc">将 `trackingNumber` 的最大长度从 18 放宽到 50，但同一字段的 Swagger 文档仍声明 `Max-length: 40`，且示例值明显更短。该变更会导致服务端实际接受的输入范围与既有接口契约不一致；若下游 Cainiao/物流面单系统、数据库列长度、签名串拼接或日志脱敏规则仍按旧长度设计，可能出现截断、校验绕过或异常分支被触发，形成安全相关的契约偏差。</div>
-                <div class="finding-suggestion">💡 修复建议：统一接口契约与实现约束：1）确认下游系统、数据库字段、消息体及签名逻辑允许的真实最大长度；2）将 `@Length`、`@ApiModelProperty` 文档、示例值保持一致；3）若确需扩容，补充端到端长度边界校验并在发布说明中声明兼容性变更。例如：`@ApiModelProperty(... &quot;Max-length: 50&quot; ...)`，并确保持久化/下游 DTO 同步调整。</div>
+                <div class="finding-desc">新增 `NIL(&quot;NIL&quot;,&quot;&quot;)` 将国家码设为空字符串，容易与现有按国家码分组/匹配的逻辑产生冲突：如果下游代码通过 `country.equals(...)`、按非空国家码路由，或将空字符串当作有效值参与费率/POE 计算，会把“未知/无 POE”与“合法但空国家”混淆，导致路由或计费异常。该枚举处于 POE 基础模型层，空字符串作为哨兵值的兼容性风险较高。</div>
+                <div class="finding-suggestion">💡 修复建议：避免用空字符串表示缺省国家，优先改为显式的缺省语义，例如新增字段/方法标识 `isNil()`，或将 country 设为 `null` 并统一在使用方做判空分支；若必须保留空字符串，请同步补充所有依赖 `PortOfEntryType.country` 的分支处理，明确跳过费率、zone、国家校验等逻辑。示例：`public boolean isNil(){ return this == NIL; }`，调用侧先判断 `if (poeType.isNil()) { ... }`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">rps-common/src/main/java/io/speedx/rps/common/form/exchange/cainiao/ExternalInfo.java:7-10</code>
+                    <code class="finding-loc">rps-common/src/main/java/io/speedx/rps/common/form/exchange/cainiao/CainiaoCreateLabelForm.java:27-58</code>
                 </div>
-                <div class="finding-desc">新建的 `ExternalInfo` DTO 完全缺少输入约束：`crossBorderMode` 为自由文本，`getLabelFromAE` 为可空布尔值。对于承载外部请求的表单对象，这会把策略型参数直接暴露为可控输入；一旦后续代码基于字符串分支、反射映射、配置路由或下游字段透传处理该值，容易引入参数污染、非法模式切换或空值导致的安全降级。</div>
-                <div class="finding-suggestion">💡 修复建议：将该 DTO 设计为受限输入模型：1）把 `crossBorderMode` 改为枚举类型，或至少增加 `@NotBlank` 与 `@Pattern` 白名单；2）对 `getLabelFromAE` 指定默认值并在业务入口显式归一化；3）若该对象仅允许内部系统调用，增加来源侧签名/鉴权校验并避免直接透传原始值。</div>
+                <div class="finding-desc">将 `trackingNumber` 的最大长度从 18 放宽到 50，但同一字段的 Swagger 文档仍声明 `Max-length: 40`，且示例值仍体现短单号格式。该变更会导致服务端实际接受比既有契约更长的输入，若下游 Cainiao/OMS/数据库字段仍按 18/40 长度处理，可能出现截断、校验绕过或异常分支，进而造成标签创建请求被错误路由或与既有单号规则不一致。安全上这属于输入边界放宽后的契约失配风险。</div>
+                <div class="finding-suggestion">💡 修复建议：同步收敛并统一该字段的长度约束：1）确认下游数据库列、第三方接口、日志脱敏规则是否都支持 50；2）若真实上限不是 50，则恢复为与下游一致的长度；3）同步更新 `@ApiModelProperty` 文档说明与相关测试，确保请求校验、文档、持久化约束一致。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">rps-common/src/main/java/io/speedx/rps/common/form/exchange/cainiao/CainiaoCreateLabelForm.java:61</code>
+                </div>
+                <div class="finding-desc">新增 `externalInfo` 复合对象字段，但未添加 `@Valid` 或任何字段级约束；同时新建的 `ExternalInfo` 类中 `crossBorderMode`、`getLabelFromAE` 也没有白名单/非空/长度校验。该变更把新的外部可控参数直接引入请求模型，容易让未受约束的值进入后续业务分支或第三方请求拼装，形成参数注入面扩大、异常路径触发或逻辑绕过风险。</div>
+                <div class="finding-suggestion">💡 修复建议：为 `externalInfo` 增加 `@Valid`，并在 `ExternalInfo` 中对字段施加明确约束，例如对 `crossBorderMode` 使用枚举或 `@Pattern` 白名单，对 `getLabelFromAE` 明确默认值和空值处理；若该对象仅允许特定场景传入，应在服务层增加显式校验与拒绝逻辑。示例：`@Valid private ExternalInfo externalInfo;`，并为 `crossBorderMode` 增加 `@Pattern(regexp = &quot;MODE1|MODE2&quot;)` 或改为枚举类型。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/OmsCreateLabelCmd.java:311-314</code>
                 </div>
-                <div class="finding-desc">这里新增了“优先使用请求中的 dspCode”分支，直接覆盖原有基于 customer routing strategy/productCode 的渠道解析逻辑。若调用方传入的 dspCode 与当前 customer/product 的可用渠道不一致，后续会按该值选择 sortCode/rate/label module，可能导致标签创建走错承运商链路，破坏既有路由规则。该变更也与标签创建依赖客户/产品配置路由的既有规则存在漂移风险。</div>
-                <div class="finding-suggestion">💡 修复建议：不要无条件信任 createLabelForm.getDspCode()。建议在返回前增加校验：1）校验该 dspCode 是否属于当前 customerAccount 可用渠道；2）校验与 productCode/route strategy 是否兼容；3）不兼容时抛出明确业务异常而不是静默覆盖。例如：`if (StrUtil.isNotBlank(form.getDspCode()) &amp;&amp; allowedDsps.contains(form.getDspCode())) { ... } else { throw new BizException(&quot;invalid dspCode for current customer/product&quot;); }`。</div>
+                <div class="finding-desc">这里新增了“优先使用请求中的 dspCode”逻辑，会直接覆盖原有基于 customerAccount 配置和 productCode 的渠道路由策略。若调用方传入了与产品/客户配置不匹配的 dspCode，后续 sort code、rate、label module 都会按该值执行，可能导致标签创建走错承运商链路，破坏既有路由规则。该变更也与标签创建依赖配置路由的既有规则存在漂移风险。</div>
+                <div class="finding-suggestion">💡 修复建议：不要无条件信任 createLabelForm.getDspCode()。至少应在返回前校验该 dspCode 是否属于当前 customerAccount + productCode 的允许集合；若只是支持显式指定渠道，也应仅在特定 routing strategy 下启用。例如：先根据原策略解析 expectedDspCode，再校验传入值是否等于/包含于允许列表，否则抛出明确业务异常。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/builder/CalculateRateRequestBuilder.java:502-516</code>
+                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/builder/CalculateRateRequestBuilder.java:503-516</code>
                 </div>
-                <div class="finding-desc">`getDeliveryAreaSurchargeType(...)` 删除了基于 `sortCodeDto.getSurchargeCode()` 的兜底分支后，当 `coverageSurchargeDataSource` 未命中时将一律返回 `NONE`。这会丢失 OMS/SortCode 已经给出的 DAS/EDAS 结果，导致附加费计算漏算，和本次变更目标“DAS/EDAS from OMS”也相矛盾。</div>
-                <div class="finding-suggestion">💡 修复建议：保留数据源查询优先级的同时，恢复 `surchargeCode` 兜底逻辑，例如：先查 `coverageSurchargeDataSource`，未命中时若 `sortCodeDto.getSurchargeCode()` 非空则解析并返回对应 `DeliveryAreaSurchargeType`，否则返回 `NONE`。若确实要废弃该字段，请同步修改所有上游赋值与规格说明，并补充迁移保护。</div>
+                <div class="finding-desc">`getDeliveryAreaSurchargeType(...)` 的方法签名与判定逻辑被修改：新增代码删除了 `enableBillingZoneMatrix` 入参，并移除了基于 `sortCodeDto.getSurchargeCode()` 的回退分支。这样会把原先可由上游/OMS 传入的 surcharge 标识静默改为仅依赖 `coverageSurchargeDataSource.findValid(...)` 的结果，未命中时统一返回 `NONE`。这属于安全相关的契约收缩：若调用链上仍依赖 OMS 下发的 DAS/EDAS 标识进行计费或附加费控制，变更后会在无显式异常的情况下改变费率计算结果，带来资金计算偏差风险。</div>
+                <div class="finding-suggestion">💡 修复建议：保留兼容分支，至少在 `coverageSurchargeDataSource` 未命中时继续按 `sortCodeDto.getSurchargeCode()` 做受控回退；若确需废弃该字段，应同步在所有调用方和接口契约中显式升级，并在无法判定时抛出业务异常而不是默认 `NONE`。例如：先查数据源，未命中时校验 `surchargeCode` 是否为允许枚举，再决定返回值。</div>
             </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/module/FunctionModuleFactory.java:337-342</code>
-                </div>
-                <div class="finding-desc">`getCheckReturnModule()` 新增了 `MSK` 分支并直接返回 `spxForwardLegCheckReturnModule`，这会把 Maersk 的 return-check 逻辑强制复用为 SPX forward-leg 逻辑，而后面的通用分支又明确将非 `SPX` 统一路由到 `nonSpxCheckReturnModule`。该新增分支与原有按 DSP 分类的路由规则不一致，容易导致 MSK 请求走错校验实现，出现退件判断结果错误。</div>
-                <div class="finding-suggestion">💡 修复建议：确认 MSK 是否真的需要复用 `spxForwardLegCheckReturnModule`。若只是普通非 SPX DSP，应删除该特判并继续走 `nonSpxCheckReturnModule`；若确有独立规则，建议新增 `maerskCheckReturnModule` 并在此显式返回，避免复用 SPX 专用实现。示例：`if (DspCode.MSK.name().equalsIgnoreCase(dspCode)) { return maerskCheckReturnModule; }`。</div>
-            </div>
-            <p class="more-note">... 还有 13 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 12 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
