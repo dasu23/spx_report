@@ -45,11 +45,11 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">infra-api &nbsp;|&nbsp; 2026-06-30 18:09:31</div>
+      <div class="meta">infra-api &nbsp;|&nbsp; 2026-06-30 19:51:52</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
-      <span style="background:#4caf50;color:#fff;padding:4px 12px;border-radius:4px;font-weight:bold;">PASSED</span>
+      <span style="background:#f44336;color:#fff;padding:4px 12px;border-radius:4px;font-weight:bold;">FAILED</span>
     </div>
   </div>
 
@@ -60,40 +60,73 @@
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
+        <div class="metric-card">
+            <div class="metric-label">增量覆盖率</div>
+            <div class="metric-value" style="color:#f44336">0.0%</div>
+            <div class="metric-threshold">阈值: 50%</div>
+        </div>
+        
     <div class="metric-card">
       <div class="metric-label">SonarQube 质量门</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">质量门通过</div>
-      
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">质量门未通过</div>
+      <div class="metric-note">已检测到问题，但当前配置未阻断流水线</div>
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:2</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:2</div>
       <div class="metric-threshold">已抑制: 0</div>
-      <div class="metric-note">已检测到问题，但当前配置未阻断流水线</div>
+      
     </div>
   </div>
 
   
+        <div class="violations">
+            <h3>⚠ 违规项</h3>
+            <ul><li>SonarQube quality gate status: ERROR</li>
+<li>AI Review: 1 Critical finding(s)</li></ul>
+        </div>
+        
   
         <div class="findings-section">
             <h3>AI 代码审查发现</h3>
             
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">infra-facade/src/main/java/com/speedx/infra/facade/CacheManageFacade.java:21-22</code>
+                </div>
+                <div class="finding-desc">**原因：** 新增了对外 HTTP 入口 `GET /sysutils/cache-services-v2`，但在本次 diff 中未看到任何角色校验注解（如 `@PreAuthorize`）或显式鉴权调用。该接口会返回所有已配置服务的缓存分组、缓存 key 及中英文描述，属于可被攻击者用于枚举内部服务与缓存结构的敏感运维元数据。
+
+```java
+@GetMapping(&quot;/sysutils/cache-services-v2&quot;)
+BaseResponse&lt;List&lt;CacheServiceV2Info&gt;&gt; listCacheServicesV2();
+```
+
+**影响：** 若该 Facade 直接暴露为管理接口且未被外层统一鉴权，未授权用户可读取内部服务名、缓存分组和缓存键命名规则，进而辅助后续攻击（接口探测、缓存投毒/清理目标枚举、内部架构情报收集），构成高风险信息越权读取。</div>
+                <div class="finding-suggestion">💡 修复建议：为该入口补充明确的权限控制，仅允许受信任运维/管理员角色访问，并在实现层再次校验。示例：
+```java
+@PreAuthorize(&quot;hasRole(&#x27;ADMIN&#x27;) or hasAuthority(&#x27;infra:cache:read&#x27;)&quot;)
+@GetMapping(&quot;/sysutils/cache-services-v2&quot;)
+BaseResponse&lt;List&lt;CacheServiceV2Info&gt;&gt; listCacheServicesV2();
+```
+同时建议对返回内容做最小化暴露：如非必要，不返回 `key/zhDesc/enDesc` 全量明细。</div>
+            </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">infra-domain/src/main/java/com/speedx/infra/domain/service/KafkaConsumerFailureLogService.java:351-352</code>
+                    <code class="finding-loc">infra-domain/src/main/java/com/speedx/infra/domain/service/KafkaConsumerFailureLogService.java:351</code>
                 </div>
-                <div class="finding-desc">这里将 `req.getRepushed()` 通过 `Objects.nonNull(req.getRepushed()) &amp;&amp; req.getRepushed()` 强制折叠为布尔值，导致请求未传 `repushed`（null）时也会按 `false` 过滤。原逻辑大概率是三态语义：`true`=仅已重推，`false`=仅未重推，`null`=不过滤。变更后导出接口在未指定该条件时会漏掉所有 `repushed=true` 的记录，属于业务结果错误。</div>
-                <div class="finding-suggestion">💡 修复建议：保持 `repushed` 的三态语义，不要在调用处把 null 转成 false。建议直接传递原值：`buildConsumerSpec(req.getOriginalTopic(), req.getRepushed(), req.getMessageKey(), startTime, endTime, ...)`。如果确实要默认值，应在 `buildConsumerSpec` 内显式区分 null 与 false。</div>
+                <div class="finding-desc">导出接口构造查询条件时把 `req.getRepushed()` 改成了 `Objects.nonNull(req.getRepushed()) &amp;&amp; req.getRepushed()`。这会把原本的 `null`（通常表示“不按 repushed 过滤”）强制转换为 `false`，从而只导出未重推数据，导致查询结果被错误收窄。</div>
+                <div class="finding-suggestion">💡 修复建议：保持三态语义，不要把 `Boolean` 压平成 primitive。应直接透传 `req.getRepushed()` 给 `buildConsumerSpec(...)`；如果该方法当前签名是 `boolean`，改为 `Boolean` 并在内部仅在非 null 时追加过滤条件。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">infra-domain/src/main/java/com/speedx/infra/domain/service/KafkaProducerFailureLogService.java:286-287</code>
                 </div>
-                <div class="finding-desc">这里同样把 `req.getRepushed()` 的 null 值折叠成了 `false`，会改变导出查询的筛选语义：调用方未传该条件时，不再表示“不过滤”，而是变成“只查未重推”。这会直接导致导出结果缺失已重推数据。</div>
-                <div class="finding-suggestion">💡 修复建议：不要在这里做 `null -&gt; false` 转换，直接把 `req.getRepushed()` 传给 `buildProducerSpec`，由规格构造逻辑按 null 表示“不加该过滤条件”处理。</div>
+                <div class="finding-desc">导出接口构造查询条件时把 `req.getRepushed()` 改成了 `Objects.nonNull(req.getRepushed()) &amp;&amp; req.getRepushed()`，会把 `null` 误解释为 `false`。如果前端未传该筛选项，导出结果将只包含未重推记录，和常见的“null 表示不过滤”语义不一致。</div>
+                <div class="finding-suggestion">💡 修复建议：保留 `Boolean` 三态，直接传递 `req.getRepushed()`；必要时将 `buildProducerSpec(...)` 的参数类型改为 `Boolean`，仅在非 null 时拼接 `repushed` 条件。</div>
             </div>
             
         </div>
