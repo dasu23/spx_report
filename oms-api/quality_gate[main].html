@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">oms-api &nbsp;|&nbsp; 2026-06-24 16:36:51</div>
+      <div class="meta">oms-api &nbsp;|&nbsp; 2026-06-30 18:45:23</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -56,24 +56,24 @@
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#4caf50">39.2%</div>
+      <div class="metric-value" style="color:#4caf50">39.3%</div>
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#f44336">36.9%</div>
+            <div class="metric-value" style="color:#f44336">36.1%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
     <div class="metric-card">
       <div class="metric-label">SonarQube 质量门</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">质量门未通过</div>
+      <div class="metric-value" style="color:#9e9e9e;font-size:22px;padding-top:6px">等待超时</div>
       <div class="metric-note">已检测到问题，但当前配置未阻断流水线</div>
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:0</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:17 &nbsp; 主要:70</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -82,10 +82,201 @@
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube quality gate status: ERROR</li></ul>
+            <ul><li>SonarQube analysis timed out after 1 minutes</li>
+<li>AI Review: 17 Critical finding(s)</li>
+<li>AI Review: 70 Major finding(s) &gt;= threshold 5</li></ul>
         </div>
         
   
+        <div class="findings-section">
+            <h3>AI 代码审查发现</h3>
+            
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/UserService.java:170-246</code>
+                </div>
+                <div class="finding-desc">新增用户时在密码为空的情况下不再使用默认密码，但仍继续使用 `Base64(MD5(password))` 进行密码存储：
+```java
+user.setPasswd(encodePassword(form.getPasswd()));
+```
+结合同文件 `login()`/`updateOwnPassword()` 的比对逻辑可见，该变更延续了无盐 MD5 的弱口令散列方案。MD5 已不适合密码存储，数据库泄露后可被彩虹表/高速暴力破解，导致后台账号被接管。</div>
+                <div class="finding-suggestion">💡 修复建议：将 `encodePassword()` 统一替换为自适应强散列算法，如 `BCryptPasswordEncoder`/`Argon2PasswordEncoder`，并同步修改 `login()`、`updateOwnPassword()` 的校验逻辑为 `passwordEncoder.matches(...)`。同时为存量 MD5 密码设计平滑迁移方案（首次登录升级散列）。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/impl/DspClaimUploadServiceImpl.java:49-154</code>
+                </div>
+                <div class="finding-desc">**原因：** 该上传逻辑仅校验 `payableId` 存在、状态合法，以及 `req.getHub()` 与账单 `bill.getHub()` 一致，但没有看到任何基于当前操作者 `operatorId` 的权限校验，也没有调用 `AuthUtil.requireRole()`、`@PreAuthorize` 或按用户可管理 hub 做数据范围校验。只要调用方知道某个合法 `payableId` 及其 hub，就可以为该 payable 创建导入任务并向 Kafka 投递处理消息。
+
+```java
+ApLmBill bill = apLmBillRepository.findById(req.getPayableId())
+        .orElseThrow(() -&gt; new BizException(&quot;Payable ID not found: &quot; + req.getPayableId()));
+...
+if (!StringUtils.equalsIgnoreCase(bill.getHub(), req.getHub())) {
+    throw new BizException(&quot;Hub does not match Payable ID&quot;);
+}
+...
+message.setOperatorId(operatorId);
+...
+batchQueryTaskRepository.save(task);
+kafkaProducerAgent.sendMessageAsync(KafkaTopic.DSP_CLAIM_IMPORT_TOPIC, batchId, message);
+```
+
+**影响：** 若上层入口未额外拦截，低权限用户或跨 hub 用户可对不属于自己的 payable 发起 DSP claim 导入，造成跨 hub 任务创建、异步处理触发及后续数据污染，属于高风险越权写入。</div>
+                <div class="finding-suggestion">💡 修复建议：在该方法入口显式校验当前用户是否具备 DSP claim 上传角色，并校验其 hub 数据范围覆盖 `bill.getHub()`/`req.getHub()`。建议在 Facade/Controller 使用 `@PreAuthorize`，并在 Service 内再次校验，例如通过 `AuthUtil` 或用户-hub 绑定仓储验证 `operatorId` 是否有目标 hub 的操作权限。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">oms-facade-impl/src/main/java/io/speedx/oms/facade/impl/web/admin/security/AbstractSecurityAspect.java:29-34</code>
+                </div>
+                <div class="finding-desc">**原因：** `RequireHubPermissions.permissions()` 文档明确声明“Leave empty to skip the permission check”，但这里对空权限数组直接执行 `hasAllPermissions(user, permissions)` / `hasAnyPermission(user, permissions)`。在 Java Stream 语义下，`allMatch` 对空数组返回 `true`，而 `anyMatch` 对空数组返回 `false`。这会导致同样是“跳过权限校验”的注解配置，在 `Logical.OR` 下被错误拒绝，在 `Logical.AND` 下被放行，形成与注解契约不一致的鉴权行为。
+
+```java
+protected void hasRequiredPermissions(String[] permissions, Logical logical, LoginUserBo user) {
+    boolean pass = logical == Logical.AND ?
+            hasAllPermissions(user, permissions) :
+            hasAnyPermission(user, permissions);
+    if (!pass) {
+        throw new BizException(&quot;User does not have required permission.&quot;);
+    }
+}
+```
+
+**影响：** 新增的 `@RequireHubPermissions` 端点一旦配置 `permissions = {}` 且 `permissionsLogical = OR`，将不会按设计进入“仅 hub 校验”模式，而是直接拒绝请求；更严重的是，这种契约歧义会诱导开发者通过随意添加宽泛权限码来“修复”访问问题，最终造成接口鉴权配置混乱，增加误放行/误拒绝风险。由于该方法被 `SecurityAspect` 复用，后续若有 `@RequirePermissions({})` 的用法也会继承该不一致行为。
+
+---
+
+**原因：** `ENTITY_ID_IN_PATH` / `ENTITY_ID_IN_PARAM` 的实体 ID 提取仅接受运行时参数类型与 `Long.class` 完全一致的情况：`type.isInstance(args[i])`。这意味着控制器若常见地将 `@PathVariable` / `@RequestParam` 声明为 `Integer`、`String` 或其他数值包装类型，切面将无法提取 ID，直接抛出 `BizException`，导致新增的 hub 级鉴权在大量合法接口签名上失效。
+
+```java
+private &lt;T&gt; T tryExtractParamByName(JoinPoint jp, String paramName, Class&lt;T&gt; type) {
+    MethodSignature sig = (MethodSignature) jp.getSignature();
+    String[] paramNames = sig.getParameterNames();
+    Object[] args = jp.getArgs();
+    for (int i = 0; i &lt; paramNames.length; i++) {
+        if (paramNames[i].equals(paramName) &amp;&amp; args[i] != null &amp;&amp; type.isInstance(args[i])) {
+            return (T) args[i];
+        }
+    }
+    return null;
+}
+```
+
+**影响：** 这是一个权限切面的 API 契约兼容性问题：一旦现有或后续控制器使用 `Integer id` / `String id` 形式接入 `@RequireHubPermissions(strategy = ENTITY_ID_IN_PATH|ENTITY_ID_IN_PARAM)`，请求会在鉴权阶段异常失败，形成拒绝服务；更糟的是，开发者可能为绕过该问题改用 `HUB_IN_PARAM` 等更弱策略，削弱原本应基于实体归属解析的访问控制。</div>
+                <div class="finding-suggestion">💡 修复建议：在进入 AND/OR 判断前显式处理空权限数组，严格按注解契约将其视为“跳过权限校验”。例如：
+```java
+protected void hasRequiredPermissions(String[] permissions, Logical logical, LoginUserBo user) {
+    if (permissions == null || permissions.length == 0) {
+        return;
+    }
+    boolean pass = logical == Logical.AND
+            ? hasAllPermissions(user, permissions)
+            : hasAnyPermission(user, permissions);
+    if (!pass) {
+        throw new BizException(&quot;User does not have required permission.&quot;);
+    }
+}
+```</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/datasource/ArRateCardDataSource.java:117-136</code>
+                </div>
+                <div class="finding-desc">**原因：** 新增的查询入口直接按外部传入的 `rateCardId` 返回完整 rate card 明细，代码中未见任何与当前用户身份、角色、数据范围或资源归属相关的校验/过滤逻辑。该方法仅校验 `rateCardId != null`，随后命中缓存或加载数据库记录。
+
+```java
++    public ArRateCardResult findRateCardDetailByZone(Long rateCardId, String zone) {
++        if (rateCardId == null) {
++            return null;
++        }
++        ZoneDetailCacheKey key = ZoneDetailCacheKey.builder()
++                .rateCardId(rateCardId)
++                .zone(zone != null ? zone : &quot;&quot;)
++                .build();
++        return zoneDetailCache.get(key).orElse(null);
++    }
+```
+
+**影响：** 只要调用方能构造或枚举 `rateCardId`，就可能读取不属于其授权范围的报价卡头、重量阶梯和附加费信息，形成越权读取；若该接口对多租户/客户隔离有要求，则会直接扩大数据可见范围。</div>
+                <div class="finding-suggestion">💡 修复建议：在该入口或其 Facade/Controller 层增加显式鉴权与数据范围校验：至少校验当前用户是否具备查看 AR rate card 的权限，并校验 `rateCardId` 归属是否在当前用户可见的 customer/facility/dsp 范围内；不要仅凭 `rateCardId` 直接查询。可在查询前增加类似：先根据当前用户可见范围查询 rateCard 是否存在，再返回详情。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmBillOperationService.java:371-414</code>
+                </div>
+                <div class="finding-desc">**原因：** 新增的 `exportFleetDashboard` 直接根据路径参数 `apLmBillId` 加载账单，并仅调用 `validateFleetDashboardExportParams(apLmBill, req.getFleetId())` 做业务前置校验；变更行内未见 `AuthUtil.requireRole(...)`、`@PreAuthorize`，也未见基于当前用户的 `fleetId` / hub / bill 归属校验。也就是说，只要调用到该 Service，传入任意 billId 与该 bill 下存在的 fleetId，即可创建导出任务。
+
+```java
+public BatchQueryResponse exportFleetDashboard(Long apLmBillId, FleetBillDashboardExportReq req) {
+    ApLmBill apLmBill = apLmBillRepository.findById(apLmBillId)
+        .orElseThrow(() -&gt; new BizException(&quot;AP LM Bill not found with ID: &quot; + apLmBillId));
+    fleetBillDashboardExportService.validateFleetDashboardExportParams(apLmBill, req.getFleetId());
+    ...
+    BatchQueryResponse response = batchQueryService.submitBatchQuery(batchQueryRequest, currentUserId);
+}
+```
+
+**影响：** 若控制器/切面未在别处强制限制，该接口可被低权限用户利用，对非本人/非本 fleet 的 AP LM Bill 发起导出，造成跨 fleet/跨 hub 的账单明细泄露，并生成可下载的异步导出任务。</div>
+                <div class="finding-suggestion">💡 修复建议：在该入口显式补充权限与归属校验，不要仅依赖业务参数校验。至少应在 Service 或 Controller 层增加角色校验，并校验当前用户对 `apLmBillId` 所属 hub 及 `req.fleetId` 的数据范围。例如：先获取当前用户，再校验其可访问的 hub/fleet 集合是否包含目标 bill/fleet；不满足时直接拒绝。
+
+```java
+AuthUtil.requireRole(&quot;AP_LM_BILL_EXPORT&quot;);
+Long userId = AuthUtil.findPrincipal().getId();
+if (!permissionService.canExportFleetDashboard(userId, apLmBill, req.getFleetId())) {
+    throw new BizException(&quot;No permission to export this fleet dashboard&quot;);
+}
+```
+同时为 `/admin/ap-lm-bill/{id}/export-fleet-dashboard` 增加未授权 fleetId/billId 的集成测试。</div>
+            </div>
+            
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/UserService.java:146-147</code>
+                </div>
+                <div class="finding-desc">这里直接对 `form.getLoginName()` 和 `form.getEmail()` 调用 `trim()`，当新增/编辑用户请求缺少这两个字段时会直接触发 `NullPointerException`，导致保存接口返回 500，而不是业务可理解的参数错误。该风险是本次新增代码引入的。</div>
+                <div class="finding-suggestion">💡 修复建议：在 trim 前先做非空校验，并返回明确的业务异常，例如：`if (StringUtils.isBlank(form.getLoginName()) || StringUtils.isBlank(form.getEmail())) { throw new BizException(&quot;loginName and email must not be empty&quot;); }`；随后再使用 `StringUtils.trim(...)` 或 `trimToNull(...)`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/UserService.java:173-180</code>
+                </div>
+                <div class="finding-desc">`validateUniqueFields` 中使用 `loginName.equals(existing.getLoginName())` 和 `email.equals(existing.getEmail())` 做唯一性判断，但前面仅对入参做了 `trim()`，没有统一大小写。若数据库唯一索引/业务期望对登录名或邮箱大小写不敏感，则会出现应用层校验放过、直到 `saveAndFlush` 才因唯一约束失败，且错误信息无法准确指出冲突字段；更糟的是若数据库当前排序规则区分大小写，会实际保存出 `Test`/`test` 两个账号。</div>
+                <div class="finding-suggestion">💡 修复建议：在保存前统一规范化唯一字段，例如 `loginName = StringUtils.lowerCase(StringUtils.trim(form.getLoginName()))`，`email` 同理；校验和落库都使用规范化后的值。若业务要求保留展示大小写，则增加单独展示字段，不要直接用原值参与唯一性判断。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/auth/CustomerPortalAuthResolver.java:86-89</code>
+                </div>
+                <div class="finding-desc">新增日志在认证解析失败路径上输出内部账户主键 `customerAccountId`。虽然未直接打印 API Key，但该日志位于“apiKey 已解析成功但账户缺失”的认证链路中，属于可被外部输入触发的鉴权异常日志；一旦日志系统被低权限人员、外包运维或聚合平台访问，可能泄露内部账户标识与认证映射状态，帮助攻击者枚举有效凭证对应关系或进行后续定向攻击。</div>
+                <div class="finding-suggestion">💡 修复建议：避免在认证/鉴权失败日志中输出可关联身份的内部主键，改为记录脱敏后的关联 ID 或仅记录通用错误码。例如：`log.warn(&quot;Customer portal auth resolution failed: resolved account missing&quot;)`。如确需排障，建议将详细信息写入受限审计日志并增加访问控制。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/auth/CustomerPortalAuthResolver.java:91-93</code>
+                </div>
+                <div class="finding-desc">这里直接使用 `account.getCustomerId()` 继续查询，但未校验 `customerId` 是否为空。若 API Key 关联的 `CustomerAccount` 数据不完整（存在账号记录但 `customer_id` 为空），后续 `findAllByCustomerId(customerId)` 很可能触发仓储层参数异常，导致客户门户查询直接失败。</div>
+                <div class="finding-suggestion">💡 修复建议：在读取 `customerId` 后增加空值保护，并将该类异常账号按“无效/不可解析”处理或返回空集合，例如：`Long customerId = account.getCustomerId(); if (customerId == null) { log.warn(&quot;CustomerAccount customerId is null for id={}&quot;, customerAccountId); invalidApiKeyCache.put(apiKey, Boolean.TRUE); return null; }`。若业务上应视为有效但无绑定，则返回 `Collections.emptySet()` 并补充注释说明。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/datasource/FuelCoefficientPageCache.java:57-60</code>
+                </div>
+                <div class="finding-desc">computeKey() 在捕获任意异常后仅记录 warn 并返回 null，调用方会静默退化为“绕过缓存”。这会把序列化失败、不可序列化 sort/filter 对象等真实错误伪装成正常未命中，线上出现性能抖动时很难定位根因，且调用方无法区分“确实不缓存”和“缓存键生成失败”。</div>
+                <div class="finding-suggestion">💡 修复建议：不要在这里吞掉所有异常并返回 null。至少应改为抛出业务异常，或返回一个明确的失败结果并让上层决定是否降级。例如：`throw new IllegalStateException(&quot;Failed to compute fuel coefficient cache key&quot;, e);`。如果必须降级，建议增加失败指标埋点，并将返回类型改为 `Optional&lt;String&gt;` 以显式表达失败语义。</div>
+            </div>
+            <p class="more-note">... 还有 77 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+        </div>
+        
 
   <div class="footer">
     由质量门禁引擎生成 &nbsp;|&nbsp; SpeedX CI/CD
