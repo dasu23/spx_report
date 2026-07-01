@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">ubi-api &nbsp;|&nbsp; 2026-07-01 22:53:50</div>
+      <div class="meta">ubi-api &nbsp;|&nbsp; 2026-07-01 23:38:11</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -60,20 +60,14 @@
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
-        <div class="metric-card">
-            <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#f44336">0.0%</div>
-            <div class="metric-threshold">阈值: 50%</div>
-        </div>
-        
     <div class="metric-card">
       <div class="metric-label">SonarQube 质量门</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">质量门未通过</div>
-      <div class="metric-note">已检测到问题，但当前配置未阻断流水线</div>
+      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">质量门通过</div>
+      
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:8 &nbsp; 主要:18</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:6 &nbsp; 主要:14</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -82,9 +76,8 @@
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 8 Critical finding(s)</li>
-<li>AI Review: 18 Major finding(s) &gt;= threshold 3</li></ul>
+            <ul><li>AI Review: 6 Critical finding(s)</li>
+<li>AI Review: 14 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,9 +87,33 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/controller/AnalyticsController.java:46-59</code>
+                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/service/AnalyticsService.java:145-259</code>
                 </div>
-                <div class="finding-desc">**原因：** 新增的 `userId` 过滤参数直接从请求透传到服务层，但在该 HTTP 入口新增分支中看不到任何基于当前登录身份的约束或校验；调用方可自行指定任意 `userId` 查询错误趋势，存在按用户维度的数据越权读取风险。尤其 `dimension=type` 分支与默认分支都接受 `qry.getUserId()`，扩大了可见范围。
+                <div class="finding-desc">新增的 `message` 过滤通过字符串拼接构造 SLS SQL 子句：`&quot; FROM (SELECT message FROM log)&quot; + messageWhere` / `&quot; FROM log&quot; + messageWhere`。即使对单引号做了转义，这里仍然是把外部输入直接嵌入查询语句，属于高风险的查询拼接模式；一旦 `escapeSqlString` 对 SLS SQL 方言覆盖不完整，攻击者可借助特殊字符或方言差异破坏 WHERE 条件，进而绕过筛选或扩大查询范围。</div>
+                <div class="finding-suggestion">💡 修复建议：避免把用户输入直接拼入 SLS SQL。优先改为使用 SLS 检索过滤能力或受控参数化/白名单方案；若 SLS 不支持参数化，应将 `message` 过滤下沉到固定模板并对允许字符做严格白名单校验（如长度限制 + 禁止控制字符/通配符/引号），不要拼接任意文本到 SQL 片段中。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/service/CfoViewAnalyticsService.java:267-269</code>
+                </div>
+                <div class="finding-desc">`buildFilter` 将外部可控的 `bizIdFilter` 直接拼接进 SLS 检索表达式：`filter.append(&quot; AND biz_id:\&quot;&quot;).append(bizIdFilter).append(&quot;\&quot;&quot;);`。这里没有任何转义或白名单校验，若 `bizId` 含引号或检索语法字符，可闭合当前字面量并注入额外条件，导致实体详情查询越界读取其他业务实体事件。</div>
+                <div class="finding-suggestion">💡 修复建议：对 `bizIdFilter` 做严格转义或白名单限制（例如仅允许字母、数字、`-`、`_`），并封装统一的 SLS 字符串字面量转义函数；禁止直接把路径参数拼入查询表达式。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">docs/active/cfo-analytics/test-plans/optimize-cfo-sls-aggregation.md:13-16</code>
+                </div>
+                <div class="finding-desc">文档新增了可直接使用的管理员默认口令示例：`{&quot;username&quot;:&quot;admin&quot;,&quot;password&quot;:&quot;admin123&quot;}`。这属于硬编码密码/凭证暴露，一旦该文档进入仓库、被复制到测试脚本或被非授权人员获取，会直接降低测试/开发环境账户被撞库或横向利用的门槛，命中 [SEC-001]。</div>
+                <div class="finding-suggestion">💡 修复建议：删除明文密码示例，改为占位符或引用安全注入方式，例如 `{&quot;username&quot;:&quot;${ADMIN_USERNAME}&quot;,&quot;password&quot;:&quot;${ADMIN_PASSWORD}&quot;}`，并在文档中要求通过本地环境变量、密钥管理系统或 CI Secret 注入。若该默认密码真实存在，应立即轮换。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/controller/AnalyticsController.java:46-60</code>
+                </div>
+                <div class="finding-desc">**原因：** 新增的错误趋势查询允许客户端直接传入 `qry.getUserId()`，并将其原样下传到服务层，但在该 HTTP 入口新增代码中看不到任何基于当前登录身份的约束、归属校验或服务端覆盖逻辑。若调用方可任意指定其他用户的 `userId`，则可能绕过“仅查看本人/授权范围内用户数据”的限制。
 
 ```java
 if (&quot;type&quot;.equals(qry.getDimension())) {
@@ -105,58 +122,33 @@ if (&quot;type&quot;.equals(qry.getDimension())) {
 return analyticsService.getErrorTrend(appKey, qry.getFrom(), qry.getTo(), qry.getGroupBy(), qry.getUserId());
 ```
 
-**影响：** 若上层仅依赖已有应用级访问而未限制用户范围，具备该接口访问能力的主体可枚举或指定其他用户的错误趋势数据，导致跨用户数据泄露。由于该变更是新增过滤维度，风险面较基线扩大。</div>
-                <div class="finding-suggestion">💡 修复建议：在控制器或服务入口基于当前认证主体校验 `userId` 的可查询范围：普通用户仅允许查询自身 `userId`，管理员/分析角色才可跨用户查询；若未传 `userId`，应回落为当前用户而不是全量。示例：
+**影响：** 攻击者只需枚举或猜测 `userId`，即可读取其他用户维度的错误趋势数据，造成跨用户数据越权读取；若该接口面向多租户应用，还可能扩大到租户间可见性泄露。</div>
+                <div class="finding-suggestion">💡 修复建议：不要信任请求参数中的 `userId` 作为最终过滤条件；在控制器或服务层基于当前认证主体强制注入可访问的用户范围，并对传入 `userId` 做白名单/归属校验。示例：
 ```java
 String currentUserId = AuthUtil.currentUserId();
-if (!AuthUtil.hasAnyRole(&quot;admin&quot;, &quot;analyst&quot;)) {
-    qry.setUserId(currentUserId);
-} else if (qry.getUserId() != null) {
-    AuthUtil.requireUserScope(qry.getUserId());
-}
-```</div>
+AuthUtil.requireUserScope(appKey, qry.getUserId());
+String effectiveUserId = qry.getUserId() == null ? currentUserId : qry.getUserId();
+return analyticsService.getErrorTrend(appKey, qry.getFrom(), qry.getTo(), qry.getGroupBy(), effectiveUserId);
+```
+若业务要求仅可查本人，则直接忽略外部 `userId`，统一使用当前登录用户标识。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/service/CfoViewAnalyticsService.java:267-269</code>
+                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/service/CfoViewService.java:43-111</code>
                 </div>
-                <div class="finding-desc">`buildFilter` 将外部可控的 `bizIdFilter` 直接拼接进 SLS 查询字符串，仅用双引号包裹而未做任何转义/白名单校验。若 `bizId` 中包含引号或查询语法片段，可破坏原有过滤条件，构造任意 SLS 查询，属于注入风险。
+                <div class="finding-desc">**原因：** `deleteView(String viewId)` 仅调用 `getOwnedView(viewId)` 做归属判断，未见任何角色校验。根据规则，DELETE 接口必须显式调用 `AuthUtil.requireRole()` 或 `@PreAuthorize`；否则只要是已登录且资源归属匹配的用户，就能删除 CFO 视图。
 
 ```java
-if (bizIdFilter != null &amp;&amp; !bizIdFilter.isBlank()) {
-    filter.append(&quot; AND biz_id:\&quot;&quot;).append(bizIdFilter).append(&quot;\&quot;&quot;);
+@Transactional
+public void deleteView(String viewId) {
+    CfoViewEntity view = getOwnedView(viewId);
+    cfoViewMapper.deleteById(view.getId());
 }
-```</div>
-                <div class="finding-suggestion">💡 修复建议：禁止直接拼接 `bizIdFilter`。至少对 `&quot;`、反斜杠及 SLS 查询保留字符做严格转义，或改为仅允许固定字符集（如 `[A-Za-z0-9._:-]+``）的 bizId；同时补充包含引号、逻辑运算符的恶意输入测试。</div>
-            </div>
-            <div class="finding-card finding-critical">
-                <div class="finding-header">
-                    <span class="finding-badge">严重</span>
-                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/service/CfoViewAnalyticsService.java:83-165</code>
-                </div>
-                <div class="finding-desc">**原因：** 阶段聚合接口新增后直接对外提供 CFO 视图阶段统计，但服务入口未见任何角色鉴权，仅依赖 `loadContext` 的归属校验。
+```
 
-**影响：** 普通已登录用户可访问 CFO 阶段聚合数据，暴露业务流程与财务分析维度，违反敏感模块最小权限原则。</div>
-                <div class="finding-suggestion">💡 修复建议：为 GET `/cfo/views/{viewId}/stages` 增加显式角色校验，并保留归属校验。</div>
-            </div>
-            <div class="finding-card finding-critical">
-                <div class="finding-header">
-                    <span class="finding-badge">严重</span>
-                    <code class="finding-loc">docs/active/cfo-analytics/test-plans/optimize-cfo-sls-aggregation.md:13-16</code>
-                </div>
-                <div class="finding-desc">文档新增了可直接使用的默认管理员凭据：`{&quot;username&quot;:&quot;admin&quot;,&quot;password&quot;:&quot;admin123&quot;}`。这是典型的硬编码密码/默认口令暴露，一旦该仓库被更广泛访问、同步到外部环境或被误用于非隔离环境，攻击者可直接尝试登录管理接口获取高权限访问。</div>
-                <div class="finding-suggestion">💡 修复建议：删除文档中的明文密码，改为引用受控的测试凭据注入方式（如 `.env`/CI secret/密码管理器），示例中仅保留占位符：`{&quot;username&quot;:&quot;${TEST_ADMIN_USERNAME}&quot;,&quot;password&quot;:&quot;${TEST_ADMIN_PASSWORD}&quot;}`。同时确认该默认口令未在任何共享环境继续使用。</div>
-            </div>
-            <div class="finding-card finding-critical">
-                <div class="finding-header">
-                    <span class="finding-badge">严重</span>
-                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/service/CfoViewService.java:65-111</code>
-                </div>
-                <div class="finding-desc">**原因：** 删除 CFO 视图为破坏性操作，但实现仅通过 `getOwnedView(viewId)` 校验归属，未见任何角色鉴权。按照审查基线，DELETE 接口缺失显式角色校验属于高危。
-
-**影响：** 任意已登录用户都可删除自己创建的 CFO 视图，说明 CFO 模块的管理能力未被角色体系保护；若攻击者先利用创建接口批量制造资源，再通过删除/重建扰乱审计与配置状态，会扩大业务面风险。</div>
-                <div class="finding-suggestion">💡 修复建议：在 DELETE `/cfo/views/{viewId}` 增加显式角色校验（如 `@PreAuthorize` 或 `AuthUtil.requireRole(...)`），并保留归属校验。若存在审计要求，建议增加删除审计日志。</div>
+**影响：** 非授权角色可删除分析视图，造成配置被破坏或业务数据视图不可用，属于敏感管理操作越权。</div>
+                <div class="finding-suggestion">💡 修复建议：为删除接口增加显式角色校验，并建议同时删除关联绑定记录或使用外键/级联策略保证一致性；至少应确保只有具备 CFO 视图管理权限的用户可执行删除。</div>
             </div>
             
             <div class="finding-card finding-major">
@@ -164,67 +156,42 @@ if (bizIdFilter != null &amp;&amp; !bizIdFilter.isBlank()) {
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">backend/server/src/main/java/com/ubi/server/controller/AnalyticsController.java:46-50</code>
                 </div>
-                <div class="finding-desc">`GET /errors/trend` 的返回类型从固定的 `List&lt;ErrorTrendPoint&gt;` 改为 `Object`，并且根据 `dimension` 分支返回不同结构的数据。这会让同一路径在运行时返回两种不兼容的响应体，破坏既有客户端/SDK 对稳定 JSON 结构的依赖，也会影响序列化契约、文档生成和前端类型推断。</div>
-                <div class="finding-suggestion">💡 修复建议：保持接口返回契约稳定：要么拆分为两个明确端点（例如 `/errors/trend` 与 `/errors/trend-by-type`），要么定义统一响应 DTO（如包含 `dimension` 和 `items` 字段的包装对象），避免直接返回 `Object`。示例：`public ErrorTrendResponse getErrorTrend(...)`，其中 `items` 使用统一元素结构或显式区分字段。</div>
+                <div class="finding-desc">`getErrorTrend` 的返回类型从明确的 `List&lt;ErrorTrendPoint&gt;` 改为 `Object`，并在 `dimension=type` 时返回另一种数据结构。这会让同一路径 `/errors/trend` 的响应 schema 变成条件分支型，破坏既有客户端对固定数组元素类型的反序列化假设；旧客户端即使不传 `dimension`，生成的 OpenAPI/类型声明也会退化为不透明对象，容易导致前端/SDK 解析失败。</div>
+                <div class="finding-suggestion">💡 修复建议：保持接口返回契约稳定：为不同维度拆分独立接口（例如新增 `/errors/trend/by-type`），或统一返回一个显式 DTO（包含 `dimension` 和 `items`，其中 `items` 使用统一字段结构）。至少不要在 Controller 层使用 `Object` 作为返回类型。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/dto/cmd/CreateCfoViewCmd.java:26-28</code>
+                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/service/CfoViewService.java:107-110</code>
                 </div>
-                <div class="finding-desc">新增的 `revenueDatasetId` 字段未添加任何非空/格式约束。若该 DTO 直接作为创建接口入参并启用 `@Valid`，服务端将接受 `null`、空串或异常格式的数据集标识，容易把原本应在边界层拦截的非法引用下沉到服务/持久层处理，造成校验绕过或异常路径被滥用。对涉及数据集绑定的配置型接口，这属于安全相关的输入契约缺失。</div>
-                <div class="finding-suggestion">💡 修复建议：为 `revenueDatasetId` 增加明确的输入约束，例如 `@NotBlank`，并按实际 ID 规则补充 `@Size` 或 `@Pattern`；若允许为空，也应在接口语义上明确并在服务层做显式分支校验。示例：`@NotBlank @Size(max = 64) private String revenueDatasetId;`</div>
+                <div class="finding-desc">删除视图时只删除了 `cfo_view` 主表记录，没有同步删除该视图对应的 `cfo_view_workflow` 绑定记录。若数据库未配置级联删除，这里会留下孤儿绑定数据；后续若按 viewId 查询绑定、统计绑定数量或重建同 ID 数据时，都会出现脏数据/重复数据问题。</div>
+                <div class="finding-suggestion">💡 修复建议：在 `deleteView` 中补充删除绑定表记录，并与主表删除放在同一事务内，例如先执行 `cfoViewWorkflowMapper.delete(...eq(ViewId, viewId))`，再删除 `cfoView`；或在数据库层为外键配置 `ON DELETE CASCADE`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/dto/cmd/UpdateCfoViewCmd.java:24-26</code>
+                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/service/DatasetParser.java:111</code>
                 </div>
-                <div class="finding-desc">更新命令中的 `revenueDatasetId` 未声明任何校验规则，导致更新接口可能接受空值或非法 ID 并覆盖已有绑定。相较于创建场景，更新接口更容易被利用为“清空绑定/写入异常引用”的入口，属于安全相关的 API 契约缺失。</div>
-                <div class="finding-suggestion">💡 修复建议：为更新 DTO 的 `revenueDatasetId` 增加与创建 DTO 一致的校验约束，并确保更新语义明确区分“保持不变”“显式清空”“更新为新值”三种情况，避免通过空串绕过。</div>
+                <div class="finding-desc">这里直接调用 `row.getCell(c)` 并传给 `formatter.formatCellValue(...)`。当某一行缺少尾部单元格或中间单元格为空时，`getCell(c)` 会返回 `null`，`formatCellValue(null)` 会触发空指针，导致整个 XLSX 导入失败。该问题在用户上传存在空白列的常见 Excel 文件时即可复现。</div>
+                <div class="finding-suggestion">💡 修复建议：对单元格判空后再格式化，例如：`Cell cell = row.getCell(c); String value = cell == null ? &quot;&quot; : formatter.formatCellValue(cell).trim();`。同时建议补充包含空白单元格、缺失尾列的 Excel 导入测试。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/dto/qry/ErrorClustersQry.java:10-12</code>
+                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/service/ImportedDatasetService.java:108-164</code>
                 </div>
-                <div class="finding-desc">**原因：** 本次新增查询对象直接暴露了 `userId` 过滤条件，但在该 diff 中看不到任何与当前登录主体绑定、角色校验或数据范围约束的配套改动。若后续 Controller/Service 直接信任该字段并据此查询，调用方可通过篡改 `userId` 枚举其他用户的错误聚类数据，形成按用户维度的数据越权读取。
-
-```java
-private String type;
-private String userId;
-private Integer limit = 10;
-```
-
-**影响：** 一旦对应查询入口未强制将 `userId` 绑定为当前会话用户，或未校验调用者是否具备跨用户查看权限，普通用户即可读取其他用户的错误聚类信息，造成错误日志/行为数据泄露。由于本分片未包含 HTTP/Service 实现，暂无法断言具体入口，但该 DTO 变更已引入明显的越权风险面。</div>
-                <div class="finding-suggestion">💡 修复建议：不要直接信任前端传入的 `userId`。在对应 Controller/Service 中：1）默认使用当前认证主体的 userId 覆盖请求值；2）仅对具备明确管理权限的角色开放跨用户查询，并显式校验权限；3）若业务仅允许查看本人数据，删除该入参或在服务层忽略它。
-
-可参考：
-```java
-String effectiveUserId = AuthUtil.currentUserId();
-if (StringUtils.hasText(qry.getUserId()) &amp;&amp; !qry.getUserId().equals(effectiveUserId)) {
-    AuthUtil.requireRole(&quot;admin&quot;);
-}
-qry.setUserId(effectiveUserId);
-```</div>
+                <div class="finding-desc">`upload(...)` 在 replace 模式下先逐条插入新版本记录，再批量逻辑删除旧版本、最后更新数据集元信息，且方法明确不使用事务。若在 `insertRecords(...)` 成功后、旧版本删除或 `datasetMapper.updateById(dataset)` 之间发生异常，数据库会同时保留旧版本和新版本的有效记录，而 `currentVersion`/`recordCount` 可能未同步更新，形成不一致状态。对财务类数据集而言，这会导致后续读取、统计或权限判断基于错误版本，属于安全相关的数据完整性风险。</div>
+                <div class="finding-suggestion">💡 修复建议：将“插入新版本记录 + 旧版本失效 + 数据集元信息更新”放入单个事务中；若业务必须保留 partial 语义，可仅对批量插入阶段做分批容错，但在版本切换阶段使用事务或状态机（如 importing -&gt; complete）保证原子切换。至少应在读取侧仅暴露 `currentVersion` 对应记录，避免新旧版本同时可见。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/dto/qry/ErrorTrendQry.java:11-13</code>
+                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/service/ImportedDatasetService.java:147-151</code>
                 </div>
-                <div class="finding-desc">**原因：** 修改后的趋势查询对象新增 `userId` 参数，但 diff 中未同步展示任何鉴权或数据范围过滤逻辑。趋势类接口通常返回聚合后的时间序列数据，若服务端直接按请求中的 `userId` 查询，将允许调用方探测或读取其他用户的错误趋势。
-
-```java
-private String groupBy = &quot;hour&quot;;
-private String userId;
-private String dimension = &quot;total&quot;;
-```
-
-**影响：** 攻击者可通过替换 `userId` 获取他人的错误趋势、活跃时间段或异常分布，造成跨用户统计数据泄露；聚合接口还可能因返回的是汇总数据而更难被业务侧察觉。当前分片缺少对应入口实现，无法确认是否已在其他层做强制覆盖，因此应视为新增越权风险点。</div>
-                <div class="finding-suggestion">💡 修复建议：在对应趋势查询入口中禁止直接信任 `qry.userId`：对普通用户强制使用当前登录用户标识；仅允许具备授权角色的主体传入其他 `userId`。同时为 `dimension`/`groupBy` 增加白名单校验，避免后续拼接查询时扩大攻击面。</div>
+                <div class="finding-desc">数据集预览查询只按 datasetId 和 deleted=0 过滤，没有限制 version=currentVersion。对于 append/replace 后保留的历史版本记录，接口会把多个版本的明细一起返回，PREVIEW_ROWS 还可能优先截断到旧数据，导致用户看到的不是当前版本数据集。</div>
+                <div class="finding-suggestion">💡 修复建议：预览接口应只读取当前版本：在查询条件中增加 `.eq(ImportedDatasetRecordEntity::getVersion, dataset.getCurrentVersion())`。如果产品要求支持历史版本预览，应显式增加 version 参数，而不是默认混查所有未删除记录。</div>
             </div>
-            <p class="more-note">... 还有 16 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 10 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
