@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">oms-api &nbsp;|&nbsp; 2026-06-26 11:34:10</div>
+      <div class="meta">oms-api &nbsp;|&nbsp; 2026-07-01 14:31:57</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -56,13 +56,13 @@
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#4caf50">39.2%</div>
+      <div class="metric-value" style="color:#4caf50">39.9%</div>
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#f44336">36.1%</div>
+            <div class="metric-value" style="color:#ff9800">41.7%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:8 &nbsp; 主要:43</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:10 &nbsp; 主要:71</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,8 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 8 Critical finding(s)</li>
-<li>AI Review: 43 Major finding(s) &gt;= threshold 5</li></ul>
+<li>AI Review: 10 Critical finding(s)</li>
+<li>AI Review: 71 Major finding(s) &gt;= threshold 5</li></ul>
         </div>
         
   
@@ -94,57 +94,74 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArRateCalcService.java:97-108</code>
+                    <code class="finding-loc">oms-facade-impl/src/main/java/io/speedx/oms/facade/impl/MqFacadeImpl.java:173-182</code>
                 </div>
-                <div class="finding-desc">本次修改删除了原先将 freshly-calculated charges 内联到结算生成请求中的逻辑，改为同步调用 `arSettlementGenerateService.generateSettlement(arRequest)` 或仅发送不含 charges 的 Kafka 消息。注释里被删除的旧实现明确说明：内联 charges 是为了避免“并发重复重算同一 trackingNo 时，消费者读取 parcel_charge 落入竞态窗口”。新增实现未见任何替代性的并发隔离或版本校验，导致结算生成可能读取到被并发请求覆盖/污染的费用数据，直接形成 AR 金额计算错误。该问题属于资金计算安全风险。</div>
-                <div class="finding-suggestion">💡 修复建议：恢复结算生成与本次计算结果之间的强一致绑定，至少采用以下一种方式：1）继续在请求中携带本次计算出的 charges/rateVersion；2）在 `generateSettlement` 内按 trackingNo + rateVersion 做幂等/版本校验；3）对同一 trackingNo 的 AR 计费与结算生成加锁，确保读取的费用就是当前请求刚写入的数据。并补充并发回归测试。</div>
-            </div>
-            <div class="finding-card finding-critical">
-                <div class="finding-header">
-                    <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-facade/src/main/java/io/speedx/oms/facade/model/req/ClaimHistImportReq.java:13-16</code>
-                </div>
-                <div class="finding-desc">新增导入请求直接接收外部提供的 `fileUrl`，仅做了 `@NotBlank` 校验，没有限制协议、域名白名单或对象存储归属。若后续导入逻辑按该 URL 拉取文件，攻击者可传入内网地址、云元数据地址或恶意外部地址，造成 SSRF，进一步探测内网或窃取凭据。</div>
-                <div class="finding-suggestion">💡 修复建议：对 `fileUrl` 增加严格校验：仅允许 HTTPS；校验 host 必须属于受信任的 Azure Blob 域名白名单/预签名域；禁止 `localhost`、私网网段、链路本地地址和非标准协议。服务层在真正下载前再次解析并校验目标地址。</div>
-            </div>
-            <div class="finding-card finding-critical">
-                <div class="finding-header">
-                    <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/FuelCoefficientService.java:85-188</code>
-                </div>
-                <div class="finding-desc">**原因：** 折扣历史查询接口同样把数据范围完全建立在外部传入的 `pickupAccountIds` 上，新增代码未见任何当前用户与这些账号的归属校验，也未在服务层做二次授权过滤。
+                <div class="finding-desc">原因：新增 `parcelStateCallbackDirect` 同时暴露为 Kafka consumer 与 HTTP POST `/mq/parcel-state-direct` 入口，但变更代码未见任何签名校验、来源认证、角色校验或消息真实性校验，仅按 `event` 白名单过滤后即调用 `parcelStateService.processParcelStateCallbackDirect(req)` 处理业务状态。
 
 ```java
-public GridResponse&lt;FuelDiscountGridResponse&gt; queryDiscount(Set&lt;Long&gt; pickupAccountIds, GridRequest request) {
-    if (CollectionUtils.isEmpty(pickupAccountIds)) {
-        return new GridResponse&lt;&gt;(Collections.emptyList(), 0);
+@KafkaListener(...)
+public BaseResponse&lt;Void&gt; parcelStateCallbackDirect(@RequestBody String reqStr) throws Exception {
+    ParcelStateCallbackReq req = JSONObject.parseObject(reqStr, ParcelStateCallbackReq.class);
+    if (!AR_AP_EVENTS.contains(req.getEvent())) {
+        return BaseResponse.success(null);
     }
-    ...
-    Page&lt;FuelDiscountGridResponse&gt; page = fuelCoefficientRepositorySql
-            .findDiscountHistory(pickupAccountIds, request.getFilterModel(), pageable);
+    parcelStateService.processParcelStateCallbackDirect(req);
+    return BaseResponse.success(null);
+}
 ```
 
-**影响：** 攻击者一旦能控制该 ID 集合，即可读取其他客户的折扣历史，属于典型的横向越权读取；折扣历史通常涉及商业敏感定价信息，泄露影响较大。
+影响：若 HTTP 路由可达，攻击者可伪造 parcel state 回调直接驱动内部状态处理流程，造成业务状态被未授权触发；若该流程关联 AR/AP 结算，还可能进一步影响财务计算链路。
 
 ---
 
-原因：`queryDiscount` 与同类接口一致，直接信任请求中的 `pickupAccountIds` 作为数据范围，变更代码中未见任何角色校验、服务间认证或账号归属校验。
+**原因：** 新增消息回调入口 `POST /mq/parcel-state-direct`，但本分片新增行仅声明了公开 HTTP 路径与原始字符串请求体，未体现任何来源认证、签名校验或角色限制。
 
-影响：可被利用读取未授权客户的 fuel discount 数据，导致价格折扣策略泄露。
+```java
+@PostMapping(&quot;/mq/parcel-state-direct&quot;)
+BaseResponse&lt;Void&gt; parcelStateCallbackDirect(@RequestBody String req) throws Exception;
+```
 
----
-
-**原因：** 折扣历史明细接口同样把 `pickup-account-ids` 作为客户端可控 header 输入，diff 中未见任何将该 header 与当前用户身份绑定的校验逻辑，也未见角色限制。
-
-**影响：** 调用方可通过伪造 header 读取其他客户 RateCard 历史折扣记录，泄露敏感商业定价信息。</div>
-                <div class="finding-suggestion">💡 修复建议：在服务层增加基于登录态的账号范围校验，不允许调用方直接决定查询边界；对 `pickupAccountIds` 做白名单交集过滤，并在 facade/controller 层补充显式鉴权注解。</div>
+**影响：** 若实现层未对调用来源做鉴别，外部主体可能直接伪造 MQ/状态回调请求，触发包裹状态变更或下游业务处理，造成未授权业务操作甚至数据污染。对于回调类入口，缺失来源认证属于高风险访问控制问题。</div>
+                <div class="finding-suggestion">💡 修复建议：将该方法与 HTTP 暴露解耦，Kafka consumer 不应复用对外 HTTP 入口；若必须保留 HTTP 回调，需增加来源认证（签名/HMAC、mTLS、IP allowlist）并校验消息幂等与字段完整性，同时限制为内部专用路径。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-facade-impl/src/main/java/io/speedx/oms/facade/impl/DriverDeliveryStatFacadeImpl.java:22-27</code>
+                    <code class="finding-loc">oms-infrastructure/src/main/java/io/speedx/oms/infrastructure/db/repository/impl/FuelCoefficientRepositorySqlImpl.java:72-139</code>
                 </div>
-                <div class="finding-desc">原因：新增司机派送统计查询接口直接接受请求体中的 `driverId`、时间范围并调用 `driverDeliveryStatService.query(req)`，未见 `AuthUtil.requireRole()`、`@PreAuthorize` 或基于当前用户与 `driverId` 关系的归属校验。该类统计通常属于司机本人、所属 fleet 或运营范围数据，当前实现完全信任前端传参。
+                <div class="finding-desc">**原因：** 折扣历史查询同样把数据范围过滤从 `soldTo` 改成了仅按 `pickUp` 过滤，且删除了原先 count 查询中的同类约束。当前实现没有展示任何基于登录身份的归属校验或授权裁剪，意味着只要能传入目标 `pickupAccountIds`，就可读取对应历史折扣记录。
+
+```java
+jpql.append(&quot;SELECT DISTINCT NEW io.speedx.oms.facade.model.resp.FuelDiscountGridResponse(&quot;)
+        ...
+        .append(&quot;WHERE rc.deleted = 0 &quot;)
+        .append(&quot; AND rc.pickUp IN :pickupAccountIds &quot;)
+        .append(&quot; AND rc.soldTo = ca1.id AND ca1.deleted = 0 &quot;)
+        .append(&quot; AND rc.pickUp = ca2.id AND ca2.deleted = 0 &quot;);
+```
+
+**影响：** 攻击者可通过枚举或猜测 pickup 账号 ID 查询其他客户的燃油折扣历史，泄露客户账号、产品编码、折扣值等敏感商业信息；若该查询用于客户门户/管理后台，还可能形成批量越权读取面。</div>
+                <div class="finding-suggestion">💡 修复建议：在查询条件中恢复基于当前主体的 `soldTo`/客户范围限制，并在 Service/Facade 层对传入的 `pickupAccountIds` 做授权裁剪或拒绝未授权 ID。若该接口面向客户门户，建议以服务端从会话解析出的账号范围为准，忽略客户端直接指定的跨租户 pickup ID。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/DriverDeliveryStatService.java:72-95</code>
+                </div>
+                <div class="finding-desc">**原因：** `query()` 直接使用请求中的 `req.getDriverId()` 查询司机统计数据，新增代码中未见任何角色校验、当前登录主体校验或基于主体的数据范围约束，导致调用方只要构造任意 `driverId` 即可读取对应司机的聚合统计。
+
+```java
+List&lt;DriverDeliveryDailyStat&gt; rows = (country == null || country.trim().isEmpty())
+    ? repository.findByDriverIdAndStatDateBetween(req.getDriverId(), startDate, endDate)
+    : repository.findByDriverIdAndStatDateBetweenAndCountry(
+        req.getDriverId(), startDate, endDate, country.trim().toUpperCase());
+```
+
+**影响：** 若该接口对外可达，攻击者或低权限用户可枚举/指定其他司机的 `driverId`，越权读取其投递统计、国家维度数据及最近聚合时间，造成业务数据泄露。
+
+---
+
+原因：新增司机派送统计查询接口直接接受请求中的 `driverId`、时间范围并调用服务层查询，变更中未见 `AuthUtil.requireRole()`、`@PreAuthorize`，也未见按 `driverId`、fleet 或 facility 的数据范围过滤。按照审查规则，POST 接口缺失显式角色校验即构成高危。
 
 ```java
 public BaseResponse&lt;DriverDeliveryStatsResp&gt; query(@Valid @RequestBody DriverDeliveryStatsQueryReq req) {
@@ -154,53 +171,80 @@ public BaseResponse&lt;DriverDeliveryStatsResp&gt; query(@Valid @RequestBody Dri
 }
 ```
 
-影响：任意可访问该接口的主体可能通过替换 `driverId` 查询其他司机的派送统计，导致个人运营数据越权读取；若统计结果用于绩效或结算，还会扩大敏感业务数据暴露面。
+影响：任意可访问该接口的主体可指定任意 `driverId` 查询司机统计数据，导致司机运营数据越权读取；若调用方本应仅限本 fleet/facility，可进一步扩大为全局司机数据可见。
 
 ---
 
-**原因：** 新增司机派送统计查询入口，但 diff 中未体现任何角色鉴权或按 `fleetId` / `facilityCode` 的数据范围过滤。根据审查规则，查询接口若未按用户身份过滤，`driver-leader` 应按 `fleetId` 过滤，`operator/Dispatcher` 应按 `facilityCode` 过滤；当前新增入口无法证明这些限制存在。
+**原因：** 新增查询入口 `POST /driver-delivery-stat/query`，但本分片新增行仅声明了路由与请求体，未体现任何角色校验或按 `fleetId` / `facilityCode` 的数据范围过滤要求。
 
 ```java
 @PostMapping(&quot;/driver-delivery-stat/query&quot;)
 BaseResponse&lt;DriverDeliveryStatsResp&gt; query(@RequestBody DriverDeliveryStatsQueryReq req);
 ```
 
-**影响：** 若实现层直接按请求条件查询统计数据，`driver-leader`、`operator`、`Dispatcher` 等主体可通过修改查询条件读取其他车队或其他场地的司机派送统计，造成运营数据越权可见。</div>
-                <div class="finding-suggestion">💡 修复建议：在入口增加角色校验，并在服务层根据当前用户身份强制绑定可查询范围：司机仅可查本人 `driverId`，管理角色仅可查其授权 fleet/facility 下司机；不要直接信任请求中的 `driverId`。</div>
+**影响：** 若实现层直接按请求条件查询统计数据而未结合当前用户身份收敛范围，则具备接口访问能力的主体可能查询到其他车队或其他站点的司机配送统计，造成横向越权读取。根据审查规则，这类查询接口若缺少数据范围过滤属于高风险权限问题。</div>
+                <div class="finding-suggestion">💡 修复建议：在 Facade/Controller 入口或 Service 内增加显式鉴权与归属校验：仅允许管理员查询任意 `driverId`；普通司机仅允许查询本人；若存在团队角色，还需按团队/组织范围过滤。示例：先从登录态解析当前用户，再校验 `req.getDriverId()` 是否属于当前主体可见范围，最后再执行 repository 查询。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">oms-facade-impl/src/main/java/io/speedx/oms/facade/impl/MqFacadeImpl.java:172-182</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArPickupFeeSettingService.java:48-143</code>
                 </div>
-                <div class="finding-desc">原因：新增 `parcelStateCallbackDirect` 同时暴露为 Kafka consumer 与 HTTP POST `/mq/parcel-state-direct` 入口，但变更代码中未见任何签名校验、来源认证、角色校验或消息真实性校验，仅根据请求体中的 `event` 是否在白名单内决定是否继续处理。这样会把原本应由消息队列承载的内部事件处理能力直接暴露给 HTTP 调用方。
+                <div class="finding-desc">**原因：**
+新增更新逻辑仅按主键读取记录后直接修改，没有校验当前操作者角色，也没有校验该记录所属 `customerId` 是否在当前用户可管理范围内。
 
 ```java
-@KafkaListener(...)
-public BaseResponse&lt;Void&gt; parcelStateCallbackDirect(@RequestBody String reqStr) throws Exception {
-    ParcelStateCallbackReq req = JSONObject.parseObject(reqStr, ParcelStateCallbackReq.class);
-    if (!AR_AP_EVENTS.contains(req.getEvent())) {
-        return BaseResponse.success(null);
-    }
+ArPickupFeeSetting setting = arPickupFeeSettingRepository.findById(id)
+        .orElseThrow(() -&gt; new BizException(404, &quot;ar_pickup_fee_setting &quot; + id + &quot; not found&quot;));
+...
+arPickupFeeSettingRepository.save(setting);
+```
 
-    parcelStateService.processParcelStateCallbackDirect(req);
-    return BaseResponse.success(null);
+**影响：**
+知道记录 ID 的低权限后台用户可直接修改其他客户的 pickup 费率、频次、阈值和生效时间，导致跨租户资金配置被篡改，直接影响账单金额。</div>
+                <div class="finding-suggestion">💡 修复建议：更新前增加资源归属校验：读取记录后校验 `setting.getCustomerId()` 是否属于当前用户授权范围；同时在入口增加 `@PreAuthorize`/`AuthUtil.requireRole()` 限制仅财务配置管理员可操作。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/CustomerService.java:1139-1175</code>
+                </div>
+                <div class="finding-desc">**原因：** 新增批量查询接口 `listAvailablePickupsByNetsuiteCodes(List&lt;String&gt; netsuiteCodes)` 直接按调用方提交的 `netsuiteCodes` 查询 `ArReceivableCustomerMapping`，再返回对应 `customerId` 下全部激活 pickup account，变更行中未见任何 `AuthUtil.requireRole()`、`@PreAuthorize`，也未将请求中的 NetSuite code 与当前登录主体/租户做绑定校验。
+
+```java
+public List&lt;AvailablePickupResp&gt; listAvailablePickupsByNetsuiteCodes(List&lt;String&gt; netsuiteCodes) {
+    ...
+    List&lt;ArReceivableCustomerMapping&gt; mappings =
+            arReceivableCustomerMappingRepository.findByNetSuitCustomerCodeIn(validCodes);
+    ...
+    return customerAccountRepository.findByCustomerIdIn(customerIds)
+            .stream()
+            .filter(a -&gt; &quot;A&quot;.equalsIgnoreCase(a.getStatus()))
+            .map(a -&gt; {
+                AvailablePickupResp dto = new AvailablePickupResp();
+                dto.setPickupAccountId(a.getId());
+                dto.setPickupName(a.getAccountName());
+                dto.setOrgCode(a.getOrgCode());
+                ...
+            })
+            .collect(Collectors.toList());
 }
 ```
 
-影响：任意可访问该 HTTP 接口的主体都可能伪造 parcel state 事件触发内部状态处理流程，导致业务状态被未授权推进、重复处理，甚至影响后续 AR/AP 结算链路。
+**影响：** 只要能访问该 HTTP 入口的主体，就可以枚举或提交任意第三方 `netsuiteCodes`，批量读取不属于自己的 pickup account 信息（账号 ID、名称、组织编码、状态等），形成跨客户数据越权读取，且批量接口会放大枚举效率。
 
 ---
 
-**原因：** 新增 MQ/回调风格入口 `/mq/parcel-state-direct`，diff 中仅看到裸露的 POST 映射和原始字符串请求体，未见签名校验、来源认证、角色限制或幂等/重放防护。此类消息直连入口通常属于高敏感状态变更面，不能仅凭可达性信任调用方。
+原因：新增批量查询入口直接将调用方提供的 `netsuiteCodes` 透传到 `customerService.listAvailablePickupsByNetsuiteCodes(...)`，变更行中未见 `AuthUtil.requireRole()`、`@PreAuthorize` 或任何基于调用方身份的数据范围过滤/租户归属校验。该接口属于 POST 查询接口，按审查规则应显式具备角色校验；当前实现无法证明调用方只能查询自己有权访问的 NetSuite 账号范围。
 
 ```java
-@PostMapping(&quot;/mq/parcel-state-direct&quot;)
-BaseResponse&lt;Void&gt; parcelStateCallbackDirect(@RequestBody String req) throws Exception;
+public BaseResponse&lt;List&lt;AvailablePickupResp&gt;&gt; listAvailablePickupsByNetsuiteCodes(List&lt;String&gt; netsuiteCodes) {
+    return BaseResponse.success(customerService.listAvailablePickupsByNetsuiteCodes(netsuiteCodes));
+}
 ```
 
-**影响：** 若该接口对外可访问且实现层未做来源认证，攻击者可伪造 parcel state 消息直接驱动包裹状态流转，造成业务状态被未授权修改，进一步影响履约、结算或下游通知。</div>
-                <div class="finding-suggestion">💡 修复建议：将该能力限制为仅 Kafka 消费，不要同时暴露 HTTP；若必须保留 HTTP 回调，需增加严格的来源认证（签名/HMAC、IP 白名单、网关鉴权）和幂等校验，并校验事件对应资源的合法来源。</div>
+影响：若上游路由未额外拦截，任意可访问该接口的主体可通过构造任意 `netsuiteCodes` 批量枚举并读取其他客户的 pickup 信息，形成跨租户数据越权读取，且批量接口会放大数据收集效率。</div>
+                <div class="finding-suggestion">💡 修复建议：在 Facade/Controller 或 Service 入口增加显式鉴权，并将可查询的 `netsuiteCodes` 限制为当前认证主体已绑定/授权的客户集合；禁止直接信任请求体中的客户标识。示例：先从登录态解析当前 customer scope，再校验 `validCodes` 是否全部属于该 scope，不满足则拒绝访问。</div>
             </div>
             
             <div class="finding-card finding-major">
@@ -208,42 +252,58 @@ BaseResponse&lt;Void&gt; parcelStateCallbackDirect(@RequestBody String req) thro
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/datasource/FuelCoefficientPageCache.java:58-64</code>
                 </div>
-                <div class="finding-desc">`computeKey(...)` 在新增实现中捕获了宽泛的 `Exception`，记录日志后直接返回 `null`。这会把序列化失败、异常输入等错误静默降级为“无缓存键”，调用方无法区分是正常的 cache miss 还是内部异常，容易在后续逻辑中绕过原本依赖缓存键隔离的行为判断，形成不可观测的安全退化。该模式也命中 [EXC-001]。</div>
-                <div class="finding-suggestion">💡 修复建议：不要在捕获宽泛异常后返回 `null`。应改为抛出明确异常（如 `IllegalStateException` / 业务异常），或返回带错误语义的结果对象，让上层显式处理失败场景。例如：`throw new IllegalStateException(&quot;Failed to compute fuel coefficient cache key&quot;, e);`。</div>
+                <div class="finding-desc">命中 [EXC-001]：`computeKey(...)` 在捕获宽泛 `Exception` 后直接返回 `null`。该变更又将缓存粒度从单页结果改为“全量行列表”，一旦序列化异常或 `sort.toString()` 异常触发这里的降级，调用方将无法区分“正常未命中缓存”和“缓存键生成失败”，容易在后续逻辑中绕过预期的缓存隔离/保护分支，形成不可观测的异常路径。
+
+问题代码：
+```java
+        } catch (Exception e) {
+            log.error(&quot;Failed to compute fuel coefficient cache key&quot;, e);
+            return null;
+        }
+```
+这属于安全相关的异常处理缺陷：异常被吞掉后仅返回 `null`，上层若继续执行并复用默认逻辑，可能导致结果缓存失效、异常流量直打数据库，或在未来调用方误将 `null` 作为共享键/跳过缓存判断。</div>
+                <div class="finding-suggestion">💡 修复建议：不要吞掉异常并返回 `null`。应抛出明确的业务异常，或返回带状态的结果对象，让调用方显式处理失败场景。例如：
+```java
+} catch (JsonProcessingException e) {
+    log.error(&quot;Failed to compute fuel coefficient cache key&quot;, e);
+    throw new BizException(&quot;FUEL_COEFFICIENT_CACHE_KEY_ERROR&quot;);
+}
+```
+若必须降级，也应在方法签名或返回类型中显式表达失败状态，避免与正常 cache miss 混淆。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/job/AggregateDriverDeliveryDailyStatJob.java:40-47</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/job/AggregateDriverDeliveryDailyStatJob.java:40-46</code>
                 </div>
-                <div class="finding-desc">手工回填参数只判断了 `startDate=` 是否存在，但随后无条件解析 `endDate`。当任务参数仅传 `startDate`、或 `endDate` 缺失/为空时，会直接抛出 `IllegalArgumentException` 导致任务失败，无法支持常见的“单日回填”场景，也缺少对参数完整性的前置校验。</div>
-                <div class="finding-suggestion">💡 修复建议：在进入回填分支前同时校验 `startDate` 和 `endDate`，或约定缺失 `endDate` 时默认等于 `startDate`。例如：`if (hasStart &amp;&amp; !hasEnd) { endDate = startDate; }`；若必须成对出现，则在解析前显式报错并输出清晰提示。</div>
+                <div class="finding-desc">手工回填参数只判断了 `startDate=` 是否存在，就无条件解析 `endDate`。当任务参数仅传 `startDate`、`endDate` 为空，或两者顺序/拼写不完整时，会直接抛出 `IllegalArgumentException` 导致任务失败，缺少对可选参数场景的边界兜底。注释里说明参数是 optional，但当前实现实际上把成对参数变成了隐式必填。</div>
+                <div class="finding-suggestion">💡 修复建议：显式校验两个参数是否同时存在，或支持仅传 `startDate` 时默认 `endDate=startDate`。例如先分别判断 `contains(&quot;startDate=&quot;)` 和 `contains(&quot;endDate=&quot;)`，若只传一个则给出明确错误；若业务允许单日回填，可写成：`startDate = parseParam(param, &quot;startDate&quot;); endDate = param.contains(&quot;endDate=&quot;) ? parseParam(param, &quot;endDate&quot;) : startDate;`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmRateCalcService.java:855-863</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/job/AggregateDriverDeliveryDailyStatJob.java:48</code>
                 </div>
-                <div class="finding-desc">`triggerApLmSettlementGenerate` 捕获了宽泛 `Exception` 后仅记录 warn 日志，不向上抛出，也没有返回失败状态。对于 `sync=true` 的同步结算路径，这会把 AP LM 结算生成失败伪装成成功完成，调用方无法感知失败并进行重试/补偿，容易造成成本已落库但结算未生成的静默不一致。</div>
-                <div class="finding-suggestion">💡 修复建议：对同步路径不要吞异常：`sync=true` 时应重新抛出异常或返回明确失败结果，由上层事务/重试机制处理；仅异步 Kafka 投递场景可按需记录并进入补偿队列。可拆分为 sync/async 两个方法分别处理异常语义。</div>
+                <div class="finding-desc">调用聚合前未校验 `startDate` 与 `endDate` 的先后关系。若手工回填传入 `startDate &gt; endDate`，会把非法日期区间直接传给 `driverDeliveryStatService.aggregateForRange(startDate, endDate)`，容易导致空跑、错误统计或下游实现出现异常。</div>
+                <div class="finding-suggestion">💡 修复建议：在调用服务前增加区间合法性校验，例如：`if (startDate.isAfter(endDate)) { throw new IllegalArgumentException(&quot;startDate must be &lt;= endDate&quot;); }`，并在日志中打印最终生效的日期范围。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArBillDetailPickupSheetWriter.java:44-49</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ApLmRateCalcService.java:855-862</code>
                 </div>
-                <div class="finding-desc">这里先一次性加载 `findByReceivableId(receivableId)` 的全部记录，再在内存中过滤、排序、收集。账单明细导出属于可被业务触发的大数据量场景，若某 receivable 下 pickup fee 记录很多，会把整批数据完整拉入 JVM，增加内存占用并放大导出接口的拒绝服务风险。</div>
-                <div class="finding-suggestion">💡 修复建议：将过滤和排序下推到 repository/SQL 层，例如新增按 `receivableId`、`feeAmount &gt; 0`、`pickupId` 排序的分页/流式查询方法；导出时按批写入 workbook，避免一次性加载全部记录。</div>
+                <div class="finding-desc">新增同步结算分支后，这里仍然用 `catch (Exception)` 统一吞掉异常，仅记录日志而不向上抛出。对于 `sync=true` 场景，`apLmSettlementService.processSettlementEvent(apLmRequest)` 失败会被静默忽略，调用方会误以为“成本保存成功且结算已触发”，实际却可能完全未生成结算，形成资金链路不一致。</div>
+                <div class="finding-suggestion">💡 修复建议：区分同步与异步模式处理异常：异步 Kafka 发送失败可按现有策略记录并重试；同步调用失败应抛出业务异常或触发事务回滚，避免成本已落库但结算未生成。示例：在 `sync` 分支中单独 catch 后 `throw`，或让异常继续冒泡。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArPickupFeeSettingService.java:49-53</code>
+                    <code class="finding-loc">oms-domain/src/main/java/io/speedx/oms/domain/service/ArRateCalcService.java:97-106</code>
                 </div>
-                <div class="finding-desc">创建时用 `customerAccount.getCustomerId() != req.getCustomerId()` 校验归属，若两边都是 `Long` 包装类型，这里比较的是对象引用而不是数值。超过 Long 缓存范围时，即使数值相同也可能误判为“不属于该 customer”，导致合法请求失败。</div>
-                <div class="finding-suggestion">💡 修复建议：改为值比较，例如 `!Objects.equals(customerAccount.getCustomerId(), req.getCustomerId())`，并补充空值保护。</div>
+                <div class="finding-desc">这里将原先异步 Kafka 触发改为支持同步直调 `arSettlementGenerateService.generateSettlement(arRequest)`，但仍使用宽泛 `catch (Exception)` 仅打日志。同步模式下，一旦结算生成失败，调用链会继续正常返回，导致“AR 计费已完成但结算未生成”的静默失败，属于资金处理链路的安全一致性风险。</div>
+                <div class="finding-suggestion">💡 修复建议：对同步模式不要吞异常。建议将同步调用与异步发送分开处理：同步失败时抛出异常给上层，由上层决定重试/回滚；异步发送失败则记录并进入补偿机制。</div>
             </div>
-            <p class="more-note">... 还有 41 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 71 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
