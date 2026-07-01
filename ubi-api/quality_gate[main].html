@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">ubi-api &nbsp;|&nbsp; 2026-04-15 17:38:53</div>
+      <div class="meta">ubi-api &nbsp;|&nbsp; 2026-07-01 22:53:50</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:11 &nbsp; 主要:24</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:8 &nbsp; 主要:18</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,8 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 11 Critical finding(s)</li>
-<li>AI Review: 24 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 8 Critical finding(s)</li>
+<li>AI Review: 18 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,85 +94,137 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">android/testapp/src/main/kotlin/com/ubi/testapp/TestApplication.kt:21-23</code>
+                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/controller/AnalyticsController.java:46-59</code>
                 </div>
-                <div class="finding-desc">[SEC-002] 在 `UbiConfig` 初始化中直接硬编码 `appKey`。该凭据会随 APK 一起分发，后续轮换和环境隔离都很困难，一旦泄露会导致测试/上报身份被冒用。</div>
-                <div class="finding-suggestion">💡 修复建议：将 `appKey` 改为从构建配置或本地未提交配置注入，例如通过 `BuildConfig.UBI_APP_KEY` 或 Gradle `manifestPlaceholders/buildConfigField` 注入，不要在源码中写死明文。</div>
+                <div class="finding-desc">**原因：** 新增的 `userId` 过滤参数直接从请求透传到服务层，但在该 HTTP 入口新增分支中看不到任何基于当前登录身份的约束或校验；调用方可自行指定任意 `userId` 查询错误趋势，存在按用户维度的数据越权读取风险。尤其 `dimension=type` 分支与默认分支都接受 `qry.getUserId()`，扩大了可见范围。
+
+```java
+if (&quot;type&quot;.equals(qry.getDimension())) {
+    return analyticsService.getErrorTrendByType(appKey, qry.getFrom(), qry.getTo(), qry.getUserId());
+}
+return analyticsService.getErrorTrend(appKey, qry.getFrom(), qry.getTo(), qry.getGroupBy(), qry.getUserId());
+```
+
+**影响：** 若上层仅依赖已有应用级访问而未限制用户范围，具备该接口访问能力的主体可枚举或指定其他用户的错误趋势数据，导致跨用户数据泄露。由于该变更是新增过滤维度，风险面较基线扩大。</div>
+                <div class="finding-suggestion">💡 修复建议：在控制器或服务入口基于当前认证主体校验 `userId` 的可查询范围：普通用户仅允许查询自身 `userId`，管理员/分析角色才可跨用户查询；若未传 `userId`，应回落为当前用户而不是全量。示例：
+```java
+String currentUserId = AuthUtil.currentUserId();
+if (!AuthUtil.hasAnyRole(&quot;admin&quot;, &quot;analyst&quot;)) {
+    qry.setUserId(currentUserId);
+} else if (qry.getUserId() != null) {
+    AuthUtil.requireUserScope(qry.getUserId());
+}
+```</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/service/AndroidAnalyticsService.java:84</code>
+                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/service/CfoViewAnalyticsService.java:267-269</code>
                 </div>
-                <div class="finding-desc">崩溃类型 `type` 被直接拼接到 SLS 检索表达式 `AND type: ...` 中，没有任何枚举校验或转义。若该参数来自外部请求，攻击者可注入额外检索语法，改变查询逻辑或触发异常。</div>
-                <div class="finding-suggestion">💡 修复建议：将 `type` 限制为固定白名单（如 `java_crash`、`anr`），非法值直接拒绝；不要把原始输入直接拼接进查询语句。</div>
+                <div class="finding-desc">`buildFilter` 将外部可控的 `bizIdFilter` 直接拼接进 SLS 查询字符串，仅用双引号包裹而未做任何转义/白名单校验。若 `bizId` 中包含引号或查询语法片段，可破坏原有过滤条件，构造任意 SLS 查询，属于注入风险。
+
+```java
+if (bizIdFilter != null &amp;&amp; !bizIdFilter.isBlank()) {
+    filter.append(&quot; AND biz_id:\&quot;&quot;).append(bizIdFilter).append(&quot;\&quot;&quot;);
+}
+```</div>
+                <div class="finding-suggestion">💡 修复建议：禁止直接拼接 `bizIdFilter`。至少对 `&quot;`、反斜杠及 SLS 查询保留字符做严格转义，或改为仅允许固定字符集（如 `[A-Za-z0-9._:-]+``）的 bizId；同时补充包含引号、逻辑运算符的恶意输入测试。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/service/TimelineService.java:76-83</code>
+                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/service/CfoViewAnalyticsService.java:83-165</code>
                 </div>
-                <div class="finding-desc">`eventTypes` 被直接拆分后拼接进 `type IN (&#x27;...&#x27;)` SQL 片段，未对单引号等特殊字符做转义。攻击者可通过构造如 `x&#x27;) OR 1=1 --` 的值注入 SLS SQL，篡改查询条件或导致查询失败。</div>
-                <div class="finding-suggestion">💡 修复建议：不要手工拼接 `IN` 子句。对每个枚举值做严格白名单校验（仅允许预定义事件类型），或在进入 SQL 前统一做单引号转义并拒绝包含控制字符的输入。若 SLS SDK 支持参数化/绑定变量，改为参数化查询。</div>
+                <div class="finding-desc">**原因：** 阶段聚合接口新增后直接对外提供 CFO 视图阶段统计，但服务入口未见任何角色鉴权，仅依赖 `loadContext` 的归属校验。
+
+**影响：** 普通已登录用户可访问 CFO 阶段聚合数据，暴露业务流程与财务分析维度，违反敏感模块最小权限原则。</div>
+                <div class="finding-suggestion">💡 修复建议：为 GET `/cfo/views/{viewId}/stages` 增加显式角色校验，并保留归属校验。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">backend/server/src/main/resources/application-dev.yml:18-26</code>
+                    <code class="finding-loc">docs/active/cfo-analytics/test-plans/optimize-cfo-sls-aggregation.md:13-16</code>
                 </div>
-                <div class="finding-desc">[SEC-002] `jwt.secret` 配置提供了硬编码默认值 `dev-secret-key`。当本地或测试环境未显式注入环境变量时，服务会使用固定签名密钥，导致生成的 JWT 可被预测和伪造。</div>
-                <div class="finding-suggestion">💡 修复建议：移除硬编码默认值，改为强制从环境变量或外部配置中心读取，例如 `jwt.secret: ${JWT_SECRET}`，并在启动阶段校验缺失时直接失败。</div>
+                <div class="finding-desc">文档新增了可直接使用的默认管理员凭据：`{&quot;username&quot;:&quot;admin&quot;,&quot;password&quot;:&quot;admin123&quot;}`。这是典型的硬编码密码/默认口令暴露，一旦该仓库被更广泛访问、同步到外部环境或被误用于非隔离环境，攻击者可直接尝试登录管理接口获取高权限访问。</div>
+                <div class="finding-suggestion">💡 修复建议：删除文档中的明文密码，改为引用受控的测试凭据注入方式（如 `.env`/CI secret/密码管理器），示例中仅保留占位符：`{&quot;username&quot;:&quot;${TEST_ADMIN_USERNAME}&quot;,&quot;password&quot;:&quot;${TEST_ADMIN_PASSWORD}&quot;}`。同时确认该默认口令未在任何共享环境继续使用。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">docs/active/android-monitoring/test-plans/dashboard-android-pages.md:11-12</code>
+                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/service/CfoViewService.java:65-111</code>
                 </div>
-                <div class="finding-desc">测试计划中直接写入了登录口令 `admin123`。这会把真实或默认凭据固化到仓库历史里，后续一旦测试环境沿用该口令，容易形成凭据泄露和环境漂移风险，且违背了 [SEC-001] 禁止硬编码密码。</div>
-                <div class="finding-suggestion">💡 修复建议：改为占位符或环境变量说明，不在文档中保存明文密码。例如将请求体改为 `{&quot;username&quot;:&quot;&lt;ADMIN_USERNAME&gt;&quot;,&quot;password&quot;:&quot;&lt;ADMIN_PASSWORD&gt;&quot;}`，并补充“通过本地环境变量或密钥管理系统注入”的获取方式。</div>
+                <div class="finding-desc">**原因：** 删除 CFO 视图为破坏性操作，但实现仅通过 `getOwnedView(viewId)` 校验归属，未见任何角色鉴权。按照审查基线，DELETE 接口缺失显式角色校验属于高危。
+
+**影响：** 任意已登录用户都可删除自己创建的 CFO 视图，说明 CFO 模块的管理能力未被角色体系保护；若攻击者先利用创建接口批量制造资源，再通过删除/重建扰乱审计与配置状态，会扩大业务面风险。</div>
+                <div class="finding-suggestion">💡 修复建议：在 DELETE `/cfo/views/{viewId}` 增加显式角色校验（如 `@PreAuthorize` 或 `AuthUtil.requireRole(...)`），并保留归属校验。若存在审计要求，建议增加删除审计日志。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/service/TimelineService.java:109-116</code>
+                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/controller/AnalyticsController.java:46-50</code>
                 </div>
-                <div class="finding-desc">`searchUsers` 的统计查询把 `WHERE user_id LIKE ...` 拼接在聚合 `SELECT approx_distinct(user_id) as total` 之后，生成的 SQL 形如 `SELECT approx_distinct(user_id) as total WHERE ...`。这会导致带关键字搜索时 SLS 查询语法错误，接口直接失败。</div>
-                <div class="finding-suggestion">💡 修复建议：把筛选条件放到聚合之前，或改为合法的 SQL 结构，例如：`filter + &quot; | SELECT approx_distinct(user_id) as total FROM log WHERE user_id LIKE &#x27;%...%&#x27;&quot;`；若 SLS SQL 不支持 `FROM log`，则应改为在检索条件部分表达用户过滤，避免在 `SELECT` 后直接拼接 `WHERE`。</div>
+                <div class="finding-desc">`GET /errors/trend` 的返回类型从固定的 `List&lt;ErrorTrendPoint&gt;` 改为 `Object`，并且根据 `dimension` 分支返回不同结构的数据。这会让同一路径在运行时返回两种不兼容的响应体，破坏既有客户端/SDK 对稳定 JSON 结构的依赖，也会影响序列化契约、文档生成和前端类型推断。</div>
+                <div class="finding-suggestion">💡 修复建议：保持接口返回契约稳定：要么拆分为两个明确端点（例如 `/errors/trend` 与 `/errors/trend-by-type`），要么定义统一响应 DTO（如包含 `dimension` 和 `items` 字段的包装对象），避免直接返回 `Object`。示例：`public ErrorTrendResponse getErrorTrend(...)`，其中 `items` 使用统一元素结构或显式区分字段。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">android/sdk-okhttp/src/main/kotlin/com/ubi/sdk/okhttp/OkHttpNetworkMonitor.kt:11</code>
+                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/dto/cmd/CreateCfoViewCmd.java:26-28</code>
                 </div>
-                <div class="finding-desc">`reporter` 是可变共享状态，`install()` 写入、`intercept()` 在 OkHttp 工作线程中读取，但这里没有 `@Volatile`、同步或安全发布保障。多线程下可能读到过期的 `null`/旧引用，导致错误请求与异常上报被静默丢失，削弱安全监控与审计能力。</div>
-                <div class="finding-suggestion">💡 修复建议：将 `reporter` 改为 `@Volatile` 字段，或使用 `AtomicReference` / 构造注入确保发布安全，避免拦截线程读取到未发布状态。</div>
+                <div class="finding-desc">新增的 `revenueDatasetId` 字段未添加任何非空/格式约束。若该 DTO 直接作为创建接口入参并启用 `@Valid`，服务端将接受 `null`、空串或异常格式的数据集标识，容易把原本应在边界层拦截的非法引用下沉到服务/持久层处理，造成校验绕过或异常路径被滥用。对涉及数据集绑定的配置型接口，这属于安全相关的输入契约缺失。</div>
+                <div class="finding-suggestion">💡 修复建议：为 `revenueDatasetId` 增加明确的输入约束，例如 `@NotBlank`，并按实际 ID 规则补充 `@Size` 或 `@Pattern`；若允许为空，也应在接口语义上明确并在服务层做显式分支校验。示例：`@NotBlank @Size(max = 64) private String revenueDatasetId;`</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">android/sdk-okhttp/src/test/kotlin/com/ubi/sdk/okhttp/OkHttpTransportTest.kt:180-181</code>
+                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/dto/cmd/UpdateCfoViewCmd.java:24-26</code>
                 </div>
-                <div class="finding-desc">`ConfigurableMockServer.start()` 的 accept/请求处理主循环把所有异常直接吞掉，服务端线程一旦因为请求解析、端口关闭之外的真实错误失败，测试仍会继续执行，只表现为偶发超时或断言失败，问题根因会被完全隐藏。</div>
-                <div class="finding-suggestion">💡 修复建议：至少区分预期关闭和真实失败：对 `running == false` 或 `SocketException` 的退出场景正常结束，其余异常记录后重新抛出/保存，最终让测试失败。例如在 `catch (e: Exception)` 中先判断 `if (!running) return@submit`，否则抛出 `AssertionError(&quot;mock server failed&quot;, e)`。</div>
+                <div class="finding-desc">更新命令中的 `revenueDatasetId` 未声明任何校验规则，导致更新接口可能接受空值或非法 ID 并覆盖已有绑定。相较于创建场景，更新接口更容易被利用为“清空绑定/写入异常引用”的入口，属于安全相关的 API 契约缺失。</div>
+                <div class="finding-suggestion">💡 修复建议：为更新 DTO 的 `revenueDatasetId` 增加与创建 DTO 一致的校验约束，并确保更新语义明确区分“保持不变”“显式清空”“更新为新值”三种情况，避免通过空串绕过。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">android/sdk/src/main/kotlin/com/ubi/sdk/UBI.kt:31</code>
+                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/dto/qry/ErrorClustersQry.java:10-12</code>
                 </div>
-                <div class="finding-desc">调试日志直接输出 `config.appKey`。`appKey` 属于接入凭证类标识，写入日志后容易在 logcat、三方日志采集或崩溃日志中泄露，扩大凭证滥用风险。</div>
-                <div class="finding-suggestion">💡 修复建议：不要记录完整 `appKey`；如确需排障，只输出脱敏值（如前后各保留 2-3 位）或改为记录是否已配置。</div>
+                <div class="finding-desc">**原因：** 本次新增查询对象直接暴露了 `userId` 过滤条件，但在该 diff 中看不到任何与当前登录主体绑定、角色校验或数据范围约束的配套改动。若后续 Controller/Service 直接信任该字段并据此查询，调用方可通过篡改 `userId` 枚举其他用户的错误聚类数据，形成按用户维度的数据越权读取。
+
+```java
+private String type;
+private String userId;
+private Integer limit = 10;
+```
+
+**影响：** 一旦对应查询入口未强制将 `userId` 绑定为当前会话用户，或未校验调用者是否具备跨用户查看权限，普通用户即可读取其他用户的错误聚类信息，造成错误日志/行为数据泄露。由于本分片未包含 HTTP/Service 实现，暂无法断言具体入口，但该 DTO 变更已引入明显的越权风险面。</div>
+                <div class="finding-suggestion">💡 修复建议：不要直接信任前端传入的 `userId`。在对应 Controller/Service 中：1）默认使用当前认证主体的 userId 覆盖请求值；2）仅对具备明确管理权限的角色开放跨用户查询，并显式校验权限；3）若业务仅允许查看本人数据，删除该入参或在服务层忽略它。
+
+可参考：
+```java
+String effectiveUserId = AuthUtil.currentUserId();
+if (StringUtils.hasText(qry.getUserId()) &amp;&amp; !qry.getUserId().equals(effectiveUserId)) {
+    AuthUtil.requireRole(&quot;admin&quot;);
+}
+qry.setUserId(effectiveUserId);
+```</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">android/sdk/src/main/kotlin/com/ubi/sdk/UbiClient.kt:117-327</code>
+                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/dto/qry/ErrorTrendQry.java:11-13</code>
                 </div>
-                <div class="finding-desc">调试日志直接输出 `userId`，会把用户标识写入 Logcat。Android 调试日志常被第三方 SDK、调试工具或崩溃采集链路读取，属于敏感标识泄露风险。</div>
-                <div class="finding-suggestion">💡 修复建议：避免记录原始 `userId`；如确需排障，改为输出脱敏值或哈希前缀，并确保默认关闭此类日志。</div>
+                <div class="finding-desc">**原因：** 修改后的趋势查询对象新增 `userId` 参数，但 diff 中未同步展示任何鉴权或数据范围过滤逻辑。趋势类接口通常返回聚合后的时间序列数据，若服务端直接按请求中的 `userId` 查询，将允许调用方探测或读取其他用户的错误趋势。
+
+```java
+private String groupBy = &quot;hour&quot;;
+private String userId;
+private String dimension = &quot;total&quot;;
+```
+
+**影响：** 攻击者可通过替换 `userId` 获取他人的错误趋势、活跃时间段或异常分布，造成跨用户统计数据泄露；聚合接口还可能因返回的是汇总数据而更难被业务侧察觉。当前分片缺少对应入口实现，无法确认是否已在其他层做强制覆盖，因此应视为新增越权风险点。</div>
+                <div class="finding-suggestion">💡 修复建议：在对应趋势查询入口中禁止直接信任 `qry.userId`：对普通用户强制使用当前登录用户标识；仅允许具备授权角色的主体传入其他 `userId`。同时为 `dimension`/`groupBy` 增加白名单校验，避免后续拼接查询时扩大攻击面。</div>
             </div>
-            <p class="more-note">... 还有 25 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 16 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
