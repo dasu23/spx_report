@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pus-web-api &nbsp;|&nbsp; 2026-06-03 15:16:22</div>
+      <div class="meta">pus-web-api &nbsp;|&nbsp; 2026-07-02 23:03:39</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -56,13 +56,13 @@
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#4caf50">10.1%</div>
+      <div class="metric-value" style="color:#4caf50">10.8%</div>
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#f44336">24.4%</div>
+            <div class="metric-value" style="color:#f44336">25.8%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:0</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:2 &nbsp; 主要:25</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -82,10 +82,103 @@
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube quality gate status: ERROR</li></ul>
+            <ul><li>SonarQube quality gate status: ERROR</li>
+<li>AI Review: 2 Critical finding(s)</li>
+<li>AI Review: 25 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
+        <div class="findings-section">
+            <h3>AI 代码审查发现</h3>
+            
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pus-facade/pus-facade-exchange/src/main/java/io/speedx/pus/facade/exchange/CainiaoPickupFacade.java:24-28</code>
+                </div>
+                <div class="finding-desc">**原因：** 新增了一个对外 POST 入口，但在该 Facade 定义上看不到任何角色/来源校验约束（如 `@PreAuthorize`、签名校验注解、内部接口前缀隔离等）。注释还明确说明该 URL 是“无 /innerApi/ 前缀的对外路径”，这意味着它暴露在外部调用面上；若对应实现层未补充鉴权或请求签名校验，任意外部主体都可直接调用该入口。
+
+```java
+@PostMapping(value = &quot;/cainiao/pickup/create&quot;, consumes = &quot;application/json&quot;)
+CainiaoPickupRo create(
+        @RequestHeader(&quot;msg-type&quot;) String msgType,
+        @RequestHeader(&quot;msg-id&quot;)   String msgId,
+        @RequestBody               String logisticsInterface);
+```
+
+**影响：** 该接口语义为“接收菜鸟平台主动推送的揽收调度通知”，属于外部系统驱动的业务写入口。一旦缺少来源认证/授权，攻击者可伪造 `msg-type`、`msg-id` 和请求体触发揽收创建或后续业务流程，造成未授权业务写入、伪造通知、数据污染，严重时可进一步影响下游调度与履约链路。</div>
+                <div class="finding-suggestion">💡 修复建议：为该 HTTP 入口补充明确的来源认证机制，至少在 Controller/实现层执行请求签名校验、时间戳/nonce/msg-id 防重放校验，并拒绝未通过校验的请求；若该接口仅允许特定内部网关访问，还应结合网关鉴权或 `@PreAuthorize`/白名单策略进行限制。例如在入口方法中先校验签名后再进入业务处理。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pus-facade/pus-facade-web/src/main/java/io/speedx/pus/facade/web/WebZipcodeConfigFacade.java:43-44</code>
+                </div>
+                <div class="finding-desc">**原因：** 新增了一个可直接修改 Zipcode 配置 Facility 的 POST 入口，但在本次 diff 的新增行中未看到任何 `@PreAuthorize`、`AuthUtil.requireRole()` 或其他角色/权限校验声明。按照审查基线，POST/PUT/DELETE 接口缺失显式角色校验应视为高危。
+
+```java
+@ApiOperation(&quot;批量修改 Zipcode 配置的 Facility&quot;)
+@PostMapping(&quot;/web/zipcodeConfig/batchUpdateFacility&quot;)
+ResponseObject&lt;Void&gt; batchUpdateFacility(@Valid @RequestBody ZipcodeConfigBatchUpdateFacilityForm form);
+```
+
+**影响：** 若实现层未补充鉴权，任意已登录主体甚至误放行主体都可能调用该接口批量修改配置数据，造成配置被未授权篡改；且该接口语义为批量更新，单次调用的破坏面更大。由于本分片未包含实现层鉴权证据，当前无法证明该入口满足最小权限原则。</div>
+                <div class="finding-suggestion">💡 修复建议：在 HTTP 入口或实现方法上增加显式权限控制，并在进入业务前校验调用者是否具备 Zipcode 配置维护权限。例如使用 `@PreAuthorize`，或在方法首行调用统一鉴权工具：
+
+```java
+@PreAuthorize(&quot;hasAuthority(&#x27;zipcode-config:write&#x27;)&quot;)
+@PostMapping(&quot;/web/zipcodeConfig/batchUpdateFacility&quot;)
+public ResponseObject&lt;Void&gt; batchUpdateFacility(@Valid @RequestBody ZipcodeConfigBatchUpdateFacilityForm form) {
+    // ...
+}
+```
+
+若项目统一使用工具类，则至少在实现方法中执行 `AuthUtil.requireRole(...)` 并拒绝未授权调用。</div>
+            </div>
+            
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/properties/CainiaoProperties.java:39-43</code>
+                </div>
+                <div class="finding-desc">新增配置允许通过 `cainiao.auth.enabled=false` 关闭签名鉴权，且代码注释明确说明会“跳过 data_digest 校验”。这相当于引入了一个可被配置误用的认证旁路开关：一旦在生产或被错误下发到共享环境，外部请求可在未通过签名校验的情况下进入后续业务处理，导致伪造回调/请求被接受。</div>
+                <div class="finding-suggestion">💡 修复建议：移除运行时可关闭的鉴权开关，生产代码中强制执行签名校验；若确需联调能力，应限定在非生产 profile 下生效，并在启动时对生产环境配置做 fail-fast 校验。例如：仅在 `dev/test` profile 允许 `enabled=false`，其他环境检测到该值时直接启动失败。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/properties/VintedProperties.java:18</code>
+                </div>
+                <div class="finding-desc">移除了 `@RefreshScope`，使该配置类不再支持 Nacos 热更新。若该类承载安全相关白名单、开关或路由限制配置，配置变更将无法及时生效，可能导致已撤销的安全策略继续使用，形成认证/风控配置失效窗口。</div>
+                <div class="finding-suggestion">💡 修复建议：确认 `VintedProperties` 是否承载安全敏感配置；若需要动态收敛风险，应恢复 `@RefreshScope` 或改为显式的安全配置刷新机制，并补充变更发布说明，避免运维误以为配置可热更新。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/CainiaoPickupService.java:24</code>
+                </div>
+                <div class="finding-desc">接口注释声明仅抛出 `CainiaoPickupException`（S11 业务异常），但方法签名使用了宽泛的 `throws Exception`。这会把实现中的任意异常暴露给调用方，破坏领域服务的异常契约，也容易导致上层按受检异常兜底处理而无法区分业务失败与系统失败。</div>
+                <div class="finding-suggestion">💡 修复建议：将签名收敛为明确的领域异常，例如 `String handlePickupNotify(CainiaoPickupNotifyBo form, String coverageType) throws CainiaoPickupException;`。若实现层还会抛出系统异常，建议在实现中转换为运行时异常或统一的领域基础异常，而不是在接口层暴露 `Exception`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/PickupCreateService.java:16-18</code>
+                </div>
+                <div class="finding-desc">`consolidate` 和 `rollover` 的返回类型从 `void` 改为 `int`，这是接口级破坏性变更。若同分支内仍存在按旧签名实现/调用的代码，会直接导致编译失败；即使当前仓内已同步修改，也会对依赖 `pus-domain` 接口的其他模块形成二进制/源码不兼容。</div>
+                <div class="finding-suggestion">💡 修复建议：若必须返回处理数量，优先新增兼容方法或返回封装结果对象，例如保留原 `void` 方法并新增 `int consolidateAndCount(...)` / `int rolloverAndCount(...)`；若确认全链路升级，需同步检查所有实现类、调用方和对外发布说明，避免接口升级造成下游编译失败。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/convert/PickupStagingConvertMapper.java:31-43</code>
+                </div>
+                <div class="finding-desc">`@AfterMapping` 方法的源参数类型声明为 `PickupStaging`，但当前映射方法 `toStagingExportBo(...)` 的源类型是 `PickupStagingExportProjection`。MapStruct 的 `@AfterMapping` 只有在参数签名能匹配当前映射方法时才会被调用；该类型不一致会导致这里的合计字段和地址拼接逻辑无法参与本次映射，严重时还可能直接触发注解处理阶段编译失败。</div>
+                <div class="finding-suggestion">💡 修复建议：将 `fillComputedFields` 的源参数改为与映射方法一致的 `PickupStagingExportProjection`，例如：`default void fillComputedFields(@MappingTarget PickupStagingExportBo dto, PickupStagingExportProjection src)`；如果确实需要同时支持 `PickupStaging` 和 `PickupStagingExportProjection`，请分别提供对应签名的 `@AfterMapping` 方法。</div>
+            </div>
+            <p class="more-note">... 还有 20 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+        </div>
+        
 
   <div class="footer">
     由质量门禁引擎生成 &nbsp;|&nbsp; SpeedX CI/CD
