@@ -45,21 +45,27 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pus-exchange-api &nbsp;|&nbsp; 2026-04-20 12:15:57</div>
+      <div class="meta">pus-exchange-api &nbsp;|&nbsp; 2026-07-02 18:22:03</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
-      <span style="background:#4caf50;color:#fff;padding:4px 12px;border-radius:4px;font-weight:bold;">PASSED</span>
+      <span style="background:#f44336;color:#fff;padding:4px 12px;border-radius:4px;font-weight:bold;">FAILED</span>
     </div>
   </div>
 
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#f44336">0.0%</div>
+      <div class="metric-value" style="color:#4caf50">10.4%</div>
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
+        <div class="metric-card">
+            <div class="metric-label">增量覆盖率</div>
+            <div class="metric-value" style="color:#f44336">29.7%</div>
+            <div class="metric-threshold">阈值: 50%</div>
+        </div>
+        
     <div class="metric-card">
       <div class="metric-label">SonarQube 质量门</div>
       <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">质量门未通过</div>
@@ -67,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:0</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:18</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -76,10 +82,58 @@
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube quality gate status: ERROR</li></ul>
+            <ul><li>SonarQube quality gate status: ERROR</li>
+<li>AI Review: 18 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
+        <div class="findings-section">
+            <h3>AI 代码审查发现</h3>
+            
+            
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/config/PickupEventConfig.java:26-27</code>
+                </div>
+                <div class="finding-desc">移除了 `@RefreshScope` 后，`exchange.event-code` 下的动态配置将不再支持运行时刷新。新增的 `noPickupAutoEventOrgIds` 和已有的 `pickupHiddenOrgIds` 都会在应用启动后固定，若业务依赖配置中心热更新来开关/调整 orgId 白名单，线上修改配置将不会生效，导致自动补发 51005 功能或隐藏逻辑与预期不一致。</div>
+                <div class="finding-suggestion">💡 修复建议：如果该配置来自 Spring Cloud Config / Nacos 等动态配置源，并且期望热更新，请保留 `@RefreshScope`；若明确改为仅启动时加载，需要同步修改设计说明并在调用方/运维侧声明“变更需重启生效”。例如恢复为：`@RefreshScope @Configuration @ConfigurationProperties(prefix = &quot;exchange.event-code&quot;)`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/dto/mq/PusLabelEncodingScanPayload.java:48-52</code>
+                </div>
+                <div class="finding-desc">新增 `firstScan` 被明确设计为“doProcess 写入，afterCommit 读取”，并通过 lambda 捕获同一个 `payload` 对象跨线程传递。该做法把可变 DTO 作为线程间共享状态使用，但当前字段既不是 `final` 也不是 `volatile`，也没有任何同步/安全发布保证；在异步线程（TraceableAsync）读取时，可能看不到写线程对 `firstScan` 的最新写入，或在对象被后续代码复用/再次修改时读到非预期值，形成竞态条件。对依赖该标志决定后续处理分支的逻辑，可能导致首扫判定失真，进而触发错误的业务后置动作。</div>
+                <div class="finding-suggestion">💡 修复建议：不要通过共享可变 DTO 在线程间传递运行时状态。优先改为：1）在提交异步任务前把 `firstScan` 复制到局部 `final` 变量并作为方法参数传入；或 2）构造不可变上下文对象专门承载 afterCommit 所需状态。若短期无法重构，至少将该字段改为 `volatile` 并确保对象不会在提交异步任务后继续被修改。示例：`final boolean firstScan = ...; afterCommit(() -&gt; handler.process(payload, firstScan));`</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/cache/impl/ZipcodeConfigCacheServiceImpl.java:44-62</code>
+                </div>
+                <div class="finding-desc">`coverageCache` 作为单例 Bean 的共享可变状态，在 `@PostConstruct`/`@RefreshScope` 重建路径中被整体替换，同时其他线程可并发执行 `getByZipAndType()` / `onApplicationEvent()` 读取和写入该字段。当前字段既不是 `volatile`，也没有任何同步保护，存在可见性与竞态风险：业务线程可能看见旧引用、空引用或与迁移过程不一致的缓存状态，导致返回过期/错误数据，极端情况下可被利用为配置绕过或触发服务异常。</div>
+                <div class="finding-suggestion">💡 修复建议：将 `coverageCache` 声明为 `volatile`，或使用 `AtomicReference&lt;Cache&lt;String, PusCoverageConfigBo&gt;&gt;` 管理引用切换；同时在重建与预热阶段通过局部变量完成构建后再一次性发布，避免并发线程观察到中间状态。例如：`private volatile Cache&lt;String, PusCoverageConfigBo&gt; coverageCache;`，并在各方法中先读取到局部变量后再操作。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/impl/CainiaoPickupServiceImpl.java:59-64</code>
+                </div>
+                <div class="finding-desc">这里采用“先查后写”的幂等控制：先通过 `findFirstByCustomerReferenceId(...)` 判断是否存在，再继续创建揽收单。该检查与后续 `pickupService.createPickup(bo)` 之间没有任何锁、唯一约束或原子操作保护，并发下两个相同 `logisticsOrderCode` 的请求可同时通过检查，导致重复创建揽收记录。对外部回调/重试场景，这会直接破坏幂等性，属于安全相关的并发风险。</div>
+                <div class="finding-suggestion">💡 修复建议：将幂等控制下沉到持久层，基于 `customer_reference_id/logisticsOrderCode` 增加唯一索引，并在创建时捕获唯一键冲突后返回幂等错误；或使用数据库/Redis 原子锁保证“检查+创建”原子化。示例：对 staging 或目标业务表增加唯一约束，并在 `createPickup` 事务内完成插入。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/impl/CainiaoPickupServiceImpl.java:86-89</code>
+                </div>
+                <div class="finding-desc">`posApiAdapter.getValidInRedisByFacilityCode(facilityCode)` 的返回值未做空判断，随后直接调用 `facility.getZoneId()`。当 ZIP 映射到了一个已失效或缓存未命中的 facilityCode 时，这里会直接触发空指针，导致揽收通知处理失败。</div>
+                <div class="finding-suggestion">💡 修复建议：在使用前显式校验 facility 是否为空以及 zoneId 是否为空，转换为可识别的业务异常，例如：`if (facility == null || StringUtils.isBlank(facility.getZoneId())) { throw new CainiaoPickupException(&quot;FACILITY_NOT_FOUND&quot;, &quot;invalid facilityCode=&quot; + facilityCode); }`。</div>
+            </div>
+            <p class="more-note">... 还有 13 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+        </div>
+        
 
   <div class="footer">
     由质量门禁引擎生成 &nbsp;|&nbsp; SpeedX CI/CD
