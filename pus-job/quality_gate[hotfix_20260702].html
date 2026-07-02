@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pus-job &nbsp;|&nbsp; 2026-07-02 16:11:11</div>
+      <div class="meta">pus-job &nbsp;|&nbsp; 2026-07-02 16:34:41</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -68,7 +68,7 @@
         
     <div class="metric-card">
       <div class="metric-label">SonarQube 质量门</div>
-      <div class="metric-value" style="color:#9e9e9e;font-size:22px;padding-top:6px">等待超时</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">质量门未通过</div>
       <div class="metric-note">已检测到问题，但当前配置未阻断流水线</div>
     </div>
     <div class="metric-card">
@@ -82,7 +82,7 @@
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube analysis timed out after 1 minutes</li>
+            <ul><li>SonarQube quality gate status: ERROR</li>
 <li>AI Review: 1 Critical finding(s)</li></ul>
         </div>
         
@@ -95,32 +95,26 @@
                     <span class="finding-badge">严重</span>
                     <code class="finding-loc">pus-infrastructure/src/main/java/io/speedx/pus/infrastructure/repository/PickupRepository.java:135-138</code>
                 </div>
-                <div class="finding-desc">新增查询条件放宽后，原本用于避免重复/错误补推的关键过滤被移除：`firstEncodingTime` 的阈值从 `pickupDate + 1` 放宽为 `pickupDate`，同时 `pickupFailureEventTime is null` 条件被注释掉。这样会把已经产生过 failure event 的记录、以及在原业务窗口内本不应再次处理的记录重新纳入候选集，导致失败事件重复补推。对事件驱动链路而言，这属于安全层面的状态完整性风险，可能触发重复下游处理、重复通知或状态污染。
+                <div class="finding-desc">新增查询条件放宽后，补推候选集会包含原本应被排除的订单，存在重复/越界补推失败事件的安全风险。具体表现为：`firstEncodingTime` 的过滤从 `&gt; pickupDate + 1` 放宽为 `&gt; pickupDate`，同时 `pickupTime` 过滤与 `pickupFailureEventTime is null` 过滤被直接注释掉，导致已经发生过失败事件、或在取件日当天已产生后续轨迹的订单重新进入补推集合。
 
-问题代码：
 ```java
-+            &quot;    and (t3.firstEncodingTime is null or FUNCTION(&#x27;DATE&#x27;, t3.firstEncodingTime) &gt; FUNCTION(&#x27;DATE&#x27;, t1.pickupDate)) &quot; +
-+            // &quot;    and (t3.pickupTime is null or FUNCTION(&#x27;DATE&#x27;, t3.pickupTime) &gt; FUNCTION(&#x27;DATE&#x27;, t1.pickupDate)) &quot; +
+and (t3.firstEncodingTime is null or FUNCTION(&#x27;DATE&#x27;, t3.firstEncodingTime) &gt; FUNCTION(&#x27;DATE&#x27;, t1.pickupDate))
+// &quot;    and (t3.pickupTime is null or FUNCTION(&#x27;DATE&#x27;, t3.pickupTime) &gt; FUNCTION(&#x27;DATE&#x27;, t1.pickupDate)) &quot; +
 ...
-+            // &quot;and t1.pickupFailureEventTime is null &quot; +
-```</div>
-                <div class="finding-suggestion">💡 修复建议：恢复幂等与时间窗口约束，不要通过注释移除核心过滤条件。至少应：1）恢复 `t1.pickupFailureEventTime is null` 或引入明确的“允许重推”标记；2）恢复原有 `pickupDate + 1` 的时间边界，或以配置项显式控制；3）若确需强制补推，单独走 `forceFindFailedPickupIds(...)` 分支，避免污染默认查询语义。
+// &quot;and t1.pickupFailureEventTime is null &quot; +
+```
 
-示例：
-```java
-and (t3.firstEncodingTime is null or FUNCTION(&#x27;DATE&#x27;, t3.firstEncodingTime) &gt; FUNCTION(&#x27;ADDDATE&#x27;, t1.pickupDate, 1))
-and (t3.pickupTime is null or FUNCTION(&#x27;DATE&#x27;, t3.pickupTime) &gt; FUNCTION(&#x27;ADDDATE&#x27;, t1.pickupDate, 1))
-and t1.pickupFailureEventTime is null
-```</div>
+这会破坏原有幂等/去重边界，可能向下游重复推送失败事件，造成状态污染、错误告警或业务补偿被重复触发。</div>
+                <div class="finding-suggestion">💡 修复建议：恢复原有去重与时序约束，不要通过注释移除关键过滤条件；若确需“强制补推”，应仅在新增专用查询 `forceFindFailedPickupIds(...)` 中放宽条件，并保留普通路径的幂等保护。建议至少：1）恢复 `t1.pickupFailureEventTime is null`；2）恢复 `pickupTime` 过滤；3）明确评审 `firstEncodingTime` 从 `pickupDate+1` 改为 `pickupDate` 的业务安全性，并补充单元/集成测试验证不会重复补推。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-facade-impl/pus-facade-impl-job/src/main/java/io/speedx/pus/facade/impl/job/PickupFailureEventRepushJob.java:139-146</code>
+                    <code class="finding-loc">pus-facade-impl/pus-facade-impl-job/src/main/java/io/speedx/pus/facade/impl/job/PickupFailureEventRepushJob.java:140-147</code>
                 </div>
-                <div class="finding-desc">新增的 eventStartDate/eventEndDate 分支直接对字符串做 LocalDate.parse，但只用 hasBlank 判断是否为空，未校验日期格式与起止关系。只要任务参数传入非法日期（如 2026/07/01）或 startDate 晚于 endDate，就会在运行时抛出 DateTimeParseException/产生空结果，导致整个补推任务失败。</div>
-                <div class="finding-suggestion">💡 修复建议：在解析前增加显式参数校验，并对解析异常转换为可读的 BizException/任务失败提示；同时校验 start &lt;= end。例如：`try { LocalDate start = LocalDate.parse(...); LocalDate end = LocalDate.parse(...); if (start.isAfter(end)) { throw new BizException(&quot;eventStartDate must be &lt;= eventEndDate&quot;); } } catch (DateTimeParseException e) { throw new BizException(&quot;eventStartDate/eventEndDate format must be yyyy-MM-dd&quot;, e); }`</div>
+                <div class="finding-desc">新增的 eventStartDate/eventEndDate 分支直接对字符串执行 LocalDate.parse(...)，但仅用 hasBlank 判断是否为空，未处理日期格式非法或开始日期晚于结束日期的情况。任务参数一旦传入非法值会在运行时抛出 DateTimeParseException，导致整个补推 Job 失败。</div>
+                <div class="finding-suggestion">💡 修复建议：在解析前增加参数校验并给出明确错误，例如：先分别用 try/catch 包裹 LocalDate.parse，校验 start &lt;= end，不满足时通过 XxlJobHelper.log 记录原因并抛出 BizException/IllegalArgumentException 终止当前任务；同时保持默认分支不受影响。示例：`LocalDate start; LocalDate end; try { start = LocalDate.parse(...); end = LocalDate.parse(...); } catch (DateTimeParseException e) { throw new IllegalArgumentException(&quot;eventStartDate/eventEndDate must be yyyy-MM-dd&quot;, e); } if (start.isAfter(end)) { throw new IllegalArgumentException(&quot;eventStartDate must be &lt;= eventEndDate&quot;); }`</div>
             </div>
             
         </div>
