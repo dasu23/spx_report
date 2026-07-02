@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-exchange-api &nbsp;|&nbsp; 2026-07-02 16:08:36</div>
+      <div class="meta">pos-exchange-api &nbsp;|&nbsp; 2026-07-02 17:45:45</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -62,7 +62,7 @@
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#f44336">39.7%</div>
+            <div class="metric-value" style="color:#f44336">39.6%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:0</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:3 &nbsp; 主要:37</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -82,10 +82,136 @@
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube analysis timed out after 1 minutes</li></ul>
+            <ul><li>SonarQube analysis timed out after 1 minutes</li>
+<li>AI Review: 3 Critical finding(s)</li>
+<li>AI Review: 37 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
+        <div class="findings-section">
+            <h3>AI 代码审查发现</h3>
+            
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerImplService.java:2032-2038</code>
+                </div>
+                <div class="finding-desc">**原因：** `getScanReport` 方法签名新增了外部传入的 `facilityCode`，并直接用该参数查询设施信息，而不再绑定当前登录用户的 `LoginUserUtil.getCurFacilityCode()`。这会把原本基于会话/身份上下文的数据范围约束，降级为“调用方可自带租户/站点标识”。若上层入口未额外校验该 `facilityCode` 是否属于当前用户可访问范围，调用者可通过构造任意 facilityCode 获取其他站点对应的扫描报表上下文数据。
+
+```java
+public ContainerScanReportDto getScanReport(Long containerId, String facilityCode) {
+    Optional&lt;PosContainer&gt; container = posContainerDao.findById(containerId);
+    ...
+    BaseFacility facility = baseFacilityService.getInRedisByFacilityCode(facilityCode);
+```
+
+**影响：** 存在跨 facility 的越权读取风险，可能导致非所属站点用户读取其他站点容器扫描报表相关信息，属于典型的数据范围绕过。由于该方法在全局入口映射中未给出明确 Controller，当前无法断言具体 HTTP 路径，但这是一个明确的权限边界削弱点。</div>
+                <div class="finding-suggestion">💡 修复建议：不要信任外部传入的 `facilityCode` 作为数据范围依据。应优先使用当前登录态中的 facilityCode，或在进入该方法前显式校验传入值是否属于当前用户授权范围。例如：
+```java
+String currentFacilityCode = LoginUserUtil.getCurFacilityCode();
+if (!Objects.equals(currentFacilityCode, facilityCode)) {
+    throw new RRException(&quot;no permission for facilityCode: &quot; + facilityCode);
+}
+BaseFacility facility = baseFacilityService.getInRedisByFacilityCode(currentFacilityCode);
+```
+若业务确需跨站点查询，应增加角色校验与 facility 数据权限校验。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/web/WebInboundParcelController.java:321-357</code>
+                </div>
+                <div class="finding-desc">**原因：** 新增 `virtualParentScan` 在 `batchCode` 为空时直接进入 `resolveVirtualBatchAndScan(form)` 自动解析/创建父批次，但该入口本身只做了权限码校验，diff 中未见任何基于当前用户 `facilityCode`、目标批次归属或可操作范围的显式校验。该逻辑会在缺少调用方提供批次号时自动决定业务归属，属于高敏感状态变更入口。
+
+```java
+@PostMapping(&quot;/virtualParentScan&quot;)
+public ResponseObject&lt;ScanInboundParcelRo&gt; virtualParentScan(...) throws Exception {
+    if (StrUtil.isBlankIfStr(form.getBatchCode())) {
+        return resolveVirtualBatchAndScan(form);
+    }
+    return webInboundParcelService.parentScanWhole(form);
+}
+```
+
+**影响：** 若 `resolveVirtualBatchAndScan` 或后续 service 未严格按当前登录设施做归属限制，具备该权限的用户可借由“自动选批次/自动建批次”能力把包裹扫描进非本设施或非本人应操作的批次，造成跨设施越权写入和业务数据污染。</div>
+                <div class="finding-suggestion">💡 修复建议：在 Controller 或 Service 入口强制绑定当前登录设施，并在解析/创建虚拟批次前校验目标批次归属：1）显式 `form.setFacilityCode(LoginUserUtil.getCurFacilityCode())`；2）`resolveVirtualBatchAndScan` 内校验解析出的批次 `facilityCode` 必须等于当前登录设施；3）若涉及自动创建批次，创建参数不得信任请求体中的设施相关字段。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/web/WebReLabelController.java:22-32</code>
+                </div>
+                <div class="finding-desc">**原因：** 新增的 `WebReLabelController` 两个对外入口均未添加任何权限控制注解（如 `@RequiresPermissions` / `@PreAuthorize`），且从 diff 可见这是直接暴露在 `/web/relabel/{trackingNumber}` 下的查询与换单操作接口。换单接口会根据追踪号执行 relabel 业务，属于敏感写操作；查询接口会返回包裹重量/尺寸等业务数据，也缺少访问约束。
+
+```java
+@GetMapping(&quot;/{trackingNumber}&quot;)
+public ResponseObject&lt;ReLabelReq&gt; fetchLabelDimensions(...)
+
+@PostMapping(&quot;/{trackingNumber}&quot;)
+public ResponseObject&lt;ReLabelRes&gt; relabel(...)
+```
+
+**影响：** 任意已登录但无对应业务权限的主体，甚至在全局鉴权配置较宽松时的未授权主体，都可能直接访问该路径读取包裹信息或触发换单，造成越权读取、越权修改以及面单/PDF 等敏感业务产物被非法获取。
+
+---
+
+新建的换单控制器两个接口都未声明 `@RequiresPermissions`。同分支内其他 web controller 普遍通过权限注解保护敏感操作，而这里既暴露了按 trackingNumber 查询包裹尺寸信息的 GET，也暴露了执行换单并返回新面单的 POST；若全局未额外拦截，这会形成未授权访问入口。</div>
+                <div class="finding-suggestion">💡 修复建议：为两个入口补充明确的权限控制，并在服务层增加资源归属校验（如 trackingNumber 对应包裹是否属于当前 facilityCode/POE）。示例：
+```java
+@RequiresPermissions(&quot;relabel:view&quot;)
+@GetMapping(&quot;/{trackingNumber}&quot;)
+public ResponseObject&lt;ReLabelReq&gt; fetchLabelDimensions(...) { ... }
+
+@RequiresPermissions(&quot;relabel:operate&quot;)
+@PostMapping(&quot;/{trackingNumber}&quot;)
+public ResponseObject&lt;ReLabelRes&gt; relabel(...) { ... }
+```
+同时在 `webReLabelService` 内基于 `LoginUserUtil.getCurFacilityCode()` 校验 trackingNumber 的归属后再返回数据或执行换单。</div>
+            </div>
+            
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-exchange-api/pom.xml:34-38</code>
+                </div>
+                <div class="finding-desc">新增 `spring-retry:1.2.5.RELEASE` 为显式固定旧版本依赖。该版本年代较老，且当前项目基于 Spring Boot 2.2.12.RELEASE，手工覆盖版本会绕过父 BOM 的统一依赖治理，增加已知漏洞或与现有 AOP/代理链不兼容的风险。对重试组件而言，错误的版本组合可能导致认证失败、远程调用异常被重复执行，放大敏感操作副作用。</div>
+                <div class="finding-suggestion">💡 修复建议：优先移除显式 `&lt;version&gt;`，交由 Spring Boot 依赖管理统一控制；如必须固定版本，需先完成 SCA/漏洞扫描并在 PR 中说明兼容性与安全评估结果。对所有使用 `@Retryable` 的敏感写操作补充幂等保护。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/web/WebPosContainerController.java:125</code>
+                </div>
+                <div class="finding-desc">这里删除了 `labelQuerySerivce.findByCustomerRefId(trackingNumber)` 的归一化步骤，`scanParcelToContainer` 现在会把前端传入值直接当作 trackingNumber 处理。若页面/扫码枪传入的是 customerRefId（旧逻辑显然支持这种输入），将导致原本可扫描入箱的包裹被误判为不存在或扫描失败，属于接口行为回退。</div>
+                <div class="finding-suggestion">💡 修复建议：保留 customerRefId → trackingNumber 的兼容转换，或在 `posContainerService.scanParcelToContainer(...)` 内统一兼容两种标识。至少应在调用前做类似：`String normalized = labelQuerySerivce.findByCustomerRefId(trackingNumber); trackingNumber = StringUtils.defaultIfBlank(normalized, trackingNumber);`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/api/OmsApi.java:82-86</code>
+                </div>
+                <div class="finding-desc">这里直接对 `respJson.get(&quot;code&quot;)` 调用 `intValue()`，当 OMS 返回空响应、非 JSON，或 JSON 中缺少 `code` 字段时，`get(&quot;code&quot;)` 会返回 null，导致空指针异常。这样会把远端协议异常放大为本地 500，且错误信息无法准确反映真实原因。</div>
+                <div class="finding-suggestion">💡 修复建议：在读取返回值后先校验响应体和 `code` 字段是否存在，再做状态判断，例如：`JsonNode codeNode = respJson.get(&quot;code&quot;); if (codeNode == null || !codeNode.isInt()) { log.error(&quot;invalid oms parcel state direct response: {}&quot;, resp); throw new RRException(&quot;invalid oms parcel state direct response&quot;); } if (codeNode.intValue() != 200) { ... }`。同时建议对空字符串响应单独处理。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/dao/LabelDao.java:501-502</code>
+                </div>
+                <div class="finding-desc">新增的 JPQL 方法 `findFirstByTrackingNumberOrCustomerRefId` 通过 `ORDER BY l.id DESC` 排序，但返回类型是单个 `Label`，且查询本身没有 `LIMIT 1` / `Pageable` / `findFirst...` 语义。若同一个 input 同时命中多条记录（该场景从同文件新增的“按 tracking_number 或 customer_ref_id 查找最新一条”注释可知是预期存在的），JPA 在执行 `getSingleResult` 时会抛出 `NonUniqueResultException`，导致查询直接失败。</div>
+                <div class="finding-suggestion">💡 修复建议：将方法改为真正的“取第一条”语义，例如使用派生查询 `Label findFirstByTrackingNumberOrCustomerRefIdOrderByIdDesc(String trackingNumber, String customerRefId);`，或改为返回 `List&lt;Label&gt;` / `Page&lt;Label&gt;` 后由调用方显式取首条。若坚持 `@Query`，可配合 `Pageable.ofSize(1)`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/dao/ShipmentDao.java:176-191</code>
+                </div>
+                <div class="finding-desc">该原子更新语句每次都会把 `received_receptacle_qty` 加 1，但 `WHERE` 条件没有限制上限，也没有校验当前是否已达到/超过 `receptacle_qty`。同一 shipment 被重复扫描或并发重试时，计数会持续累加到大于 `receptacle_qty`，从而破坏收货数量一致性；而注释又声明“达到阈值后切换 RECEIVED”，说明这里本应受阈值约束。</div>
+                <div class="finding-suggestion">💡 修复建议：在 SQL 中增加幂等/上限保护，例如 `WHERE id = :shipmentId AND COALESCE(received_receptacle_qty,0) &lt; COALESCE(receptacle_qty,0)`，并根据返回行数区分“成功累加”与“已满/重复扫描”。如果业务允许重复扫描留痕，也应把累计字段与扫描次数字段拆开，避免污染 `received_receptacle_qty`。</div>
+            </div>
+            <p class="more-note">... 还有 32 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+        </div>
+        
 
   <div class="footer">
     由质量门禁引擎生成 &nbsp;|&nbsp; SpeedX CI/CD
