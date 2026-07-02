@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-exchange-api &nbsp;|&nbsp; 2026-06-08 20:23:44</div>
+      <div class="meta">pos-exchange-api &nbsp;|&nbsp; 2026-07-02 18:23:30</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -56,24 +56,24 @@
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#4caf50">19.5%</div>
+      <div class="metric-value" style="color:#4caf50">30.6%</div>
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#f44336">36.1%</div>
+            <div class="metric-value" style="color:#ff9800">42.6%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
     <div class="metric-card">
       <div class="metric-label">SonarQube 质量门</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">质量门未通过</div>
+      <div class="metric-value" style="color:#9e9e9e;font-size:22px;padding-top:6px">等待超时</div>
       <div class="metric-note">已检测到问题，但当前配置未阻断流水线</div>
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:0</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:9 &nbsp; 主要:36</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -82,10 +82,161 @@
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube quality gate status: ERROR</li></ul>
+            <ul><li>SonarQube analysis timed out after 1 minutes</li>
+<li>AI Review: 9 Critical finding(s)</li>
+<li>AI Review: 36 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
+        <div class="findings-section">
+            <h3>AI 代码审查发现</h3>
+            
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/external/UpdateAddressController.java:49-54</code>
+                </div>
+                <div class="finding-desc">鉴权日志将调用方提交的 `inner-api-key` 明文写入 `info` 日志：`log.info(&quot;auth check: headerKey={}, matched={}&quot;, headerApiKey, ...)`。这属于敏感凭证泄露，日志平台、排障人员或被入侵的日志系统都可直接获取该密钥并伪造后续请求。该问题命中敏感日志/密钥泄露风险。</div>
+                <div class="finding-suggestion">💡 修复建议：禁止记录完整 API Key；如确需排障，仅记录是否匹配或脱敏后的前后缀，例如 `abcd****wxyz`。建议改为：`log.info(&quot;auth check: matched={}&quot;, StringUtils.equals(headerApiKey, apiKey));`</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/external/UpdateAddressController.java:53-103</code>
+                </div>
+                <div class="finding-desc">**原因：** 新增的鉴权逻辑在 `exchange.posApi.apiKey` 为空时直接放行，请求即使不携带 `inner-api-key` 也可访问接口，形成 fail-open 行为。该控制器是外部 HTTP 入口，且本次变更未增加任何 `@PreAuthorize`、`AuthUtil.requireRole()` 或其他强制鉴权兜底，因此一旦配置缺失、配置中心下发空值，或 `@RefreshScope` 刷新期间读取到空配置，接口会退化为匿名可访问。
+
+```java
+private boolean isInvalidApiKey(String headerApiKey) {
+    log.info(&quot;auth check: headerKey={}, matched={}&quot;, headerApiKey, StringUtils.equals(headerApiKey, apiKey));
+    if (StringUtils.isBlank(apiKey)) {
+        return false;
+    }
+    return StringUtils.isBlank(headerApiKey) || !headerApiKey.equals(apiKey);
+}
+```
+
+**影响：** 未授权调用方可直接查询任意 `trackingNumber` 的地址回显数据，造成外部接口越权读取；同时该 fail-open 模式会让配置错误直接演变为生产鉴权失效，风险等级高。
+
+---
+
+当配置项 `exchange.posApi.apiKey` 为空时，`isInvalidApiKey` 直接返回 `false`，等同于关闭了这 3 个 external 接口的新增鉴权逻辑。这样在配置缺失、配置中心未下发或刷新异常时，请求即使不带 `inner-api-key` 也会被放行，属于失败默认放行（fail-open）。</div>
+                <div class="finding-suggestion">💡 修复建议：将空配置视为鉴权失败而不是放行，并在应用启动阶段校验 `exchange.posApi.apiKey` 必填；不要依赖运行时空值兜底放行。例如：
+```java
+private boolean isInvalidApiKey(String headerApiKey) {
+    if (StringUtils.isBlank(apiKey)) {
+        throw new IllegalStateException(&quot;exchange.posApi.apiKey must not be blank&quot;);
+    }
+    return !StringUtils.equals(headerApiKey, apiKey);
+}
+```
+同时补充配置校验测试，确保配置缺失时接口返回 401/403 或服务启动失败。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/api/MaerskApi.java:73-164</code>
+                </div>
+                <div class="finding-desc">`createManifest` 新增 info 日志直接打印完整 `reqJson`。该请求是向第三方创建 manifest 的完整业务报文，通常包含收发货、运单/包裹等敏感物流数据；在 info 级别长期落盘会形成大规模敏感数据泄露面。</div>
+                <div class="finding-suggestion">💡 修复建议：禁止在 info/debug 日志中输出完整业务报文，仅记录 `manifestReference`、请求大小、条目数量等摘要字段；如确需排障，增加受控开关并对敏感字段脱敏。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/web/v3/WebDispatchMMController.java:220-225</code>
+                </div>
+                <div class="finding-desc">**原因：** 新增的容器查询接口未添加任何权限注解，仅调用 `checkWhitelist()` 后直接按 `dispatchCode` 查询容器列表。入口未体现用户是否具备查询权限，也未在控制器层校验 `dispatchCode` 是否属于当前 `facilityCode`。
+
+```java
+@GetMapping(&quot;/queryContainer&quot;)
+public ResponseObject&lt;List&lt;DispatchV2ContainerGroupRo&gt;&gt; queryContainer(
+        @RequestParam String dispatchCode) throws Exception {
+    checkWhitelist();
+    return ResponseObject.success(webDispatchV2Service.queryContainer(dispatchCode, Arrays.asList(DispatchV2ModeEnum.STANDARD.name())));
+}
+```
+
+**影响：** 任意白名单仓库登录用户都可能通过枚举 `dispatchCode` 读取 Dispatch MM 下的容器分组信息；若服务层未按 `facilityCode` 过滤，将导致跨仓库装车数据越权读取。
+
+---
+
+`queryContainer` 接口返回 Dispatch MM 的容器分组信息，但未添加 `@RequiresPermissions`。对比同控制器中的 `/one`、`/overview`、`/list` 等查询接口均要求 `dispatchMM:list:query`，这里缺失会造成查询接口被误放开。</div>
+                <div class="finding-suggestion">💡 修复建议：为该接口补充显式查询权限（如 `@RequiresPermissions(&quot;dispatchMM:list:query&quot;)`），并在服务层对 `dispatchCode` 做 `facilityCode` 归属校验或联合查询，拒绝访问非授权仓库的 dispatch。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/web/v2/WebDispatchV2Controller.java:194-197</code>
+                </div>
+                <div class="finding-desc">**原因：** 新增接口 `maerskManifestLogs` 缺少任何权限注解，也未在控制器层按当前登录人的 `facilityCode` 或资源归属做数据范围限制，直接将调用方提供的 `query` 透传给日志查询服务。
+
+```java
+@PostMapping(&quot;/maersk/logs&quot;)
+public ResponseObject&lt;List&lt;MaerskManifestLogRo&gt;&gt; maerskManifestLogs(@RequestBody MaerskManifestLogQueryDto query) {
+    return ResponseObject.success(maerskDispatchManifestService.queryManifestLogs(query));
+}
+```
+
+**影响：** 任意已登录用户只要能访问该控制器路径，即可按 `dispatchCode`/时间范围查询 Maersk manifest 推送日志，存在跨 facility 的日志越权读取风险；若日志中包含第三方交互结果、失败原因或业务标识，还会扩大敏感业务数据暴露面。
+
+---
+
+新增的 Maersk manifest 日志查询接口未添加 `@RequiresPermissions`，与同控制器其他 Web Dispatch V2 接口的权限模型不一致。当前只要能访问该控制器路径的登录用户即可查询指定 dispatch 的推送日志，存在越权读取业务日志数据的风险。</div>
+                <div class="finding-suggestion">💡 修复建议：为该接口补充与同类查询接口一致的权限控制（至少 `@RequiresPermissions`），并在进入 service 前强制注入当前用户的 `facilityCode`/可见范围，禁止完全信任请求体中的查询条件。例如：
+```java
+@RequiresPermissions(&quot;dispatchV2:list:query&quot;)
+@PostMapping(&quot;/maersk/logs&quot;)
+public ResponseObject&lt;List&lt;MaerskManifestLogRo&gt;&gt; maerskManifestLogs(@RequestBody @Valid MaerskManifestLogQueryDto query) {
+    query.setFacilityCode(LoginUserUtil.getCurFacilityCode());
+    return ResponseObject.success(maerskDispatchManifestService.queryManifestLogs(query));
+}
+```
+同时在 service/DAO 层增加基于 `facilityCode` 的二次校验，避免控制器遗漏导致越权。</div>
+            </div>
+            
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/web/v3/WebDispatchMMController.java:125-132</code>
+                </div>
+                <div class="finding-desc">这里捕获了 `baseFacilityService.getValidInRedisByFacilityCode(...)` 的所有异常后直接返回 `Facility not found`。这会把 Redis/配置/运行时异常与“仓库不存在”混淆，导致真实故障被吞没并误报为业务数据不存在，调用方无法区分是系统异常还是参数问题。</div>
+                <div class="finding-suggestion">💡 修复建议：仅对可预期的“未找到”场景返回业务失败；对基础设施异常应记录日志并继续抛出或返回明确的系统错误。例如：`catch (SpecificNotFoundException e) { return ResponseObject.failure(...); } catch (Exception e) { log.error(&quot;load facility failed&quot;, e); throw e; }`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/api/DmsApi.java:339-399</code>
+                </div>
+                <div class="finding-desc">新增日志将完整请求体 `req` 序列化后在异常场景打印。根据注释与入参定义，这里包含容器号、地址、经纬度等物流敏感数据；一旦 DMS 调用失败，完整 payload 会进入错误日志，扩大内部敏感运营数据暴露面。</div>
+                <div class="finding-suggestion">💡 修复建议：避免记录完整业务请求体，改为仅记录必要的非敏感摘要字段，例如容器数量、前几个容器号的脱敏值、traceId。示例：`log.error(&quot;[DmsApi] pushContainers error url={} containerCount={}&quot;, url, containers == null ? 0 : containers.size(), e);`</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/api/DmsApi.java:401-402</code>
+                </div>
+                <div class="finding-desc">`syncDispatchLm` 的入参 `req` 未做空值保护，日志里直接访问 `req.getFacility()` 和 `req.getContainers()`；若上游在异常分支传入 `null`，这里会抛出空指针，且错误信息无法体现真实业务上下文。</div>
+                <div class="finding-suggestion">💡 修复建议：在方法入口增加参数校验，例如：`Objects.requireNonNull(req, &quot;DispatchLmSyncReq must not be null&quot;)`，并进一步校验 `facility`、`containers` 等必填字段，返回可定位的业务异常。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/bo/PtcScanReportExcelBo.java:74-86</code>
+                </div>
+                <div class="finding-desc">3 个导出字段的 getter 都直接调用 `DateUtils.getDateStrByZone(..., zoneId, ...)`，但新增类中 `zoneId`、`ascanDate`、`containerDate`、`operationTime` 都没有非空保护。报表导出场景下只要任一时间字段或 `zoneId` 为空，就可能在 getter 执行时触发空指针或格式化异常，导致整份 Excel 导出失败。</div>
+                <div class="finding-suggestion">💡 修复建议：在 getter 中增加空值兜底，避免导出过程中因单条脏数据中断。例如：`if (ascanDate == null || StringUtils.isBlank(zoneId)) { return &quot;&quot;; }`，其余两个 getter 同样处理；如果 `DateUtils.getDateStrByZone` 已支持空值，也应显式返回空串而不是依赖底层实现。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/config/FacilityConfigProperties.java:35-38</code>
+                </div>
+                <div class="finding-desc">该类声明了 Jackson 解析相关类型常量，但当前实现已不再从 `facility.configs` JSON 配置读取数据，而是直接委托给 `DmsPushConfig`。这与类注释中声明的 Nacos Key `facility.configs`、JSON 结构和“新增功能模块无需改代码”的契约不一致，实际会导致若运维仍按注释配置 `facility.configs`，功能开关完全不生效。</div>
+                <div class="finding-suggestion">💡 修复建议：二选一保持实现与契约一致：1）若继续使用统一 JSON 配置，补回 `@Value(&quot;${facility.configs:}&quot;)` + JSON 解析逻辑，并基于 `TYPE_REF` 读取 `dms.push.enabled`；2）若已决定改为 `exchange.dms.enabled-destinations` 单配置，删除未使用的 Jackson 相关声明与旧注释，明确该类仅代理 DMS 开关，避免误配。</div>
+            </div>
+            <p class="more-note">... 还有 35 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+        </div>
+        
 
   <div class="footer">
     由质量门禁引擎生成 &nbsp;|&nbsp; SpeedX CI/CD
