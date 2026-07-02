@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-api &nbsp;|&nbsp; 2026-06-24 14:08:29</div>
+      <div class="meta">pos-api &nbsp;|&nbsp; 2026-07-02 17:52:36</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -56,13 +56,13 @@
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#4caf50">19.8%</div>
+      <div class="metric-value" style="color:#4caf50">19.0%</div>
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#ff9800">49.1%</div>
+            <div class="metric-value" style="color:#ff9800">42.8%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:0</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:6 &nbsp; 主要:33</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -82,10 +82,189 @@
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube analysis timed out after 1 minutes</li></ul>
+            <ul><li>SonarQube analysis timed out after 1 minutes</li>
+<li>AI Review: 6 Critical finding(s)</li>
+<li>AI Review: 33 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
+        <div class="findings-section">
+            <h3>AI 代码审查发现</h3>
+            
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/dto/task/BaseCreateReportTaskReq.java:26-28</code>
+                </div>
+                <div class="finding-desc">**原因：** 新增 `facilityCode` 字段并注明“由 Controller 显式塞入”，意味着异步 worker 后续将依赖请求侧传入/注入的仓库标识执行报表任务。但该 DTO 变更本身未体现任何不可篡改约束（如服务端从登录态派生、只读封装、白名单校验），一旦 Controller/调用链后续直接信任该字段，调用方可通过伪造 `facilityCode` 让异步任务在其他仓库上下文中运行，形成跨仓库数据越权。
+
+```java
+/** 仓库 code（异步 worker 无登录态，由 Controller 显式塞入）。SPX-PI-6881。 */
+@ApiModelProperty(value = &quot;Facility Code&quot;)
+private String facilityCode;
+```
+
+**影响：** 若报表导出、查询或任务处理逻辑使用该字段作为数据范围条件，攻击者可借此读取、导出或操作非本人/非本仓库的数据；由于异步 worker 无登录态，越权结果还可能绕过运行时鉴权补救，风险为高危数据范围突破。</div>
+                <div class="finding-suggestion">💡 修复建议：不要信任客户端可控 DTO 中的 `facilityCode` 作为最终权限边界。应在 HTTP 入口根据当前登录态/角色服务端派生允许的 `facilityCode`，并在进入异步任务前固化校验结果；若请求体中仍保留该字段，需忽略客户端传值或校验其必须属于当前用户授权范围。例如：在 Controller/Facade 中通过登录态获取 facilityCode 后覆盖 DTO 字段，而不是直接使用外部输入。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/impl/reverse/ReverseBatchCreateService.java:244-248</code>
+                </div>
+                <div class="finding-desc">**原因：** 新增逻辑在主单号未命中时，允许继续按 `thirdTrackingNo` 查询标签，但后续仍执行 `value.setLabel(label)`，并未将 `byThirdTrackingNo` 绑定到当前请求上下文，也未见任何针对 `thirdTrackingNo` 与当前批次/组织归属关系的额外校验。该变更实际扩大了可接受的标识符集合，却没有同步补充访问控制与归属校验。
+
+```java
+Label byThirdTrackingNo = labelQuerySerivce.findByThirdTrackingNo(value.getTrackingNumber());
+if (byThirdTrackingNo == null) {
+    throw new MessageCodeException(MessageCodeEnum.SCAN_FAIL_NOT_EXISTS_LABEL, value.getTrackingNumber());
+}
+```
+
+**影响：** 一旦 `findByThirdTrackingNo(...)` 可命中其他组织或其他业务上下文下的标签，调用方可通过第三方单号探测标签是否存在，甚至绕过原本仅允许按 customerRefId/trackingNo 操作的边界，形成跨租户/跨批次的对象可见性扩大风险。由于该服务对应外部 WebReverseBatchController 入口，属于高危越权面扩大。</div>
+                <div class="finding-suggestion">💡 修复建议：在允许 `thirdTrackingNo` 命中后，必须将命中的对象显式赋值并补充归属校验，例如校验标签的 `orgId/orgCode/facility` 与当前 batch/config 一致；若业务不允许第三方单号跨组织复用，应直接拒绝非同归属记录。
+
+可参考：
+```java
+Label label = labelQuerySerivce.findByCustomerRefIdOrTrackingNo(value.getForm().getTrackingNumber());
+if (label == null) {
+    label = labelQuerySerivce.findByThirdTrackingNo(value.getTrackingNumber());
+}
+if (label == null) {
+    throw new MessageCodeException(MessageCodeEnum.SCAN_FAIL_NOT_EXISTS_LABEL, value.getTrackingNumber());
+}
+if (!Objects.equals(label.getOrgCode(), value.getConfig().getSoldtoAccountCode())) {
+    throw new MessageCodeException(MessageCodeEnum.NO_PERMISSION);
+}
+value.setLabel(label);
+```</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/impl/reverse/ReverseBatchScanService.java:220-224</code>
+                </div>
+                <div class="finding-desc">**原因：** 扫描流程新增 `findByThirdTrackingNo` 兜底查询，但没有新增任何与当前 `curBatch` 的组织归属、facility 或数据范围绑定校验。代码仅以“能查到标签”为继续条件，导致第三方单号成为新的对象定位入口。
+
+```java
+Label byThirdTrackingNo = labelQuerySerivce.findByThirdTrackingNo(value.getTrackingNumber());
+if (byThirdTrackingNo == null) {
+    throw new MessageCodeException(MessageCodeEnum.SCAN_FAIL_NOT_EXISTS_LABEL, value.getTrackingNumber());
+}
+```
+
+**影响：** 攻击者或低权限用户可利用第三方单号扫描不属于当前批次/组织的标签，至少可获得标签存在性反馈；若后续流程依赖 `value.getLabel()` 继续生成 RTS/逆向处理，则可能进一步造成跨组织逆向操作。该变更直接扩大了外部扫描入口的可访问对象集合。</div>
+                <div class="finding-suggestion">💡 修复建议：将第三方单号查询结果纳入统一的标签解析与归属校验流程：命中后必须校验 `label.orgCode/orgId/facilityCode` 与 `curBatch` 一致，再允许继续；若无法证明归属一致，应返回无权限而非“存在即通过”。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-api/src/main/java/com/miq/posapi/controller/LabelController.java:304-307</code>
+                </div>
+                <div class="finding-desc">**原因：** 新增的 HTTP 写接口直接暴露了 `POST /innerApi/syncRelabelingNum`，但在本次 diff 可见代码中未看到 `AuthUtil.requireRole()`、`@PreAuthorize` 或其他显式鉴权注解/调用。根据审查规则，POST/PUT/DELETE 接口缺失角色校验应视为高危。
+
+```java
+@PostMapping(&quot;/innerApi/syncRelabelingNum&quot;)
+public ResponseObject&lt;Boolean&gt; syncRelabelingNum(@RequestBody @Valid RelabelingNumForm form) throws Exception {
+    return ResponseObject.success(labelInfoService.syncRelabelingNum(form));
+}
+```
+
+**影响：** 若该路径未被上层统一安全配置严格保护，任意可访问该接口的调用方都可能触发 relabeling 数量同步这一状态变更操作，造成标签/运单相关业务数据被未授权修改，属于典型越权写入风险。由于实现未在本分片 diff 内，无法进一步确认是否存在资源归属校验，风险需按入口缺失鉴权从严处理。
+
+---
+
+新增的内部接口直接暴露在 Controller 中，但变更行上看不到任何鉴权/访问限制注解或显式的内部调用保护。该接口会触发 `labelInfoService.syncRelabelingNum(form)` 修改业务数据，如果被普通外部流量误调用，会造成 relabeling 数量被非预期同步。
+
+---
+
+**原因：** 新增的 `syncRelabelingNum(RelabelingNumForm form)` 直接根据调用方提供的 `spxTrackingNumber` 更新或创建 `PosThirdLabel`，仅校验标签是否存在，但没有任何调用方身份、角色、租户/组织归属或资源归属校验。代码允许任意能触达该服务入口的主体，把任意运单号绑定到任意 `thirdTrackingNumber/provider`。
+
+```java
+public Boolean syncRelabelingNum(RelabelingNumForm form) {
+    Label label = labelDao.findByTrackingNumber(form.getSpxTrackingNumber());
+    ...
+    Optional&lt;PosThirdLabel&gt; existing = posThirdLabelDao.findByTrackingNumber(form.getSpxTrackingNumber());
+    ...
+    posThirdLabel.setThirdTrackingNumber(form.getThirdTrackingNumber());
+    posThirdLabel.setProvider(form.getProvider());
+    posThirdLabelDao.save(posThirdLabel);
+    return true;
+}
+```
+
+**影响：** 若该方法经 Controller/消息入口暴露，攻击者或低权限用户可篡改他人包裹的第三方单号映射，导致后续轨迹关联错误、面单重贴错绑，属于典型对象级越权/跨租户数据篡改风险。</div>
+                <div class="finding-suggestion">💡 修复建议：为该接口补充显式鉴权与最小权限控制，避免仅依赖外部网关或命名约定（如 `innerApi`）。例如在控制器方法上增加 `@PreAuthorize`，或在方法入口调用统一鉴权工具，并在服务层继续校验操作对象归属。
+
+```java
+@PreAuthorize(&quot;hasAuthority(&#x27;label:syncRelabelingNum&#x27;)&quot;)
+@PostMapping(&quot;/innerApi/syncRelabelingNum&quot;)
+public ResponseObject&lt;Boolean&gt; syncRelabelingNum(@RequestBody @Valid RelabelingNumForm form) {
+    // 进一步校验 form 中目标资源是否属于当前主体可操作范围
+    return ResponseObject.success(labelInfoService.syncRelabelingNum(form));
+}
+```</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/impl/reverse/ReverseBatchService.java:260-263</code>
+                </div>
+                <div class="finding-desc">**原因：** 新增逻辑对 `dspCode == &quot;MSK&quot;` 的标签直接返回可逆向，绕过了后续基于轨迹事件（57503、失败投递次数、57407 等）的限制判断。该放行条件仅依赖标签上的承运商代码，未见角色、组织、状态或额外业务授权校验。
+
+```java
+if (&quot;MSK&quot;.equals(label.getDspCode())) {
+    return true;
+}
+```
+
+**影响：** 任何进入该流程且携带 `MSK` 标签的请求，都可能绕过原有逆向准入规则，导致本不满足逆向条件的包裹被强制允许逆向处理。若外部调用方可控标签来源或存在跨组织标签引用，这会放大越权操作面并破坏业务安全边界。</div>
+                <div class="finding-suggestion">💡 修复建议：不要基于单一 `dspCode` 无条件放行。应将 MSK 特例收敛为显式白名单策略，并附加组织归属、标签状态、事件完整性等校验；至少要求满足可审计的业务条件后再返回 true。</div>
+            </div>
+            
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">backend-common/src/main/java/com/miq/backendcommon/form/exchange/trk/maersk/MaerskTrackingResponse.java:24-34</code>
+                </div>
+                <div class="finding-desc">resolveLatestProvider() 在比较器中直接调用 DateUtils.parseIso8601Str(event.getUtcDateTime())。如果某条新增返回数据里的 utcDateTime 格式非法，而 DateUtils 解析方法抛出运行时异常，则整个 provider 解析会失败，调用方无法拿到任何结果；这对仅想从事件列表中提取 provider 的场景会造成业务功能异常。</div>
+                <div class="finding-suggestion">💡 修复建议：对时间解析失败做显式兜底，避免单条脏数据影响整批解析。例如先过滤空时间并在解析失败时返回 null，再参与 max 比较：`return trackingEvents.stream().filter(event -&gt; StringUtils.isNotBlank(event.getProvider())).max(Comparator.comparing(event -&gt; { try { return DateUtils.parseIso8601Str(event.getUtcDateTime()); } catch (Exception e) { return null; } }, Comparator.nullsFirst(Comparator.naturalOrder()))).map(TrackingEvent::getProvider).orElse(null);`；或者先将可解析时间映射出来再比较。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">backend-common/src/main/java/com/miq/backendcommon/ro/LabelFileRo.java:20</code>
+                </div>
+                <div class="finding-desc">移除 `fileUrl` 字段上的 `@BlobSasUrl` 注解后，`fileUrl` 将不再经过原有的 Blob SAS URL 受控签名/转换流程，新增代码可能直接向调用方暴露底层文件真实地址或未签名地址。若该字段承载标签文件下载链接，这会削弱原本依赖临时授权 URL 的访问保护，导致链接可被长期复用、绕过对象存储鉴权，形成文件未授权访问或敏感文件地址泄露风险。</div>
+                <div class="finding-suggestion">💡 修复建议：恢复 `fileUrl` 上的 `@BlobSasUrl` 注解，或在等效的序列化/组装层显式对该字段生成短时效、最小权限的 SAS/签名 URL，禁止直接返回原始 Blob 路径。例如：`@BlobSasUrl private String fileUrl;`。同时补充校验，确保返回给前端的仅为带过期时间和权限范围限制的临时访问链接。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-api/src/main/java/com/miq/posapi/consume/CnuspsFacilityNotifyListener.java:27</code>
+                </div>
+                <div class="finding-desc">新增消费者在 info 级别完整打印外部 Kafka 消息体：`log.info(&quot;[CnuspsFacilityNotifyListener] received: {}&quot;, jsonString);`。该消息来自外部系统，内容不可控，可能包含运单号、仓库编码或其他业务敏感字段；同时原始日志还可能被构造为超长/恶意内容，扩大日志泄露面并增加日志注入风险。</div>
+                <div class="finding-suggestion">💡 修复建议：避免记录完整原始消息体，改为仅记录必要的非敏感标识字段和长度/摘要。例如先解析后仅打印业务主键：`log.info(&quot;[CnuspsFacilityNotifyListener] received facility notify, trackingNo={}, facilityCode={}&quot;, msg.getTrackingNo(), msg.getFacilityCode());`；解析失败时仅记录消息长度或截断后的内容。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/api/OmsApi.java:74-88</code>
+                </div>
+                <div class="finding-desc">新增的 `triggerParcelStateDirect` 在解析 OMS 响应后直接调用 `respJson.get(&quot;code&quot;).intValue()`，未校验 `respJson` 是否为空、是否为合法 JSON、以及 `code` 字段是否存在。当下游返回空串、非 JSON 或缺少 `code` 字段时，这里会触发空指针异常，导致调用方收到与真实问题不一致的崩溃信息。</div>
+                <div class="finding-suggestion">💡 修复建议：在读取响应后增加结构校验，再判断业务码，例如：`if (respJson == null || respJson.get(&quot;code&quot;) == null) { log.error(&quot;invalid oms parcel state direct response: {}&quot;, resp); throw new RRException(&quot;invalid oms parcel state direct response&quot;); }`。同时可优先使用 `respJson.path(&quot;code&quot;).asInt(-1)` 避免 NPE。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/dao/LabelDao.java:501-502</code>
+                </div>
+                <div class="finding-desc">新增的 JPQL 查询 `findFirstByTrackingNumberOrCustomerRefId` 仅通过 `ORDER BY l.id DESC` 排序，但方法返回单个 `Label`，且查询语句本身没有 `LIMIT 1` / `Pageable` 限制。在 Spring Data JPA 中，这类自定义 `@Query` 返回单对象时，如果命中多条记录，运行时会抛出 `NonUniqueResultException`，与方法名里的 `findFirst...` 语义不一致。该场景在 trackingNumber 或 customerRefId 非唯一时很容易出现。</div>
+                <div class="finding-suggestion">💡 修复建议：改为显式限制只取一条，例如使用 `Pageable`：`@Query(&quot;SELECT l FROM Label l WHERE l.trackingNumber = :input OR l.customerRefId = :input ORDER BY l.id DESC&quot;) List&lt;Label&gt; findByTrackingNumberOrCustomerRefId(@Param(&quot;input&quot;) String input, Pageable pageable);`，调用方传 `PageRequest.of(0,1)`；或直接删除该自定义 `@Query`，改用派生方法 `Label findFirstByTrackingNumberOrCustomerRefIdOrderByIdDesc(String trackingNumber, String customerRefId);`。</div>
+            </div>
+            <p class="more-note">... 还有 29 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+        </div>
+        
 
   <div class="footer">
     由质量门禁引擎生成 &nbsp;|&nbsp; SpeedX CI/CD
