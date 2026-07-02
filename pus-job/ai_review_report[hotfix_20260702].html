@@ -1230,7 +1230,7 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: pus-job | 生成时间: 2026-07-02 11:00:45</p>
+      <p class="hero-meta">服务: pus-job | 生成时间: 2026-07-02 16:09:28</p>
       <div class="top-criticals" id="top-criticals">
         <h3>Top 3 Critical 问题</h3>
         <ul id="top-criticals-list"></ul>
@@ -1254,11 +1254,11 @@
       <h2>总体结论</h2>
       <div id="summary-text" class="summary-body summary-preformatted"><div class="summary-condensed"><p>合并 <strong>2</strong> 个分片审查，共 <strong>2</strong> 条发现 （Critical 1 · Major 1 · Minor 0 · Info 0）。详细列表见下方「按文件的审查发现」；接口与数据权限维度见「权限与业务规则」页签。</p><details class="summary-raw-details"><summary>展开各分片原文结论</summary><pre class="summary-raw-pre">**分片 1**
 
-本次变更整体未发现 SQL 注入、硬编码密钥或 HTTP 鉴权放行问题，但在补推候选查询中新增了会破坏事件幂等与状态边界的高风险修改：默认候选范围被放宽，可能导致失败事件重复补推。由于本分片 diff 中未出现 HTTP 映射注解，无需输出 HTTP 入口清单。
+本次变更存在 1 处高风险安全问题：仓储层查询放宽了失败事件候选过滤条件，破坏了补推链路的幂等/状态完整性，可能导致重复事件补推与下游状态污染。未在本次 diff 中发现新增 HTTP 入口。
 
 **分片 2**
 
-本次改动整体较集中，但有两处会直接影响补推结果正确性：一处放宽了通用候选过滤条件，另一处新增参数缺少成对校验，建议在上线前修正并补充回归测试。</pre></details></div></div>
+本次改动整体较集中，但新增的任务参数分支缺少必要的输入校验，且仓储层放宽了 failure event 候选过滤条件，存在任务失败和重复/误补推的较高风险。</pre></details></div></div>
       <div class="filter-row">
         <span class="filter-label">点击筛选:</span>
         <div class="chips">
@@ -1314,27 +1314,29 @@
       </div>
     </div>
 
-    <h2 class="section-title subsection-title">按文件的审查发现</h2><div class="findings-list-wrap"><details class="file-group findings-file-group" open="open" id="fg-ef3b4f0a6ea8" data-file-path="pus-facade-impl/pus-facade-impl-job/src/main/java/io/speedx/pus/facade/impl/job/PickupFailureEventRepushJob.java" data-short-name="PickupFailureEventRepushJob.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">pus-facade-impl/pus-facade-impl-job/src/main/java/io/speedx/pus/facade/impl/job/PickupFailureEventRepushJob.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L140-146</span><span class="finding-cat">边界条件</span></div><div class="finding-desc">新增参数分支只用 `hasBlank` 判断是否进入 force 模式：当 `eventStartDate`、`eventEndDate` 只传了一个值时，会落回旧逻辑静默执行，而不是报参数错误。这会让调用方误以为日期范围生效，实际却执行了全量候选查询，容易造成补推范围失控。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>把参数校验改为“要么都不传，要么都传且格式合法”。例如先判断 `boolean bothEmpty = isBlank(start)&amp;&amp;isBlank(end); boolean bothPresent = isNotBlank(start)&amp;&amp;isNotBlank(end);`，若两者都不是则直接抛出 `BizException`/记录失败并终止任务。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>分别测试 4 种入参：1）两个都不传；2）两个都传；3）只传 `eventStartDate`；4）只传 `eventEndDate`。后两种应明确失败，不能静默走旧逻辑。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-215d916d4cbe" data-file-path="pus-infrastructure/src/main/java/io/speedx/pus/infrastructure/repository/PickupRepository.java" data-short-name="PickupRepository.java" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">pus-infrastructure/src/main/java/io/speedx/pus/infrastructure/repository/PickupRepository.java</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">1 Critical</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L135-138</span><span class="finding-cat">安全风险</span></div><div class="finding-desc">新增查询条件放宽了失败事件补推的候选范围，直接移除了对 `pickupFailureEventTime is null` 的限制，并将 `pickupTime` 过滤注释掉：这会把已经产生过失败事件、甚至可能已被后续正常取件状态覆盖的数据再次纳入补推集合，导致重复补推/重复投递失败事件。对于事件驱动链路，这属于安全层面的状态完整性风险，可能造成下游重复消费、状态污染或业务补偿被重复触发。
+    <h2 class="section-title subsection-title">按文件的审查发现</h2><div class="findings-list-wrap"><details class="file-group findings-file-group" open="open" id="fg-ef3b4f0a6ea8" data-file-path="pus-facade-impl/pus-facade-impl-job/src/main/java/io/speedx/pus/facade/impl/job/PickupFailureEventRepushJob.java" data-short-name="PickupFailureEventRepushJob.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">pus-facade-impl/pus-facade-impl-job/src/main/java/io/speedx/pus/facade/impl/job/PickupFailureEventRepushJob.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L139-146</span><span class="finding-cat">异常处理</span></div><div class="finding-desc">新增的 eventStartDate/eventEndDate 分支直接对字符串做 LocalDate.parse，但只用 hasBlank 判断是否为空，未校验日期格式与起止关系。只要任务参数传入非法日期（如 2026/07/01）或 startDate 晚于 endDate，就会在运行时抛出 DateTimeParseException/产生空结果，导致整个补推任务失败。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>在解析前增加显式参数校验，并对解析异常转换为可读的 BizException/任务失败提示；同时校验 start &lt;= end。例如：`try { LocalDate start = LocalDate.parse(...); LocalDate end = LocalDate.parse(...); if (start.isAfter(end)) { throw new BizException(&quot;eventStartDate must be &lt;= eventEndDate&quot;); } } catch (DateTimeParseException e) { throw new BizException(&quot;eventStartDate/eventEndDate format must be yyyy-MM-dd&quot;, e); }`</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>1) 传入合法区间应正常执行；2) 仅传一个 event 日期参数应走旧逻辑或明确报错；3) 传入非法格式如 `2026/07/01` 应返回可读错误；4) 传入 `eventStartDate &gt; eventEndDate` 应被拦截。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-215d916d4cbe" data-file-path="pus-infrastructure/src/main/java/io/speedx/pus/infrastructure/repository/PickupRepository.java" data-short-name="PickupRepository.java" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">pus-infrastructure/src/main/java/io/speedx/pus/infrastructure/repository/PickupRepository.java</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">1 Critical</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L135-138</span><span class="finding-cat">安全风险</span></div><div class="finding-desc">新增查询条件放宽后，原本用于避免重复/错误补推的关键过滤被移除：`firstEncodingTime` 的阈值从 `pickupDate + 1` 放宽为 `pickupDate`，同时 `pickupFailureEventTime is null` 条件被注释掉。这样会把已经产生过 failure event 的记录、以及在原业务窗口内本不应再次处理的记录重新纳入候选集，导致失败事件重复补推。对事件驱动链路而言，这属于安全层面的状态完整性风险，可能触发重复下游处理、重复通知或状态污染。
 
 问题代码：
 ```java
++            &quot;    and (t3.firstEncodingTime is null or FUNCTION(&#x27;DATE&#x27;, t3.firstEncodingTime) &gt; FUNCTION(&#x27;DATE&#x27;, t1.pickupDate)) &quot; +
 +            // &quot;    and (t3.pickupTime is null or FUNCTION(&#x27;DATE&#x27;, t3.pickupTime) &gt; FUNCTION(&#x27;DATE&#x27;, t1.pickupDate)) &quot; +
 ...
 +            // &quot;and t1.pickupFailureEventTime is null &quot; +
-```
-原有保护条件被注释后，补推逻辑失去幂等边界。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>恢复幂等保护条件，至少保留 `t1.pickupFailureEventTime is null`，并明确区分“首次推送候选”和“强制补推候选”两条独立查询路径，避免默认查询扩大范围。若确需强制补推，应增加显式开关并记录审计日志，例如：
+```</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>恢复幂等与时间窗口约束，不要通过注释移除核心过滤条件。至少应：1）恢复 `t1.pickupFailureEventTime is null` 或引入明确的“允许重推”标记；2）恢复原有 `pickupDate + 1` 的时间边界，或以配置项显式控制；3）若确需强制补推，单独走 `forceFindFailedPickupIds(...)` 分支，避免污染默认查询语义。
+
+示例：
 ```java
+and (t3.firstEncodingTime is null or FUNCTION(&#x27;DATE&#x27;, t3.firstEncodingTime) &gt; FUNCTION(&#x27;ADDDATE&#x27;, t1.pickupDate, 1))
+and (t3.pickupTime is null or FUNCTION(&#x27;DATE&#x27;, t3.pickupTime) &gt; FUNCTION(&#x27;ADDDATE&#x27;, t1.pickupDate, 1))
 and t1.pickupFailureEventTime is null
-and (t3.pickupTime is null or FUNCTION(&#x27;DATE&#x27;, t3.pickupTime) &gt; FUNCTION(&#x27;DATE&#x27;, t1.pickupDate))
-```
-同时在调用侧仅对人工确认的时间窗使用强制查询。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>构造一条已存在 `pickupFailureEventTime` 的 pickup，再次执行补推任务；验证其不会被默认候选查询再次选中。再构造一条已实际 pickup 的数据，验证不会因移除 `pickupTime` 过滤而被重复补推。</p></div></div></details></div></div></details></div>
+```</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>构造一条已存在 `pickupFailureEventTime` 的 pickup，以及一条 `firstEncodingTime` 落在 pickupDate 当天的 pickup；执行补推查询，验证两者都不会再次进入候选集，避免重复事件发送。</p></div></div></details></div></div></details></div>
     </div>
 
     <div id="panel-dp" class="report-panel" role="tabpanel" aria-labelledby="tab-dp">
       <div class="dp-shell"><div class="dp-header">
   <h1>数据权限分析报告</h1>
   <p class="subtitle">AI Code Review · 接口级别数据权限审计</p>
-  <div class="meta-row"><div class="meta-item">项目 <strong>pus-job</strong></div><div class="meta-item">涉及接口路径（自动汇总） <strong>服务 pus-job · 本次无可聚合路径的权限类接口（请检查 path_pattern）</strong></div><div class="meta-item">报告日期 <strong>2026-07-02 11:00:45</strong></div><div class="meta-item">涉及角色标签 <strong>见 role_data / findings</strong></div></div>
+  <div class="meta-row"><div class="meta-item">项目 <strong>pus-job</strong></div><div class="meta-item">涉及接口路径（自动汇总） <strong>服务 pus-job · 本次无可聚合路径的权限类接口（请检查 path_pattern）</strong></div><div class="meta-item">报告日期 <strong>2026-07-02 16:09:28</strong></div><div class="meta-item">涉及角色标签 <strong>见 role_data / findings</strong></div></div>
 </div>
 
 <div class="dp-body">
@@ -1379,7 +1381,7 @@ and (t3.pickupTime is null or FUNCTION(&#x27;DATE&#x27;, t3.pickupTime) &gt; FUN
 
   
 
-  <div class="dp-footer"><p>本报告由 AI Code Review 生成（data_permission 模式）。权限类 finding 涉及文件：<strong>（无）</strong></p><p style="margin-top:4px;">生成时间：2026-07-02 11:00:45 · 项目：pus-job</p></div>
+  <div class="dp-footer"><p>本报告由 AI Code Review 生成（data_permission 模式）。权限类 finding 涉及文件：<strong>（无）</strong></p><p style="margin-top:4px;">生成时间：2026-07-02 16:09:28 · 项目：pus-job</p></div>
 
 </div>
 </div>
@@ -1713,8 +1715,8 @@ and (t3.pickupTime is null or FUNCTION(&#x27;DATE&#x27;, t3.pickupTime) &gt; FUN
 
     // Inject summary data (Task 5)
     if (typeof updateSeveritySummary === 'function') updateSeveritySummary(1, 1, 0, 0);
-if (typeof renderCategoryChart === 'function') renderCategoryChart({"\u5b89\u5168\u98ce\u9669": 1, "\u8fb9\u754c\u6761\u4ef6": 1});
-if (typeof renderTopCriticals === 'function') renderTopCriticals([{"file": "pus-infrastructure/src/main/java/io/speedx/pus/infrastructure/repository/PickupRepository.java", "line": "135-138", "severity": "critical", "category": "安全风险", "description": "新增查询条件放宽了失败事件补推的候选范围，直接移除了对 `pickupFailureEventTime is null` 的限制，并将 `pickupTime` 过滤注释掉：这会把已经产生过失败事件、甚至可能已被后续正常取件状态覆盖的数据再次纳入补推集合，导致重复补推/重复投递失败事件。对于事件驱动链路，这属于安全层面的状态完整性风险，可能造成下游重复消费、状态污染或业务补偿被重复触发。\n\n问题代码：\n```java\n+            // \"    and (t3.pickupTime is null or FUNCTION('DATE', t3.pickupTime) > FUNCTION('DATE', t1.pickupDate)) \" +\n...\n+            // \"and t1.pickupFailureEventTime is null \" +\n```\n原有保护条件被注释后，补推逻辑失去幂等边界。", "suggestion": "恢复幂等保护条件，至少保留 `t1.pickupFailureEventTime is null`，并明确区分“首次推送候选”和“强制补推候选”两条独立查询路径，避免默认查询扩大范围。若确需强制补推，应增加显式开关并记录审计日志，例如：\n```java\nand t1.pickupFailureEventTime is null\nand (t3.pickupTime is null or FUNCTION('DATE', t3.pickupTime) > FUNCTION('DATE', t1.pickupDate))\n```\n同时在调用侧仅对人工确认的时间窗使用强制查询。", "test_scenario": "构造一条已存在 `pickupFailureEventTime` 的 pickup，再次执行补推任务；验证其不会被默认候选查询再次选中。再构造一条已实际 pickup 的数据，验证不会因移除 `pickupTime` 过滤而被重复补推。", "http_method": "", "path_pattern": "", "permission_tags": [], "java_entry_method": "", "expected_permission": "", "actual_behavior": "", "evidence_refs": [], "risk_label_zh": "", "_aggregated_count": 1}]);
+if (typeof renderCategoryChart === 'function') renderCategoryChart({"\u5b89\u5168\u98ce\u9669": 1, "\u5f02\u5e38\u5904\u7406": 1});
+if (typeof renderTopCriticals === 'function') renderTopCriticals([{"file": "pus-infrastructure/src/main/java/io/speedx/pus/infrastructure/repository/PickupRepository.java", "line": "135-138", "severity": "critical", "category": "安全风险", "description": "新增查询条件放宽后，原本用于避免重复/错误补推的关键过滤被移除：`firstEncodingTime` 的阈值从 `pickupDate + 1` 放宽为 `pickupDate`，同时 `pickupFailureEventTime is null` 条件被注释掉。这样会把已经产生过 failure event 的记录、以及在原业务窗口内本不应再次处理的记录重新纳入候选集，导致失败事件重复补推。对事件驱动链路而言，这属于安全层面的状态完整性风险，可能触发重复下游处理、重复通知或状态污染。\n\n问题代码：\n```java\n+            \"    and (t3.firstEncodingTime is null or FUNCTION('DATE', t3.firstEncodingTime) > FUNCTION('DATE', t1.pickupDate)) \" +\n+            // \"    and (t3.pickupTime is null or FUNCTION('DATE', t3.pickupTime) > FUNCTION('DATE', t1.pickupDate)) \" +\n...\n+            // \"and t1.pickupFailureEventTime is null \" +\n```", "suggestion": "恢复幂等与时间窗口约束，不要通过注释移除核心过滤条件。至少应：1）恢复 `t1.pickupFailureEventTime is null` 或引入明确的“允许重推”标记；2）恢复原有 `pickupDate + 1` 的时间边界，或以配置项显式控制；3）若确需强制补推，单独走 `forceFindFailedPickupIds(...)` 分支，避免污染默认查询语义。\n\n示例：\n```java\nand (t3.firstEncodingTime is null or FUNCTION('DATE', t3.firstEncodingTime) > FUNCTION('ADDDATE', t1.pickupDate, 1))\nand (t3.pickupTime is null or FUNCTION('DATE', t3.pickupTime) > FUNCTION('ADDDATE', t1.pickupDate, 1))\nand t1.pickupFailureEventTime is null\n```", "test_scenario": "构造一条已存在 `pickupFailureEventTime` 的 pickup，以及一条 `firstEncodingTime` 落在 pickupDate 当天的 pickup；执行补推查询，验证两者都不会再次进入候选集，避免重复事件发送。", "http_method": "", "path_pattern": "", "permission_tags": [], "java_entry_method": "", "expected_permission": "", "actual_behavior": "", "evidence_refs": [], "risk_label_zh": "", "_aggregated_count": 1}]);
 
     // Export dropdown toggle
     (function() {
