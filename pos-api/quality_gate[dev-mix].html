@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-api &nbsp;|&nbsp; 2026-07-02 23:32:33</div>
+      <div class="meta">pos-api &nbsp;|&nbsp; 2026-07-03 09:44:21</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -62,7 +62,7 @@
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#f44336">39.3%</div>
+            <div class="metric-value" style="color:#f44336">37.6%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:7 &nbsp; 主要:42</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:6 &nbsp; 主要:37</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,8 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube analysis timed out after 1 minutes</li>
-<li>AI Review: 7 Critical finding(s)</li>
-<li>AI Review: 42 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 6 Critical finding(s)</li>
+<li>AI Review: 37 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,92 +94,103 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/dto/relabel/ReLabelRes.java:21</code>
+                    <code class="finding-loc">pos-api/src/main/java/com/miq/posapi/controller/PartnerLocationController.java:38-51</code>
                 </div>
-                <div class="finding-desc">新增响应 DTO 直接暴露“内部 Azure 下载链接”。如果该字段被返回到前端或第三方调用方，内部对象存储地址/签名链接会成为可被转发复用的敏感资源定位信息，可能导致未授权下载面单文件，形成敏感数据泄露。当前 diff 中该字段无任何脱敏、时效约束或仅内部使用标记。</div>
-                <div class="finding-suggestion">💡 修复建议：不要在对外响应 DTO 中暴露内部存储下载地址。优先删除该字段；如业务必须返回下载能力，应改为返回受鉴权保护的业务下载接口地址，或返回短时效、最小权限的临时签名 URL，并在服务端校验调用者对 trackingNumber 的归属权限。</div>
+                <div class="finding-desc">**原因：** 该控制器被描述为“External API”，新增上下文下其 GET 查询入口未见任何鉴权或调用方范围限制。接口直接按页返回 `Vinted PUDO locations`，没有看到对调用方身份、合作方归属或数据可见范围的控制。
+
+```java
+@GetMapping(&quot;/list&quot;)
+public ResponseObject&lt;PudoLocationPageResponse&gt; list(
+        @ApiParam(value = &quot;Page index (1-based), default 1&quot;) @RequestParam(defaultValue = &quot;1&quot;) int pageIndex) {
+    return ResponseObject.success(partnerLocationService.findVintedPudoByPage(pageIndex));
+}
+```
+
+**影响：** 任意可访问该接口的主体可能枚举全部合作方网点位置数据；若这些位置、营业时间等数据仅应对特定合作方或内部系统开放，则会造成越权读取和批量数据泄露。</div>
+                <div class="finding-suggestion">💡 修复建议：为该外部查询接口增加认证与合作方级授权，至少校验调用方是否具备 `partnerLocation` 查询权限，并按合作方/租户范围过滤返回数据。若该接口确需公开，也应通过 API key/签名限流并明确最小化返回字段。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/PickupLocationExtService.java:7</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/report/impl/PosContainerDownloadReportProcessor.java:67-74</code>
                 </div>
-                <div class="finding-desc">**原因：**
-新增接口签名将 `queryPickupLocations` 的 `accountNum` 参数移除：
-```java
-List&lt;PickupLocationDto&gt; queryPickupLocations(List&lt;String&gt; zipCodeList);
-```
-从接口契约看，调用方已无法再显式传入账户维度进行数据范围约束；若实现层同步按该新签名查询，则很容易退化为仅按 `zipCodeList` 返回提货点数据。对于原本依赖 `accountNum` 做租户/客户隔离的场景，这是典型的数据范围收窄条件被删除。
+                <div class="finding-desc">**原因：** 新增容器扫描报表处理器按 `containerId` 直接调用 `posContainerService.getScanReport(containerId, task.getFacilityCode())`，但注释明确写明 `facilityCode` 可为空，且本处理器没有先校验 `containerId` 与 `facilityCode` 的归属关系：
 
-**影响：**
-一旦上层 HTTP/Facade 入口继续接受普通用户输入的邮编列表而未从登录态补充等价的账户约束，攻击者可通过构造任意 `zipCodeList` 枚举或读取不属于自身账户的数据，形成跨账户越权读取。由于本分片未展示对应控制器与实现，无法确认是否已改为从登录态强制绑定账户，因此该接口变更本身已构成高风险权限回归信号。
+```java
+Long containerId = parseBusinessData(task, Long.class, &quot;containerId&quot;);
+// facilityCode 可为空：service 内部 facility 查询失败时 zoneId fallback 为空串
+ContainerScanReportDto dto;
+try {
+    dto = posContainerService.getScanReport(containerId, task.getFacilityCode());
+} catch (IllegalArgumentException e) {
+    throw new RRException(&quot;Container not found: &quot; + containerId);
+}
+```
+
+如果 service 仅把 `facilityCode` 用于时区/展示，而不是资源过滤，则这里形成直接对象引用风险。
+
+**影响：** 攻击者可能通过提交任意 `containerId` 导出不属于自己的容器扫描明细；当 `facilityCode` 为空时风险更高，可能退化为无范围限制查询。
 
 ---
 
-**原因：** 本次变更将 `queryPickupLocations` 的入参从 `String accountNum, List&lt;String&gt; zipCodeList` 改为仅 `List&lt;String&gt; zipCodeList`，并删除了基于 `accountNum` -&gt; OMS 客户设施列表 -&gt; `facilityCode` 的过滤逻辑。新增实现直接调用全局范围查询：
+**原因：** 新增处理器按 `batchId` 直接查询 `ReceivingBatch` 并生成报表，但没有校验该批次是否属于当前任务的 `facilityCode` 或调用方可见范围：
 
 ```java
-public List&lt;PickupLocationDto&gt; queryPickupLocations(List&lt;String&gt; zipCodeList) {
-    List&lt;PickupLocationDto&gt; result = findActiveLocations(zipCodeList).stream()
-            .map(this::toDto)
-            .collect(Collectors.toList());
+Long batchId = parseBusinessData(task, Long.class, &quot;batchId&quot;);
+ReceivingBatch receivingBatch = webReceivingBatchService.findDataById(batchId);
+if (receivingBatch == null) {
+    throw new RRException(&quot;ReceivingBatch not found: &quot; + batchId);
+}
+String batchCode = receivingBatch.getBatchCode();
+ReceivingBatchReportBo reportBo = webReceivingBatchService.getBatchReport(batchCode);
 ```
 
-以及：
+`validateBusiness` 也仅做了 `batchId` 解析，没有任何归属校验。
+
+**影响：** 只要能够提交异步任务并提供任意有效 `batchId`，就可能导出其他 facility/其他数据域的收货批次报表，导致跨租户敏感业务数据泄露。
+
+---
+
+**原因：** 新增退件批次报表处理器通过 `batchId` 直接读取 `InboundBatch` 并生成报表，但没有校验该批次是否属于当前 `facilityCode` 或调用方的数据范围：
 
 ```java
-private List&lt;PartnerLocation&gt; findActiveLocations(List&lt;String&gt; zipCodes) {
-    if (CollUtil.isEmpty(zipCodes)) {
-        return partnerLocationDao.findAllActive(PARTNER_ID);
-    }
-    return partnerLocationDao.findActiveByZipCodes(PARTNER_ID, zipCodes);
+Long batchId = parseBusinessData(task, Long.class, &quot;batchId&quot;);
+InboundBatch inboundBatch = webInboundBatchService.findDataById(batchId);
+if (inboundBatch == null) {
+    throw new RRException(&quot;InboundBatch not found: &quot; + batchId);
+}
+String batchCode = inboundBatch.getBatchCode();
+...
+ReturnBatchReportBo bo = webReturnBatchService.genBatchReport(batchCode);
+```
+
+`validateBusiness` 同样只解析 `batchId`，未做权限/归属控制。
+
+**影响：** 攻击者可借助可枚举的 `batchId` 导出其他站点或其他权限域的 return batch 报表，造成业务数据越权读取。
+
+---
+
+**原因：** 新增 sorter chute 报表处理器仅校验 `profileId` 非空，随后直接按 `profileId` 查询映射数据：
+
+```java
+SorterChuteDto dto = parseBusinessData(task, SorterChuteDto.class);
+List&lt;SorterChuteMapping&gt; list = sorterChuteMappingDao.findByProfileId(dto.getProfileId());
+if (CollectionUtil.isEmpty(list)) {
+    throw new RRException(&quot;No data for profileId: &quot; + dto.getProfileId());
 }
 ```
 
-这意味着原先按账户/设施归属收敛的数据范围被移除，调用方只要能访问该服务对应入口，即可按邮编枚举或在空邮编条件下读取 `VINTED` 全量 active pickup locations。
+没有任何基于 `facilityCode`、用户角色或 profile 归属的过滤条件，属于典型的按可枚举 ID 直接取数。
 
-**影响：** 若该服务暴露给外部查询接口，任意已登录但不具备对应设施数据权限的主体，都可能越权读取其他账户/设施下的自提点信息，造成跨租户/跨归属数据可见范围扩大；在 `zipCodeList` 为空时风险更高，可直接获取合作方全量有效网点数据。</div>
-                <div class="finding-suggestion">💡 修复建议：恢复显式的数据范围约束，至少满足以下其一：1）保留 `accountNum` 参数并在实现层强制校验其与登录主体一致；2）若改为从登录态取值，则在 Service/Facade 契约中明确传入 `LoginUser`/`RpsUserBo` 等主体信息，禁止仅凭 `zipCodeList` 查询。示例：
-```java
-List&lt;PickupLocationDto&gt; queryPickupLocations(String accountNum, List&lt;String&gt; zipCodeList);
-// 或
-List&lt;PickupLocationDto&gt; queryPickupLocations(RpsUserBo user, List&lt;String&gt; zipCodeList);
-```
-并在实现中追加 `accountNum`/租户条件到查询语句。</div>
-            </div>
-            <div class="finding-card finding-critical">
-                <div class="finding-header">
-                    <span class="finding-badge">严重</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerImplService.java:2032-2038</code>
-                </div>
-                <div class="finding-desc">**原因：** `getScanReport` 方法签名新增了外部可传入的 `facilityCode` 参数，并直接使用该参数查询设施信息，而不再绑定当前登录用户所属站点。
-
-```java
-public ContainerScanReportDto getScanReport(Long containerId, String facilityCode) {
-    Optional&lt;PosContainer&gt; container = posContainerDao.findById(containerId);
-    ...
-    BaseFacility facility = baseFacilityService.getInRedisByFacilityCode(facilityCode);
-```
-
-该变更把原先基于 `LoginUserUtil.getCurFacilityCode()` 的数据范围约束替换为调用方可控输入，且在 diff 中未见任何对 `facilityCode` 与当前用户归属关系的一致性校验。
-
-**影响：** 一旦上层入口将该参数暴露给客户端，任意已登录用户可通过传入其他站点的 `facilityCode` 获取对应 zone 维度的扫描报表，造成跨 facility 的数据越权读取。由于全局端点清单未给出该方法的 Controller 映射，本分片无法断言具体 HTTP 路径，但服务层已引入明确的数据范围绕过风险。</div>
-                <div class="finding-suggestion">💡 修复建议：恢复以服务端会话中的站点身份作为唯一数据范围来源，禁止信任外部传入的 `facilityCode`；若业务必须支持传参，需在方法入口显式校验 `facilityCode` 是否属于当前用户可访问范围。
-
-```java
-String currentFacilityCode = LoginUserUtil.getCurFacilityCode();
-if (!Objects.equals(currentFacilityCode, facilityCode) &amp;&amp; !authService.canAccessFacility(facilityCode)) {
-    throw new RRException(&quot;no permission to access facility scan report&quot;);
-}
-BaseFacility facility = baseFacilityService.getInRedisByFacilityCode(currentFacilityCode);
-```</div>
+**影响：** 具备任务创建能力的用户可通过枚举 `profileId` 导出其他 profile 的 chute 配置，泄露分拣配置等敏感运营数据。</div>
+                <div class="finding-suggestion">💡 修复建议：强制要求 `task.getFacilityCode()` 非空，并在 service 返回前校验容器所属 facility 与任务 facility 一致；若 service 已支持按 facility 过滤，应在接口契约中明确“查不到即无权限”，避免仅按主键读取。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
                     <code class="finding-loc">pos-api/src/main/java/com/miq/posapi/controller/DaysPickupController.java:27-48</code>
                 </div>
-                <div class="finding-desc">**原因：** 新增对外查询入口直接暴露 `@PostMapping(&quot;/pickup/order/queryForDays&quot;)`，在变更行中未见 `AuthUtil.requireRole()`、`@PreAuthorize` 或任何调用方身份校验/数据范围限制逻辑。该接口按 `facilityCode` 和 `pickupDate` 查询提货单，但控制器层未将请求中的 `facilityCode` 与当前调用主体绑定，也未体现按用户身份过滤。
+                <div class="finding-desc">**原因：** 新增对外 HTTP 入口直接暴露查询能力，但在新增代码中未见 `@PreAuthorize`、`AuthUtil.requireRole()` 或任何调用方身份校验/数据范围约束。该接口按 `facilityCode` 和 `pickupDate` 查询提货单，属于典型业务数据读取入口；仅依赖请求体传入 `facilityCode`，会把数据范围控制交给调用方自报参数。
 
 ```java
 @PostMapping(value = &quot;/pickup/order/queryForDays&quot;)
@@ -189,27 +200,25 @@ public ResponseObject&lt;List&lt;PickupOrderBo&gt;&gt; queryPickupOrders(@Reques
         return ResponseObject.success(result);
 ```
 
-**影响：** 任意能够访问该接口的主体都可能通过伪造 `facilityCode` 查询非本人/非本机构的提货订单，造成跨租户数据越权读取；若该接口被外部系统调用且未在其他层强制鉴权，风险可直接扩大为未授权数据访问。</div>
-                <div class="finding-suggestion">💡 修复建议：为该入口增加明确的认证与授权控制，并在服务层强制做数据范围校验：1）使用 `@PreAuthorize` 或等效鉴权注解限制允许调用的系统/角色；2）不要信任请求体中的 `facilityCode`，应从认证上下文提取允许访问的 `facilityCode` 集合并校验；3）在 `daysPickupService.queryPickupOrders(...)` 内再次做范围兜底。
-
+**影响：** 任意可访问该接口的主体都可能通过构造不同 `facilityCode`/日期参数读取非本人、非本租户的 pickup 订单数据，形成越权读取；若该接口面向外部系统，缺失入口鉴权还可能导致未认证调用直接批量枚举业务数据。</div>
+                <div class="finding-suggestion">💡 修复建议：为该入口增加明确的认证与授权控制，不要仅信任请求体中的 `facilityCode`。至少在 Controller 或 Service 入口增加角色校验，并基于已认证主体绑定允许访问的 `facilityCode` 范围；若为系统对系统接口，应增加签名/专用凭证校验。示例：
 ```java
 @PreAuthorize(&quot;hasAuthority(&#x27;days:pickup:query&#x27;)&quot;)
 @PostMapping(&quot;/pickup/order/queryForDays&quot;)
-public ResponseObject&lt;List&lt;PickupOrderBo&gt;&gt; queryPickupOrders(@RequestBody @Valid DaysPickupOrderRequest request) {
+public ResponseObject&lt;List&lt;PickupOrderBo&gt;&gt; queryPickupOrders(...) {
     String facilityCode = AuthUtil.currentFacilityCode();
-    if (!facilityCode.equals(request.getFacilityCode())) {
-        throw new AccessDeniedException(&quot;facilityCode out of scope&quot;);
-    }
+    request.setFacilityCode(facilityCode);
     return ResponseObject.success(daysPickupService.queryPickupOrders(request));
 }
-```</div>
+```
+同时在服务层二次校验请求中的 `facilityCode` 是否属于当前主体允许范围。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">pos-api/src/main/java/com/miq/posapi/controller/LabelController.java:297-300</code>
+                    <code class="finding-loc">pos-api/src/main/java/com/miq/posapi/controller/LabelController.java:297-301</code>
                 </div>
-                <div class="finding-desc">**原因：** 新增修改型接口 `POST /innerApi/syncRelabelingNum` 直接调用 `labelInfoService.syncRelabelingNum(form)`，但变更行中未见 `AuthUtil.requireRole()`、`@PreAuthorize` 或任何“仅内部系统可调用”的校验。该接口名称与语义表明其会同步/修改 relabeling 数量，属于状态变更操作。
+                <div class="finding-desc">**原因：** 新增修改类接口 `/innerApi/syncRelabelingNum` 直接调用 `labelInfoService.syncRelabelingNum(form)`，但在新增代码中未见 `@PreAuthorize`、`AuthUtil.requireRole()` 或任何“内部接口”来源校验。路径名包含 `innerApi` 不能替代真实鉴权。
 
 ```java
 @PostMapping(&quot;/innerApi/syncRelabelingNum&quot;)
@@ -218,64 +227,113 @@ public ResponseObject&lt;Boolean&gt; syncRelabelingNum(@RequestBody @Valid Relab
 }
 ```
 
-**影响：** 若路由可达，未授权主体可能伪造请求修改标签重贴数量等业务状态，造成数据被篡改；同时由于缺少资源归属校验，攻击者还可能对非本人/非本机构标签执行越权更新。
-
----
-
-新增 innerApi 写接口未见任何权限注解或内部访问校验。该接口会同步 relabeling num，属于会修改标签相关数据的内部能力；仅依赖路径命名为 /innerApi 不能形成实际访问控制，存在被误开放后直接写数据的风险。</div>
-                <div class="finding-suggestion">💡 修复建议：将该接口纳入严格的内部鉴权与资源归属校验：1）增加 `@PreAuthorize` 或网关签名校验，确保仅受信内部系统可调用；2）在服务层校验 `RelabelingNumForm` 中涉及的 label/单号归属是否属于当前主体允许范围；3）若确属内部接口，建议统一挂载到受限的内部网关并校验来源签名。
-
+**影响：** 任何可访问该路径的主体都可能伪造请求同步/修改 relabeling 数量，导致标签相关业务状态被未授权篡改；若该字段参与后续计费、风控或操作限制，还会进一步放大业务风险。</div>
+                <div class="finding-suggestion">💡 修复建议：不要以 `/innerApi` 命名代替鉴权。为该接口增加明确的内部调用认证机制（如 mTLS、签名、专用 token）以及角色/权限校验，并在服务层校验被修改资源的归属与允许操作范围。示例：
 ```java
 @PreAuthorize(&quot;hasAuthority(&#x27;label:relabeling:sync&#x27;)&quot;)
 @PostMapping(&quot;/innerApi/syncRelabelingNum&quot;)
 public ResponseObject&lt;Boolean&gt; syncRelabelingNum(@RequestBody @Valid RelabelingNumForm form) {
-    labelInfoService.checkOwnership(form, AuthUtil.currentUser());
+    internalApiAuthService.verifyRequest();
+    ownershipChecker.checkLabelAccessible(form.getLabelCode(), AuthUtil.currentPrincipal());
     return ResponseObject.success(labelInfoService.syncRelabelingNum(form));
 }
 ```</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/service/PickupLocationExtService.java:7</code>
+                </div>
+                <div class="finding-desc">**原因：** `queryPickupLocations` 方法签名删除了 `accountNum` 参数，仅保留 `zipCodeList`。从接口契约看，这会移除调用方按账号维度传递/约束查询范围的能力；若实现层同步按新签名改造而未从登录态或其他可信上下文补回账号归属过滤，则该查询极易退化为仅按邮编返回数据，造成跨账号数据可见范围扩大。
+
+```java
+List&lt;PickupLocationDto&gt; queryPickupLocations(List&lt;String&gt; zipCodeList);
+```
+
+**影响：** 原本依赖 `accountNum` 做租户隔离/归属过滤的调用链可能被绕过，攻击者只需构造目标邮编列表即可枚举或读取其他账号的自提点信息，属于典型的数据越权读取风险。由于本分片仅见 Service 接口变更、未见补充鉴权/数据范围约束代码，风险应按高危处理。
+
+---
+
+**原因：** 本次将 `queryPickupLocations` 的入参从 `String accountNum, List&lt;String&gt; zipCodeList` 改为仅 `List&lt;String&gt; zipCodeList`，并删除了基于 `accountNum -&gt; OMS customer -&gt; facilities` 的归属解析与过滤逻辑：
+```java
+public List&lt;PickupLocationDto&gt; queryPickupLocations(List&lt;String&gt; zipCodeList) {
+    List&lt;PickupLocationDto&gt; result = findActiveLocations(zipCodeList).stream()
+```
+这意味着调用方不再需要提供账户标识，查询结果也不再按客户可见的 `facilityCode` 范围收敛，而是直接进入全局门店查询。
+
+**影响：** 任意能调用该服务对应接口的主体，都可能枚举或检索到不属于自身账户/仓网范围的全部 VINTED 自提点数据，造成跨租户数据越权读取；若上层接口原本依赖该服务内部做数据范围控制，此变更会直接放大可见范围。
+
+---
+
+**原因：** 新增的 `findActiveLocations(List&lt;String&gt; zipCodes)` 在 zipCode 为空时直接调用 `partnerLocationDao.findAllActive(PARTNER_ID)`，在 zipCode 非空时也仅按 `partnerId + zipCodes` 过滤：
+```java
+if (CollUtil.isEmpty(zipCodes)) {
+    return partnerLocationDao.findAllActive(PARTNER_ID);
+}
+return partnerLocationDao.findActiveByZipCodes(PARTNER_ID, zipCodes);
+```
+这里完全缺失基于用户、账户或 `facilityCode` 的数据范围约束。
+
+**影响：** 一旦上层接口允许空 zipCode 或宽泛 zipCode 查询，调用方可直接获取该 partner 下全部 active 门店，形成批量数据枚举面；即使提供 zipCode，也能查询到其他租户/客户名下的门店信息。</div>
+                <div class="finding-suggestion">💡 修复建议：恢复显式的账号/租户范围参数，或在实现层强制从认证上下文提取不可伪造的账号标识并校验，禁止仅依据 `zipCodeList` 查询。示例：
+```java
+List&lt;PickupLocationDto&gt; queryPickupLocations(String accountNum, List&lt;String&gt; zipCodeList);
+```
+若必须移除参数，则需在实现中显式使用登录态账号并拒绝匿名/缺失账号场景，同时补充单测验证不同账号相同邮编下互不可见。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">backend-common/src/main/java/com/miq/backendcommon/form/exchange/trk/maersk/MaerskTrackingResponse.java:24-35</code>
+                    <code class="finding-loc">backend-common/src/main/java/com/miq/backendcommon/form/exchange/trk/maersk/MaerskTrackingResponse.java:24-34</code>
                 </div>
-                <div class="finding-desc">resolveLatestProvider() 在 Comparator 中直接调用 DateUtils.parseIso8601Str(event.getUtcDateTime())。如果某条新增的 tracking event 带有非 ISO8601 格式时间字符串，stream 的 max 比较阶段会直接抛出运行时异常，导致整个 provider 解析失败，而不是仅跳过坏数据。这里新增逻辑把单条脏数据放大成整体功能异常，属于明显边界/异常处理缺失。</div>
-                <div class="finding-suggestion">💡 修复建议：在比较前先对时间做安全解析并过滤无效值，避免单条异常事件中断整个解析流程。例如：`return trackingEvents.stream().filter(e -&gt; StringUtils.isNotBlank(e.getProvider())).map(e -&gt; Pair.of(e, safeParse(e.getUtcDateTime()))).filter(p -&gt; p.getRight() != null).max(Comparator.comparing(Pair::getRight)).map(p -&gt; p.getLeft().getProvider()).orElse(null);`；若需要保留“时间为空也可参与”的语义，则至少在 `safeParse` 中捕获解析异常并返回 null。</div>
+                <div class="finding-desc">`resolveLatestProvider()` 在流排序时直接调用 `DateUtils.parseIso8601Str(event.getUtcDateTime())`。如果某个事件的 `utcDateTime` 为空串或非 ISO8601 格式，解析方法很可能抛出运行时异常，导致整个 provider 解析失败，而不是仅跳过该脏数据事件。这里新增逻辑位于响应模型中，调用方通常不会预期一个取字段辅助方法会因单条异常事件而中断主流程。</div>
+                <div class="finding-suggestion">💡 修复建议：在比较前先过滤无效时间，或对解析失败做显式兜底。例如：
+```java
+return trackingEvents.stream()
+    .filter(event -&gt; StringUtils.isNotBlank(event.getProvider()))
+    .filter(event -&gt; StringUtils.isNotBlank(event.getUtcDateTime()))
+    .map(event -&gt; Pair.of(event, DateUtils.parseIso8601Str(event.getUtcDateTime())))
+    .filter(pair -&gt; pair.getRight() != null)
+    .max(Comparator.comparing(Pair::getRight))
+    .map(pair -&gt; pair.getLeft().getProvider())
+    .orElse(null);
+```
+如果 `parseIso8601Str` 会抛异常，则应在本方法内捕获单条事件解析异常并跳过该事件。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">backend-common/src/main/java/com/miq/backendcommon/ro/LabelFileRo.java:20</code>
                 </div>
-                <div class="finding-desc">`fileUrl` 字段移除了 `@BlobSasUrl` 注解，导致该返回对象中的文件地址不再经过原有的 SAS 签名/受控转换流程。若上游仍写入对象存储原始路径、长期有效直链或内部存储地址，新增代码会直接把未受保护的文件 URL 暴露给调用方，存在标签文件未授权下载或存储端点泄露风险。</div>
-                <div class="finding-suggestion">💡 修复建议：恢复 `fileUrl` 上的 `@BlobSasUrl` 注解，或在构造 `LabelFileRo` 时显式调用统一的临时签名 URL 生成逻辑，确保仅返回短时效、最小权限的下载地址；同时补充对空值和非 Blob 路径的安全处理。示例：`@BlobSasUrl private String fileUrl;`</div>
+                <div class="finding-desc">`fileUrl` 字段移除了 `@BlobSasUrl` 注解，导致该返回对象在序列化/出参转换时不再经过受控的 Blob SAS URL 生成或签名处理。如果该字段原本承载对象存储中的私有文件地址，此变更会把底层原始 URL 直接暴露给调用方，或返回未签名链接，破坏原有的受限访问模型。</div>
+                <div class="finding-suggestion">💡 修复建议：恢复 `fileUrl` 上的 `@BlobSasUrl` 注解；若确需移除注解，应在所有构造 `LabelFileRo` 的路径上显式调用统一的临时签名 URL 生成逻辑，并确保返回的链接具备最小权限与短时效。例如：`@BlobSasUrl private String fileUrl;`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">pos-api/src/main/java/com/miq/posapi/consume/CnuspsFacilityNotifyListener.java:27</code>
                 </div>
-                <div class="finding-desc">新增消费者在 info 级别完整打印外部 Kafka 消息体：`log.info(&quot;[CnuspsFacilityNotifyListener] received: {}&quot;, jsonString);`。该消息来自外部系统，内容不可控，可能包含运单号、仓库编码或其他业务敏感字段；同时原始日志还可能被用于日志注入/污染（例如构造换行、伪造前缀），扩大敏感数据暴露面。</div>
-                <div class="finding-suggestion">💡 修复建议：避免记录完整原始消息体，改为仅记录必要的消息标识字段或长度/摘要；并对日志字段做脱敏与字符清洗。例如仅在解析成功后记录业务主键：`log.info(&quot;[CnuspsFacilityNotifyListener] received facility notify, trkNum={}, facilityCode={}&quot;, mask(msg.getTrkNum()), safe(msg.getFacilityCode()));`。若必须保留原文，请降级到受控 debug 日志并确保脱敏。</div>
+                <div class="finding-desc">新增消费者在 info 日志中直接打印完整原始消息体 `jsonString`。该消息来自外部 Kafka topic，内容可能包含运单号、仓库编码或其他业务敏感字段；一旦日志被更广泛访问、转储或进入集中日志平台，会扩大敏感业务数据暴露面。</div>
+                <div class="finding-suggestion">💡 修复建议：避免记录完整消息体，改为仅记录必要的非敏感标识字段，或在解析后做脱敏输出。例如仅记录消息摘要、事件类型、运单号后四位等。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-api/src/main/java/com/miq/posapi/consume/CnuspsFacilityNotifyListener.java:29-30</code>
+                    <code class="finding-loc">pos-api/src/main/java/com/miq/posapi/consume/CnuspsFacilityNotifyListener.java:29-33</code>
                 </div>
-                <div class="finding-desc">反序列化结果未做空值校验就直接传给 `labelService.updatePoeForCnusps(msg)`。当收到空字符串、`null` 字面量或字段缺失导致 `parseObject` 返回 `null` 时，这里会把空对象继续下传，容易在服务层触发空指针或产生不可预期更新。</div>
-                <div class="finding-suggestion">💡 修复建议：在调用服务前显式校验消息对象及关键字段，非法消息直接记录并返回。例如：`CnuspsFacilityNotifyMsg msg = JSON.parseObject(jsonString, CnuspsFacilityNotifyMsg.class); if (msg == null || msg.getXxx() == null) { log.warn(&quot;invalid message: {}&quot;, jsonString); return; }`。同时补充 DTO 必填字段校验。</div>
+                <div class="finding-desc">消费端捕获所有异常后仅记录日志、不重新抛出，当前消息会被当作“已成功消费”处理，导致解析失败或 `labelService.updatePoeForCnusps(msg)` 执行失败时消息直接丢失，无法依赖 Kafka 重试恢复，属于典型的部分失败被吞没。</div>
+                <div class="finding-suggestion">💡 修复建议：仅对明确可忽略的异常做降级处理；对解析失败/业务更新失败应抛出异常，让监听容器按配置进行重试或进入死信队列。例如：`CnuspsFacilityNotifyMsg msg = JSON.parseObject(jsonString, CnuspsFacilityNotifyMsg.class); if (msg == null) { throw new IllegalArgumentException(&quot;msg is null&quot;); } labelService.updatePoeForCnusps(msg);`，并在 `catch` 中记录后 `throw e;`（或包装为 `RuntimeException` 抛出）。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/api/OmsApi.java:82-86</code>
+                    <code class="finding-loc">pos-api/src/main/java/com/miq/posapi/controller/PartnerLocationController.java:46-51</code>
                 </div>
-                <div class="finding-desc">对 OMS 响应直接执行 `respJson.get(&quot;code&quot;).intValue()`，未校验 `respJson` 是否为对象节点、`code` 字段是否存在或为数值类型。若下游返回空串、非 JSON、或缺少 `code` 字段的错误页/网关报文，这里会触发空指针或类型异常，导致调用方拿到与真实问题不一致的崩溃异常。</div>
-                <div class="finding-suggestion">💡 修复建议：在读取业务码前增加响应结构校验，并对异常响应统一包装。例如：`JsonNode codeNode = respJson.path(&quot;code&quot;); if (!codeNode.canConvertToInt()) { log.error(&quot;invalid oms response: {}&quot;, resp); throw new RRException(&quot;invalid oms parcel state direct response&quot;); } if (codeNode.intValue() != 200) { ... }`。同时建议对空响应先做 `StringUtils.isBlank(resp)` 判断。</div>
+                <div class="finding-desc">新增 /sync 接口直接接收 List&lt;VintedPudoLocationDto&gt; 并传给服务层，但这里没有对 request body 做 @Valid，也没有对列表本身做非空/非空集合约束。当前代码允许 locations 为 null 或包含非法元素，服务层若按正常批量同步流程遍历处理，容易触发空指针或写入不完整数据。</div>
+                <div class="finding-suggestion">💡 修复建议：建议在控制器层增加入参校验，例如 `public ResponseObject&lt;Void&gt; sync(@RequestBody @NotEmpty List&lt;@Valid VintedPudoLocationDto&gt; locations)`，并在进入服务前显式拒绝 null/空列表。若业务允许空列表，也应在控制器中短路返回，避免进入同步逻辑。</div>
             </div>
-            <p class="more-note">... 还有 39 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 33 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
