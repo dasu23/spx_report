@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">trk-job &nbsp;|&nbsp; 2026-07-02 15:06:20</div>
+      <div class="meta">trk-job &nbsp;|&nbsp; 2026-07-03 17:46:20</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:2 &nbsp; 主要:7</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:3 &nbsp; 主要:10</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,8 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 2 Critical finding(s)</li>
-<li>AI Review: 7 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 3 Critical finding(s)</li>
+<li>AI Review: 10 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,85 +94,108 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/service/impl/pod/BasePodService.java:114-119</code>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/cmd/queryEvent/EventRoConverter.java:88-91</code>
                 </div>
-                <div class="finding-desc">**原因：** 新增逻辑直接依据调用方传入的 `orgId` 选择 Azure Blob container，但在该方法内看不到任何对 `orgId` 与当前操作者/业务对象归属关系的一致性校验。若上游可控地传入任意 `orgId`，则可将 POD 文件写入其他组织对应的 container，形成跨租户资源写入。
-
-```java
-String container = TrkBlobSasUtil.resolveContainerByOrg(orgId);
-String uploaded = container != null
-        ? TrkBlobSasUtil.upload(container, path, inputStream)
-        : spxAzureBlobUtil.upload(path, inputStream);
-downloadUrl = TrkBlobSasUtil.toRelativePath(uploaded);
-```
-
-**影响：** 攻击者或低权限调用方一旦能够影响 `orgId`，可把本应属于本组织的数据落到其他组织存储空间，造成跨租户数据污染、错误归档，后续还可能触发越权读取或审计归属失真。由于该 public Service 方法当前无 Controller 映射信息，本分片无法断言具体 HTTP 入口，但这是明确的租户边界缺失风险。</div>
-                <div class="finding-suggestion">💡 修复建议：不要信任方法入参中的 `orgId` 作为租户路由依据，应在进入该方法前或方法内部从已认证上下文/已校验业务实体中解析组织身份，并校验 `trackingNumber`、当前用户、组织归属三者一致后再决定 container。若必须保留该参数，至少增加显式校验，例如仅允许 `orgId.equals(authContext.getOrgId())` 时继续上传，否则拒绝。</div>
+                <div class="finding-desc">新增代码将 POP 文件地址从按需生成 SAS 签名 URL 改为直接返回 `fileUrl` 原始值：如果 `fileUrl` 存储的是 Azure Blob 的直链、内部对象路径或长期有效访问地址，则会把原本受时效/权限约束的资源标识直接暴露给调用方，导致 POD/POP 附件可被绕过签名策略访问或被离线传播。该变更发生在面向返回对象的转换逻辑中，风险会扩散到所有依赖该转换结果的调用链。</div>
+                <div class="finding-suggestion">💡 修复建议：恢复受控的临时签名输出，不要在返回层直接透传原始 `fileUrl`。若已改为由上游统一签名，应在此处增加显式校验/约束（例如仅允许返回已签名 URL，或区分内部 blob key 与外部访问 URL 字段），避免未签名原始地址落入响应。建议增加类似校验：仅当 `fileUrl` 命中预期 SAS 参数格式时才返回，否则重新签名或拒绝输出。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/service/impl/LabelFileServiceImpl.java:236-243</code>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/cmd/queryEvent/QueryEventCmd.java:405-412</code>
                 </div>
-                <div class="finding-desc">**原因：** 新增的 `findSignedPodDtos(List&lt;String&gt; trackingNumbers, boolean forWeb)` 直接按传入的 `trackingNumbers` 查询并批量返回签名后的 POD 文件 URL，但在新增代码中看不到任何调用方身份校验、租户/组织范围过滤或资源归属校验。该方法还会把原始 blob URL 转换为可访问的 SAS URL，等于把受保护对象的临时访问凭证直接发放给调用方。
+                <div class="finding-desc">新增代码在整单 POD 文件 URL 汇总时，删除了 `BlobSasUtil.toSasUrl(...)`，改为直接收集 `LabelFileQueryDto::getFileUrl`。虽然注释声称“fileUrl 已在加载时签名”，但当前方法对 `pods` 内容没有任何已签名校验，属于把安全假设下沉到外部依赖。一旦 `labelFileService.findSignedPodDtos(...)` 在某些分支、异常回退或后续维护中返回未签名原始地址，这里会无条件向结果集透传敏感文件地址，形成附件泄露面。</div>
+                <div class="finding-suggestion">💡 修复建议：不要仅依赖注释约定。应在此处增加防御式校验：1）校验 `fileUrl` 是否为符合预期的 SAS URL；2）若不是，则在当前层重新签名或过滤掉该记录；3）为 `findSignedPodDtos` 建立明确契约（如返回字段改名为 `signedFileUrl`）以避免误用。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/cmd/PodCmd.java:62-210</code>
+                </div>
+                <div class="finding-desc">**原因：** `verifyAndPods` 变更后直接基于请求中的 `trackingNo` 查主单/退单，再调用 `labelFileService.findSignedPodDtos(trackingNos, true)` 批量返回已签名的 POD/POP 文件 URL，并按 `eventId` 聚合返回；但新增代码中未体现任何调用者身份校验、角色限制或对 `trackingNo` 归属的校验。
 
 ```java
-@Override
-public List&lt;LabelFileQueryDto&gt; findSignedPodDtos(List&lt;String&gt; trackingNumbers, boolean forWeb) {
-    if (CollectionUtil.isEmpty(trackingNumbers)) {
-        return new ArrayList&lt;&gt;();
-    }
-    List&lt;LabelFileQueryDto&gt; dtos = labelFileDao.findDtoByTrackingNumberIn(trackingNumbers);
-    dtos.forEach(dto -&gt; dto.setFileUrl(TrkBlobSasUtil.toSasUrl(dto.getFileUrl(), forWeb)));
-    return dtos;
-}
+List&lt;LabelFileQueryDto&gt; files = labelFileService.findSignedPodDtos(trackingNos, true);
+...
+List&lt;String&gt; podUrls = files.stream()
+        .filter(f -&gt; LabelFileTypeEnum.POD.name().equals(f.getFileType()))
+        .map(LabelFileQueryDto::getFileUrl)
+        .collect(Collectors.toList());
+...
+Collectors.groupingBy(
+        f -&gt; DigestUtils.md5Hex(String.valueOf(f.getEventId())),
+        Collectors.mapping(LabelFileQueryDto::getFileUrl, Collectors.toList())
+)
 ```
 
-**影响：** 一旦该 Service 被 Controller/Facade 或内部 RPC 直接调用，攻击者只需枚举或猜测他人 `trackingNumber`，即可获取不属于自己的 POD 文件签名地址，造成跨租户/跨组织的敏感物流凭证泄露。由于返回的是已签名 URL，后续对象存储层通常不会再做业务侧鉴权，风险为高危数据越权读取。</div>
-                <div class="finding-suggestion">💡 修复建议：在查询前增加调用方身份与数据范围校验，并将 `orgId/customerOrgId` 作为查询条件下推到 DAO，禁止仅凭 `trackingNumber` 取数；同时仅对已通过归属校验的记录生成 SAS URL。示例：先根据当前用户可见的 `orgId` 集合过滤，再调用 `findDtoByTrackingNumberInAndOrgIdIn(...)`。</div>
+**影响：** 任意能够访问该 POST 接口的主体，只要知道一个有效 `trackingNo`，就可能同时拿到原单/退单的 POD 与 POP 签名 URL，扩大敏感文件暴露面。虽然 `eventId` 做了 MD5 脱敏，但文件 URL 本身已是可访问凭证，无法阻止越权下载。
+
+---
+
+`verifyAndPods` 现在直接调用 `labelFileService.findSignedPodDtos(trackingNos, true)` 并返回已签名 URL，但本次变更代码中看不到对 `form` 中校验信息（如邮编/验证码）的显式校验逻辑，方法仅校验 trackingNo 是否存在。根据知识库规则，该接口应为“验证邮编后返回 POD”。若签名 URL 的生成前移到 service 层，而入口方法未先完成校验，容易出现绕过验证直接获取 POD 的风险。</div>
+                <div class="finding-suggestion">💡 修复建议：在 `/pod/verifyAndPods` 入口增加强制鉴权（如 `@PreAuthorize` 或统一 Auth 校验），并在查询 `labelSummary` 后校验当前用户对主单及退单 `trackingNo` 的归属权限；服务层查询文件时也应附带租户/客户范围条件。若该接口面向外部系统，需增加签名验签或一次性授权令牌，而不是仅凭 trackingNo 查询。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/azure/AzureBlobStorageConfig.java:69-107</code>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/azure/AzureBlobStorageConfig.java:69-71</code>
                 </div>
-                <div class="finding-desc">在 `buildAndWireBlobUtilMap` 中通过多次静态 setter 依次更新 `TrkBlobSasUtil` 的路由状态（utilMap、orgContainerMap、webDomainMap、开关）。这些更新不是原子操作；若刷新事件与业务线程并发执行，静态工具类可能在短时间内观察到“新旧配置混合”的中间态，例如 utilMap 已切换但 orgId→container 映射仍是旧值，导致上传或 SAS 生成路由错误。</div>
-                <div class="finding-suggestion">💡 修复建议：将 `TrkBlobSasUtil` 的多项配置封装为一个不可变快照对象，通过单次原子替换（如 `volatile`/`AtomicReference&lt;ConfigSnapshot&gt;`）完成刷新；或提供一个 `refreshAll(...)` 方法一次性接收全部配置并在内部原子切换，避免多个 setter 分步更新。</div>
+                <div class="finding-desc">`onRefresh()` 在收到 `RefreshScopeRefreshedEvent` 时会直接重建并重新写入 `TrkBlobSasUtil` 的多组静态路由状态；该方法没有任何同步/原子切换保护，而初始化过程分成 `initMulti`、`setOrgContainerMap`、`setWebDomainMap`、`setNewBlobLogicEnabled` 多步执行。并发请求若恰好在刷新过程中调用静态工具，可能读到部分更新后的状态，出现容器映射、域名映射和开关值不一致的瞬时行为。</div>
+                <div class="finding-suggestion">💡 修复建议：将 `TrkBlobSasUtil` 的相关状态封装为一个不可变快照对象，并在这里一次性构建完成后通过单个 `AtomicReference#set(...)` 原子替换；至少应保证 `buildAndWireBlobUtilMap(...)` 内对静态状态的写入在同一同步块中完成，避免多步可见性不一致。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/cmd/PodCmd.java:62-76</code>
                 </div>
-                <div class="finding-desc">`getPod` 从直接查询 `findByTrackingNumberAndViewType(...)` 切换为 `labelFileService.findSignedPodDtos(Collections.singletonList(trackingNumber), false)` 后，删除了原先按 `createdAt` 倒序排序的逻辑，但后续仍按遍历顺序直接返回 POD/SIGNATURE 列表。若 `findSignedPodDtos` 未显式保证排序，接口返回的首个/整体文件顺序将变为不确定，可能把旧 POD 排在新 POD 前面，影响前端默认展示与用户下载到的最新凭证。</div>
-                <div class="finding-suggestion">💡 修复建议：在当前方法内恢复显式排序，避免依赖 service/DAO 的隐式返回顺序，例如：`labelFiles.stream().sorted(Comparator.comparing(LabelFileQueryDto::getCreatedAt).reversed())...`；如果 DTO 不含时间字段，则在 `findSignedPodDtos` 的查询层增加 `order by created_at desc` 并在方法契约中注明返回顺序。</div>
+                <div class="finding-desc">`getPod` 从 `labelFileDao.findByTrackingNumberAndViewType(...)` 切换为 `labelFileService.findSignedPodDtos(Collections.singletonList(trackingNumber), false)` 后，原先按 `createdAt` 倒序排序的逻辑被移除了，但后续仍直接遍历返回结果组装 `podUrls/signatureUrls`。如果 `findSignedPodDtos` 未保证排序，接口返回的 POD/签名顺序将变为不确定，可能导致前端展示的“最新一张”不再是最新文件。</div>
+                <div class="finding-suggestion">💡 修复建议：在当前方法内恢复显式排序，或在 `findSignedPodDtos` 的实现/契约中明确按 `createdAt desc` 返回。例如：`labelFiles.stream().sorted(Comparator.comparing(LabelFileQueryDto::getCreatedAt).reversed())...`。同时补充方法注释或接口文档，避免调用方依赖隐式顺序。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/cmd/PodCmd.java:187-203</code>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/service/impl/EventServiceImpl.java:843-846</code>
                 </div>
-                <div class="finding-desc">`verifyAndPods` 现在直接调用 `labelFileService.findSignedPodDtos(trackingNos, true)` 并把返回的已签名 URL 原样透传给调用方，变更后不再在当前方法内做任何额外过滤或校验。该方法对应对外 HTTP 接口 `/pod/verifyAndPods`，而知识库规则要求“验证邮编后返回 POD（限频 `pod-verify`）”。从本次 diff 看不到与 `findSignedPodDtos(..., true)` 配套的访问范围约束，若 service 层仅按 trackingNo 聚合文件，则原单/退单的全部 POD/POP 都会在一次校验后直接暴露。</div>
-                <div class="finding-suggestion">💡 修复建议：在该入口或 service 层明确保留并测试业务约束：仅在邮编校验通过且命中限频规则后返回文件；同时对返回范围做最小化控制（例如仅返回当前校验单号允许查看的 POD/POP，退单需单独判定）。建议补充显式断言/注释，或在 `findSignedPodDtos` 增加参数表达“是否允许返回 returnTrackingNo 文件”。</div>
+                <div class="finding-desc">新增 `StrUtil.isNotBlank(zipCode)` 判断后，`zipCode` 为空时将跳过收件邮编校验并继续返回 POD/轨迹数据。这会改变原有“必须校验邮编”的接口语义；如果上层接口依赖该方法做“验证邮编后返回 POD”，现在传空字符串即可绕过校验，导致行为与既有契约不一致。</div>
+                <div class="finding-suggestion">💡 修复建议：区分 `null/blank` 与“校验通过”两种语义。若该接口按业务要求必须校验邮编，应在空值时直接抛出参数错误，例如 `if (StrUtil.isBlank(zipCode)) { throw new RRException(&quot;recipient zip code is required&quot;); }`，再执行规范化比较。若确需兼容空邮编，应同步修改接口契约与调用方校验逻辑。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/service/impl/pod/BasePodService.java:111-120</code>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/service/impl/EventServiceImpl.java:846-847</code>
                 </div>
-                <div class="finding-desc">本次修改删除了阿里云上传分支，仅保留 Azure 上传逻辑；当 `ossProperties.getUploadAzure()` 为 `false` 时，方法将直接返回原始 `downloadUrl/downloadUrlBak`（URL 场景返回源地址，base64 场景返回空串），不会再落库/落对象存储，导致 POD 文件未持久化或返回不可用地址。这与原实现支持 `uploadAli=true &amp;&amp; uploadAzure=false` 的配置行为不兼容，属于功能回退。</div>
-                <div class="finding-suggestion">💡 修复建议：保留原有阿里云上传兜底逻辑，或在进入该方法前显式校验至少开启一种上传方式。例如恢复 `uploadAli` 分支，或在两者都关闭时抛出明确异常：`if (!Boolean.TRUE.equals(ossProperties.getUploadAzure()) &amp;&amp; !Boolean.TRUE.equals(ossProperties.getUploadAli())) { throw new IllegalStateException(&quot;No POD storage backend enabled&quot;); }`。同时补充 `uploadAli=true/uploadAzure=false`、`两者都为 false` 的回归测试。</div>
+                <div class="finding-desc">**原因：** 这里将收件人邮编校验从必填且必须匹配，改成了“仅当 `zipCode` 非空时才校验”。也就是说，调用方只要传空邮编/空白邮编，就可以直接绕过原有的二次校验并继续查询轨迹。
+
+```java
+if (StrUtil.isNotBlank(zipCode)
+        &amp;&amp; !removeNonAlphanumeric(zipCode).equalsIgnoreCase(removeNonAlphanumeric(labelSummary.getRecipientZipCode()))) {
+    throw new RRException(&quot;Incorrect recipient zip code&quot;);
+}
+```
+
+**影响：** 若该方法被 Web/开放查询入口调用，攻击者只需知道或枚举 `trackingNo`，即可在不提供邮编证明因子的情况下获取包裹轨迹信息，导致未授权查询与物流数据泄露。由于本分片未包含对应 Controller，无法精确断言 HTTP 路径，但从方法语义看这是一次实际的访问控制削弱。</div>
+                <div class="finding-suggestion">💡 修复建议：恢复邮编作为必填校验因子，至少对匿名/低信任查询场景强制要求 `zipCode` 非空且与面单收件邮编匹配；若确需兼容内部调用，应拆分内部接口与外部接口，避免复用同一宽松逻辑。例如：
+```java
+if (StrUtil.isBlank(zipCode)) {
+    throw new RRException(&quot;recipient zip code is required&quot;);
+}
+if (!removeNonAlphanumeric(zipCode)
+        .equalsIgnoreCase(removeNonAlphanumeric(labelSummary.getRecipientZipCode()))) {
+    throw new RRException(&quot;Incorrect recipient zip code&quot;);
+}
+```
+并为内部可信调用单独提供受鉴权保护的方法。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/utils/TrkBlobSasUtil.java:48-147</code>
+                    <code class="finding-loc">tracking-service/src/main/java/com/miq/trackingservice/service/impl/LabelFileServiceImpl.java:239-245</code>
                 </div>
-                <div class="finding-desc">该工具类通过多组 `static volatile` 字段保存彼此关联的配置（`utilMap`、`domainMap`、`defaultContainerName`、`historyDomains`、以及同步回写的 `blobUtil`/`blobDomain`），`initMulti` 中逐个赋值。配置刷新期间，其他线程可能读到“半初始化”状态，例如新 `domainMap` 已生效但 `blobUtil` 仍是旧值，导致同一请求内域名解析与实际访问账号不一致，出现错误路由或读取失败。该问题符合共享变量修改的并发风险。</div>
-                <div class="finding-suggestion">💡 修复建议：将这些关联配置封装为一个不可变配置对象，例如 `static volatile BlobConfigHolder holder;`，在 `initMulti` 中一次性构造完整对象后再原子替换：`holder = new BlobConfigHolder(utilMap, domainMap, defaultContainer, historyDomains, ...);`。读取侧统一从同一个 holder 取值，避免跨字段读取到不一致快照。</div>
+                <div class="finding-desc">新增的 `findSignedPodDtos` 会对 DAO 返回的每个文件 URL 无条件签发 SAS 链接：`dto.setFileUrl(TrkBlobSasUtil.toSasUrl(dto.getFileUrl(), forWeb))`。该方法本身未体现任何资源归属、租户范围或文件类型校验，且方法名表明其返回的是已签名可访问的 POD 文件地址。若上游仅按 trackingNumbers 传参而缺少严格鉴权/归属过滤，调用方可借此批量获得可直接访问的临时文件链接，放大未授权文件下载风险。</div>
+                <div class="finding-suggestion">💡 修复建议：在该方法内增加最小化防护：对 `trackingNumbers` 对应的标签/组织归属进行校验，仅为当前调用主体可访问的数据签发 SAS；同时限制仅对 POD/SIGNATURE 等允许类型签名，并对返回数量设置上限。若鉴权必须在上层完成，应在方法注释和接口契约中明确前置条件，并增加断言校验。</div>
             </div>
-            <p class="more-note">... 还有 2 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 5 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
