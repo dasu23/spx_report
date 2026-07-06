@@ -1230,7 +1230,7 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: ubi-api | 生成时间: 2026-07-06 23:03:42</p>
+      <p class="hero-meta">服务: ubi-api | 生成时间: 2026-07-07 00:09:28</p>
       <div class="top-criticals" id="top-criticals">
         <h3>Top 3 Critical 问题</h3>
         <ul id="top-criticals-list"></ul>
@@ -1252,83 +1252,80 @@
     <div id="panel-general" class="report-panel is-active" role="tabpanel" aria-labelledby="tab-general">
     <section class="summary">
       <h2>总体结论</h2>
-      <div id="summary-text" class="summary-body summary-preformatted"><div class="summary-condensed"><p>合并 <strong>12</strong> 个分片审查，共 <strong>7</strong> 条发现 （Critical 0 · Major 6 · Minor 1 · Info 0）。详细列表见下方「按文件的审查发现」；接口与数据权限维度见「权限与业务规则」页签。</p><details class="summary-raw-details"><summary>展开各分片原文结论</summary><pre class="summary-raw-pre">**分片 1**
+      <div id="summary-text" class="summary-body summary-preformatted"><div class="summary-condensed"><p>合并 <strong>12</strong> 个分片审查，共 <strong>9</strong> 条发现 （Critical 1 · Major 5 · Minor 3 · Info 0）。详细列表见下方「按文件的审查发现」；接口与数据权限维度见「权限与业务规则」页签。</p><details class="summary-raw-details"><summary>展开各分片原文结论</summary><pre class="summary-raw-pre">**分片 1**
 
-本分片未发现 SQL 注入、硬编码密钥或明显越权逻辑；`SsoTicketStore.redeem()` 的一次性删除实现对并发兑换是安全的。主要风险在于将可兑换登录态的票据放入 URL 查询参数，以及 SSO 关键链路对异常统一吞掉，削弱凭证保护与安全审计能力。
+本分片新增 SSO 服务层整体未见 SQL 注入、硬编码密钥或明显并发竞态；`SsoTicketStore.redeem()` 使用 remove 实现一次性兑换，线程安全性基本可接受。主要安全问题是成功登录后将可兑换登录态的 ticket 放入 URL 查询参数，存在凭证经 Referer/日志泄露后被重放的风险；另外两个网关方法对异常统一吞掉，削弱了认证链路安全故障的可观测性。
 
 HTTP 入口清单（方法 + 路径）
-- GET /auth/sso/exchange：本次可见实现为 `SsoLoginService.exchange()`，未见新增角色/数据范围逻辑，按语义属于公开的一次性票据兑换接口；本分片未看到 Controller 注解细节与完整鉴权配置，无法断言权限实现是否被误放行，但服务层本身未新增越权读取/写入逻辑。
-- SsoAuthController.redirectUrl()：实现未在本分片 diff 内，无法断言权限。
-- SsoAuthController.callback()：实现未在本分片 diff 内，无法断言权限。
+- GET /auth/sso/exchange：本分片可关联到 `SsoLoginService.exchange()`，实现逻辑本身为一次性兑换，无新增权限放大迹象；但其安全性依赖 ticket 保密性，而当前同分片 `handleCallback()` 将 ticket 放入 URL 查询串，已在上文作为安全风险指出。
+- callback 对应入口：全局信息提示其控制器入口为 `SsoAuthController.callback()`，但控制器实现未在本 diff 片段中，无法从本分片直接断言其注解路径与权限配置。
+- redirectUrl 对应入口：全局信息提示其控制器入口为 `SsoAuthController.redirectUrl()`，但控制器实现未在本 diff 片段中，无法从本分片直接断言其注解路径与权限配置。
 
 **分片 2**
 
-本分片整体实现较完整，`SsoTicketStore.redeem()` 的一次性兑换处理也具备原子性。HTTP 相关入口在本分片可见的 Service 侧未发现明确的权限放行问题；需重点关注 SSO 异常分类不足和邮箱大小写导致的登录失败边界。
+本分片整体实现清晰，`SsoTicketStore.redeem()` 的一次性兑换处理也具备较好的原子性。HTTP 相关入口在本分片未见新增权限放行问题；但 SSO 异常结果折叠过度、以及邮箱大小写匹配问题，可能分别影响故障可观测性和实际登录成功率。
 
 **分片 3**
 
-本分片仅包含新增测试代码 diff，未见新增/修改的生产安全逻辑暴露；基于当前 diff 未发现可直接定位到新增行的安全问题。HTTP 入口清单：本分片 diff 中未出现可识别的 @GetMapping/@PostMapping/@RequestMapping 等新增或修改映射，无法形成入口级权限结论。
+本分片仅包含新增测试代码 diff，未见新增/修改的生产代码安全缺陷；测试中虽出现 token/accessToken/authToken 等字面量，但均为测试桩数据，不构成真实凭证泄露或硬编码密钥问题。
 
 **分片 4**
 
-本分片仅包含新增的 SSO 相关测试代码，覆盖了成功、失败、过期等关键分支，未发现基于 diff 新增行可直接定位的功能性或类型安全问题。整体看测试设计较完整，未见需要阻塞合并的常规缺陷。
+本分片仅包含新增测试代码，覆盖了 SSO 网关、登录服务和一次性 ticket 存储的主要成功/失败路径，未发现可直接定位到新增行的功能性问题。整体看测试设计较完整，未见明显的边界条件、类型安全或并发缺陷。
 
 **分片 5**
 
-本分片仅包含新增的 RestClient 与 SSO 配置属性定义，未发现基于当前 diff 可直接确认的安全问题；未出现硬编码密码/密钥、SQL 拼接、敏感日志、放宽鉴权配置或明显并发安全缺陷。
+本分片仅包含 RestClientConfig 与 SsoProperties 两个新增配置类；基于当前 diff，未发现新增/修改行中的明确安全问题。配置项均为外部化属性，未出现硬编码密码/密钥、敏感日志、SQL 拼接或明显并发安全缺陷。
 
-HTTP 入口清单：本分片提供的 diff 中未出现可识别的 @GetMapping/@PostMapping/@RequestMapping 路径映射，因此无可列出的 HTTP 入口。
+HTTP 入口清单（方法 + 路径）：本分片未出现 @GetMapping/@PostMapping/@PutMapping/@DeleteMapping/@PatchMapping 或带路径的 @RequestMapping，暂无可列出的 HTTP 入口。
 
 **分片 6**
 
-本分片展示的新增配置代码整体较稳健，未在可见 diff 中发现需要报告的问题。RestClient 超时与 SSO 配置项定义清晰，未见明显的边界条件、异常处理或类型安全缺陷。
+本分片展示的新增配置代码整体较稳健：RestClient 超时已显式设置，SSO 配置项也提供了合理默认值与注释说明。基于当前可见 diff，未发现需要报告的新增/修改行问题。
 
 **分片 7**
 
-本分片新增 SSO 公开认证入口，主要风险集中在认证流程完整性不足：公开回调与令牌交换接口在 diff 中未体现 state/nonce/一次性消费等抗伪造与抗重放控制，且交换凭证通过 GET 查询串传输，扩大了敏感令牌泄露面；另有一个公开跳转地址获取接口缺少目标 URL 白名单校验。
+发现 3 个安全问题，集中在新增 SSO 公开认证入口：`/auth/sso/callback` 与 `/auth/sso/exchange` 作为 `@Public` 接口直接处理认证令牌，但本分片控制器代码未体现 state/nonce、一次性消费、会话绑定等关键防护；同时回调后的重定向目标缺少可见的白名单校验，存在开放重定向风险。
 
 HTTP 入口清单（方法 + 路径）
-- GET /auth/sso/callback：存在新增权限与访问控制风险；入口被 `@Public` 放行，当前 diff 未见与登录发起会话绑定的 state/nonce 校验，可能导致 SSO 登录 CSRF/会话混淆。
-- GET /auth/sso/exchange：存在新增权限与访问控制风险；入口被 `@Public` 放行，且通过 URL 查询参数接收敏感 token，当前 diff 未见一次性消费/来源绑定控制。
-- GET /auth/sso/config：无新增权限风险；该接口仅返回 SSO 是否启用的布尔配置，未暴露敏感数据，且本分片未见鉴权削弱导致越权读取业务数据。
-- GET /auth/sso/redirect-url：存在新增安全风险；入口被 `@Public` 放行并返回上游提供的跳转地址，当前 diff 未见白名单校验，可能导致开放重定向。
+- GET /auth/sso/callback：存在新增权限与访问控制风险；公开认证回调入口直接接收 `authToken`，本分片未体现防伪造/防重放绑定校验。
+- GET /auth/sso/exchange：存在新增权限与访问控制风险；公开令牌交换入口直接返回 `LoginData`，本分片未体现单次消费、时效和会话绑定控制。
+- GET /auth/sso/config：无新增权限风险；仅返回启用状态布尔值，未见敏感数据输出。
+- GET /auth/sso/redirect-url：本分片实现未体现鉴权削弱，当前仅见公开获取 SSO 跳转地址；未直接暴露登录态数据，但作为公开认证辅助入口，建议在后续分片继续核查下游 `SsoGateway` 是否限制目标地址来源。
 
 **分片 8**
 
-本分片新增的 SSO 控制器实现整体较完整，公开接口与启停校验逻辑清晰；基于当前提供的 diff，未发现必须报告的新增/修改行问题。
+本分片新增的 SSO 控制器整体结构清晰，未见明显编译或异常处理硬伤。主要问题是 SSO 可用性判断在不同接口间不一致，容易造成前后端行为分裂。
 
 **分片 9**
 
-本分片仅包含两个新增 DTO（SsoConfigData、SsoRedirectUrlData），未引入认证、鉴权、外部调用、日志、并发共享状态或敏感数据处理逻辑；基于当前 diff，未发现可直接定位到新增/修改行的安全问题。
-
-HTTP 入口清单（方法 + 路径）
-- 本分片 diff 未出现任何可识别的 @GetMapping/@PostMapping/@PutMapping/@DeleteMapping/@PatchMapping 或带路径的 @RequestMapping，因此无可列出的 HTTP 入口。
+本分片仅新增两个简单 DTO（`SsoConfigData`、`SsoRedirectUrlData`），未包含控制器、服务实现、配置或鉴权逻辑变更；基于当前 diff，未发现可直接定位到新增/修改行的安全问题。HTTP 入口清单：本分片未出现可识别的 `@GetMapping/@PostMapping/@RequestMapping` 等入口，无需列出接口路径。
 
 **分片 10**
 
-本分片仅包含两个新增 DTO，结构简单，未见空指针、异常处理、类型安全或业务逻辑方面的明显问题。当前变更对核心功能风险较低。
+本分片仅包含两个新增 DTO，结构简单，未见新增/修改行上的边界条件、异常处理、类型安全或业务逻辑问题。当前变更风险较低。
 
 **分片 11**
 
-本分片发现 2 个新增安全问题：一是登录页基于 URL `token` 的自动兑换缺少 state/上下文校验，存在登录 CSRF / 会话置换风险；二是 Vite 开发代理硬编码外部 UAT SSO 域名，扩大了开发环境对外部认证服务的暴露面。
+本分片未发现新增代码级鉴权绕过或并发安全问题，但发现将真实 UAT SSO 接入地址写入仓库样例配置，属于敏感基础设施信息暴露风险，应立即脱敏处理。
 
 HTTP 入口清单（方法 + 路径）
-- GET /login：存在新增安全风险。前端会自动消费 `token` 查询参数并完成登录，当前 diff 未见任何 state/nonce 绑定校验，存在登录 CSRF 风险。
-- GET /api/v1/auth/sso/config：实现未在本分片/diff 内，无法断言权限；当前仅测试与前端调用变更，无法从本分片确认是否存在新增权限风险。
-- GET /api/v1/auth/sso/redirect-url：实现未在本分片/diff 内，无法断言权限；当前仅测试与前端调用变更，无法从本分片确认是否存在新增权限风险。
-- GET /api/v1/auth/sso/exchange：实现未在本分片/diff 内，无法断言权限；但其被 `/login` 自动调用，前端侧存在上述 token 自动兑换风险。
+- GET /auth/sso/config：实现未在本分片 diff 内，无法断言权限；从新增前端调用与测试看其设计为公开 SSO 配置下发接口，本分片未见新增权限削弱证据。
+- GET /auth/sso/redirect-url：实现未在本分片 diff 内，无法断言权限；从新增前端调用与测试看其设计为公开获取跳转地址接口，本分片未见新增权限削弱证据。
+- GET /auth/sso/exchange：实现未在本分片 diff 内，无法断言权限；从新增前端调用与测试看其设计为公开取件码兑换接口，本分片未见新增权限削弱证据。
+- GET /auth/sso/callback：实现未在本分片 diff 内，无法断言权限；从新增测试看其设计为公开 SSO 回调接口，本分片未见新增权限削弱证据。
 
 **分片 12**
 
-本分片整体实现方向正确，前后端测试覆盖也比较完整。需要优先修复登录页 SSO 回跳 effect 的依赖问题，否则同一页面实例下的二次回跳会失效；另外建议清理无效且耦合 UAT 的 Vite 代理配置。</pre></details></div></div>
+本分片整体实现方向正确，测试覆盖也比较完整；但登录页初始化存在一个 SSO 回跳与全局 401 处理的状态竞态，另外 Vite 新增代理配置与实际请求路径不一致，建议在合并前修正。</pre></details></div></div>
       <div class="filter-row">
         <span class="filter-label">点击筛选:</span>
         <div class="chips">
-          <span class="chip critical filter-chip" data-filter="critical" onclick="filterBySeverity(this)">Critical: 0</span>
-          <span class="chip major filter-chip" data-filter="major" onclick="filterBySeverity(this)">Major: 6</span>
-          <span class="chip minor filter-chip" data-filter="minor" onclick="filterBySeverity(this)">Minor: 1</span>
+          <span class="chip critical filter-chip" data-filter="critical" onclick="filterBySeverity(this)">Critical: 1</span>
+          <span class="chip major filter-chip" data-filter="major" onclick="filterBySeverity(this)">Major: 5</span>
+          <span class="chip minor filter-chip" data-filter="minor" onclick="filterBySeverity(this)">Minor: 3</span>
           <span class="chip info filter-chip" data-filter="info" onclick="filterBySeverity(this)">Info: 0</span>
-          <span class="chip">Total: 7</span>
+          <span class="chip">Total: 9</span>
         </div>
       </div>
     </section>
@@ -1376,7 +1373,7 @@ HTTP 入口清单（方法 + 路径）
       </div>
     </div>
 
-    <h2 class="section-title subsection-title">按文件的审查发现</h2><div class="findings-list-wrap"><details class="file-group findings-file-group" open="open" id="fg-cdf1dbe8504d" data-file-path="backend/server/src/main/java/com/ubi/server/controller/SsoAuthController.java" data-short-name="SsoAuthController.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/server/src/main/java/com/ubi/server/controller/SsoAuthController.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">2 Major</span></span><span class="file-group-count">2 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L29-40</span><span class="finding-cat">权限与访问控制</span></div><div class="finding-desc">**原因：** 该登录回调入口被 `@Public` 放行为匿名可访问，并直接将外部请求参数 `authToken` 交给 `ssoLoginService.handleCallback(authToken)` 处理后执行 `response.sendRedirect(redirectUrl)`，但在本分片 diff 中看不到任何与浏览器会话绑定的 `state`/nonce/一次性挑战值校验，也看不到对回调来源上下文的校验。
+    <h2 class="section-title subsection-title">按文件的审查发现</h2><div class="findings-list-wrap"><details class="file-group findings-file-group" open="open" id="fg-cdf1dbe8504d" data-file-path="backend/server/src/main/java/com/ubi/server/controller/SsoAuthController.java" data-short-name="SsoAuthController.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/server/src/main/java/com/ubi/server/controller/SsoAuthController.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">2 Major</span> <span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">3 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L29-33</span><span class="finding-cat">安全风险</span></div><div class="finding-desc">`/auth/sso/callback` 通过 `response.sendRedirect(redirectUrl)` 直接跳转到由 `ssoLoginService.handleCallback(authToken)` 返回的 URL，当前控制器层未见对跳转目标做白名单、同源或协议限制校验。若下游返回值可被外部输入影响，存在开放重定向风险，可被用于钓鱼、令牌泄露或绕过前端信任边界。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>对 `redirectUrl` 做严格校验，仅允许跳转到预配置白名单域名/固定前端根路径；拒绝非 HTTPS、协议相对 URL、`javascript:` 等危险 scheme。建议在控制器层增加显式校验后再 `sendRedirect`。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>构造使 `handleCallback` 返回外部域名、协议相对地址或 `javascript:` scheme 的场景，请求 `/auth/sso/callback` 应被拒绝而非重定向。</p></div></div></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L29-40</span><span class="finding-cat">权限与访问控制</span></div><div class="finding-desc">**原因：** 该 SSO 回调入口被显式标记为 `@Public`，且当前控制器代码未见任何来源校验、一次性票据校验、state/nonce 关联校验或回调发起方绑定逻辑；接口直接接收外部提供的 `authToken` 并交给登录流程处理，然后执行重定向。
 
 ```java
 @Public
@@ -1388,28 +1385,14 @@ public void callback(@RequestParam(&quot;authToken&quot;) String authToken, Http
 }
 ```
 
-**影响：** 若服务层未额外做严格校验，攻击者可构造或复用他人的 `authToken` 直接调用该公开回调接口，触发受害者浏览器完成错误账号登录或登录态绑定，形成典型 SSO 登录 CSRF / 会话混淆风险。由于这是认证入口，一旦绑定错误身份，后续所有受保护资源访问都可能在错误主体下进行。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>在回调链路中增加并强制校验与发起登录请求时绑定的 `state`（必要时同时校验 nonce、ticket 一次性使用、过期时间、User-Agent/会话绑定）。回调接口至少应显式接收并校验 `state`，校验失败时拒绝登录并不要重定向到成功页。例如：
-
-```java
-@Public
-@GetMapping(&quot;/callback&quot;)
-public void callback(@RequestParam(&quot;authToken&quot;) String authToken,
-                     @RequestParam(&quot;state&quot;) String state,
-                     HttpServletResponse response) throws IOException {
-    requireEnabled();
-    String redirectUrl = ssoLoginService.handleCallback(authToken, state);
-    response.sendRedirect(redirectUrl);
-}
-```
-
-并在 `SsoLoginService` 中校验 `state` 与服务端保存的会话挑战值完全一致且仅可使用一次。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>1. 浏览器 A 发起正常 SSO 登录，记录其 state；2. 浏览器 B 或未登录浏览器直接请求 `/auth/sso/callback?authToken=&lt;他人token&gt;&amp;state=&lt;缺失或伪造值&gt;`；3. 期望服务端拒绝处理，不创建登录态、不跳转到成功页；4. 验证同一 state/token 重放时也被拒绝。</p></div></div></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L53-59</span><span class="finding-cat">安全风险</span></div><div class="finding-desc">公开接口 `/auth/sso/redirect-url` 从中心 SSO 拉取 `redirectUrl` 后“原样返回给前端”，但当前控制器层未见任何对返回 URL 的域名白名单、协议限制或目标校验。若上游 SSO 配置错误、被污染，或 `ssoGateway.fetchLoginRedirectUrl()` 可被间接操控，前端将获得并跳转到任意外部地址，形成开放重定向/钓鱼跳转风险。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>在返回前校验 `redirectUrl`：仅允许 `https`，并限制 host 必须属于受信任 SSO 域名白名单；校验失败时拒绝返回。建议在控制器或服务层增加统一 URL 校验方法。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>模拟 `ssoGateway.fetchLoginRedirectUrl()` 返回 `http://evil.example/phish`、`javascript:alert(1)`、非白名单域名 URL，接口应拒绝并返回错误；对白名单 `https` 域名应正常通过。</p></div></div></details></div></div></details><details class="file-group findings-file-group" id="fg-4c371c6d8905" data-file-path="backend/server/src/main/java/com/ubi/server/service/SsoGateway.java" data-short-name="SsoGateway.java" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">backend/server/src/main/java/com/ubi/server/service/SsoGateway.java</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L64-103</span><span class="finding-cat">异常处理</span></div><div class="finding-desc">`fetchLoginRedirectUrl()` 同样在 `catch (Exception e)` 中仅记录 warn 并返回 `Optional.empty()`。该接口负责生成一次性 SSO 登录跳转地址，若上游异常被完全吞掉，调用方无法区分是配置错误、远端故障还是临时网络问题，不利于发现认证入口被阻断或被恶意干扰。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>按异常类型细分处理并输出可观测的错误上下文（不含敏感数据），例如区分 URI 非法、HTTP 非 2xx、超时、响应体格式错误；同时增加失败指标上报。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>模拟 login-url 接口 DNS 失败、连接超时、返回非预期 JSON，验证系统能输出可区分的错误类型并触发相应监控。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-d2a1566c6a18" data-file-path="backend/server/src/main/java/com/ubi/server/service/SsoLoginService.java" data-short-name="SsoLoginService.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/server/src/main/java/com/ubi/server/service/SsoLoginService.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">2 Major</span></span><span class="file-group-count">2 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L47-49</span><span class="finding-cat">业务逻辑</span></div><div class="finding-desc">本地用户查询直接按 `email.trim()` 与 `username` 精确匹配，但未做大小写归一化。SSO 返回的邮箱大小写与本地账号保存格式不一致时（如 `Alice@corp.com` vs `alice@corp.com`），会被误判为账号不存在，导致合法用户无法通过 SSO 登录。邮箱作为身份标识通常应按大小写不敏感处理。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>在查询前统一归一化邮箱/用户名，例如转为小写后再匹配，并确保本地账号保存策略一致。示例：`String username = email.trim().toLowerCase(Locale.ROOT);`；若数据库已存在混合大小写数据，可改为大小写不敏感查询或增加规范化字段。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>补充测试：本地用户 `username=alice@example.com`，SSO 返回 `Alice@Example.com`；期望仍能成功签发 ticket，而不是返回 `account_not_found`。</p></div></div></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L57</span><span class="finding-cat">安全风险</span></div><div class="finding-desc">将一次性登录票据通过 URL 查询参数 `?token=` 拼接到前端跳转地址中，票据会暴露在浏览器地址栏、历史记录、代理/网关访问日志以及 Referer 中。虽然这里传递的是 ticket 而非最终 JWT，但 `exchange()` 可直接将其兑换为完整登录态，因此该票据本质上是短期有效的认证凭证，泄露后可被他人抢先兑换登录。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>不要通过查询参数传递可兑换登录态的票据。改为：1）使用 URL fragment（`#token=`）仅在前端读取，避免进入大多数服务端日志与 Referer；或 2）在后端回调时通过 `Set-Cookie` 下发 `HttpOnly + Secure + SameSite` 的一次性票据，再由前端调用兑换接口；同时确保兑换接口在成功后立即失效并限制极短 TTL。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>模拟 SSO 回调成功后，检查浏览器地址栏、反向代理访问日志和后续跳转请求 Referer 是否包含 ticket；验证拿到该 ticket 的第二个客户端能否在 TTL 内调用兑换接口获取登录态。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-6ece8d8657c0" data-file-path="frontend/apps/dashboard/src/pages/login/login-page.tsx" data-short-name="login-page.tsx" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">frontend/apps/dashboard/src/pages/login/login-page.tsx</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L31-48</span><span class="finding-cat">状态管理</span></div><div class="finding-desc">SSO 兑换逻辑放在仅执行一次的 `useEffect([])` 中，并且显式忽略了 `searchParams`、`navigate`、`loginWithToken`、`setSearchParams` 依赖。当前组件在同一路由实例内如果再次进入 `/login?token=...` 或 `/login?ssoError=...`（例如从已打开的登录页发起第二次 SSO 回跳，路由只更新 query，不卸载组件），该 effect 不会重新执行，导致新 ticket 不会被兑换、错误参数也不会展示。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>将 effect 依赖改为基于当前 query 参数触发，而不是固定空数组，例如先提取 `const token = searchParams.get(&#x27;token&#x27;)`、`const ssoError = searchParams.get(&#x27;ssoError&#x27;)`，再使用 `useEffect(..., [token, ssoError, navigate, loginWithToken, setSearchParams])`。同时在处理完成后仅移除已消费的参数，确保同一路由重复回跳时仍能生效。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>在不卸载 LoginPage 的情况下，先渲染 `/login`，随后通过路由更新到 `/login?token=t1`，断言会调用 `ssoExchange` 并跳转；再更新到 `/login?ssoError=account_not_found`，断言错误文案会刷新显示。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-84f3ff5c2310" data-file-path="frontend/apps/dashboard/vite.config.ts" data-short-name="vite.config.ts" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">frontend/apps/dashboard/vite.config.ts</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L18-21</span><span class="finding-cat">配置变更</span></div><div class="finding-desc">新增开发代理将 `/api/sso` 直接转发到外部 UAT 域名 `https://op-uat.nimbusgroup.us`。这会把本地开发环境对该路径的请求直接发送到真实外部 SSO 服务，扩大测试/开发环境对生产外部依赖的访问面；若前端后续误将敏感调试请求落到该前缀，可能造成凭证、票据或用户信息被发送到非本地受控环境。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>移除硬编码的外部 UAT 代理，改为通过环境变量显式配置且默认关闭；同时限制仅代理本次确需的精确路径，并在 README/示例环境文件中标注仅限受控测试环境启用。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>在未设置专用环境变量时启动前端开发服务，验证 `/api/sso/*` 不会被代理到外部域名；仅在显式开启时才允许转发到指定测试地址。}],</p></div></div></details></div></div></details></div>
+**影响：** 若下游 `handleCallback` 未严格校验该 `authToken` 的真实性、时效性及与当前登录会话的绑定关系，攻击者可直接构造请求命中公开回调入口，造成登录流程被伪造、会话混淆或未授权登录。由于该入口是认证边界的一部分，公开暴露但缺少可见的防重放/防伪造校验属于高风险认证面扩大。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>在回调入口或 `SsoLoginService.handleCallback(...)` 中强制校验 SSO 回调上下文：1）要求并校验 `state`/nonce；2）将 `authToken` 与服务端发起登录时保存的一次性票据绑定；3）校验过期时间与单次使用；4）校验回调来源仅接受受信 SSO 服务端返回。示例：在回调参数中增加 `state`，并在服务端校验 `ticketStore.consume(state, authToken)` 成功后才继续登录。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>新增安全测试：未携带或伪造 `state` 的 `/auth/sso/callback` 请求应被拒绝；重复使用同一 `authToken`/state 应失败；跨浏览器或跨会话复用同一回调参数应失败。</p></div></div></details></div><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L44-47</span><span class="finding-cat">业务逻辑</span></div><div class="finding-desc">`/auth/sso/config` 用 `enabled &amp;&amp; hasText(loginUrl)` 判断前端是否展示 SSO，但其余实际可用接口（`/callback`、`/exchange`、`/redirect-url`）的开关校验只检查 `ssoProperties.isEnabled()`。当配置为 enabled=true 但缺少 `loginUrl` 时，`config()` 会返回不可用，而其他接口仍会继续执行，导致前后端对 SSO 可用性的判断不一致。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>统一可用性判定逻辑，抽出一个公共方法同时校验 `enabled` 和必要配置项，例如：`private boolean isSsoAvailable() { return ssoProperties.isEnabled() &amp;&amp; StringUtils.hasText(ssoProperties.getLoginUrl()); }`，并让 `config()` 与 `requireEnabled()` 共用该逻辑。若 `callback/exchange/redirect-url` 还依赖其他配置，也应一并纳入校验。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>配置 `sso.enabled=true` 且 `sso.loginUrl` 为空：验证 `/auth/sso/config` 与 `/auth/sso/redirect-url`、`/auth/sso/callback`、`/auth/sso/exchange` 的行为保持一致，要么都不可用，要么都返回明确的配置错误。</p></div></div></details></div></div></details><details class="file-group findings-file-group" id="fg-4c371c6d8905" data-file-path="backend/server/src/main/java/com/ubi/server/service/SsoGateway.java" data-short-name="SsoGateway.java" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">backend/server/src/main/java/com/ubi/server/service/SsoGateway.java</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L64-102</span><span class="finding-cat">异常处理</span></div><div class="finding-desc">`fetchLoginRedirectUrl()` 同样捕获宽泛 `Exception` 后仅记录 warn 并返回 `Optional.empty()`。对于登录入口依赖的外部认证服务，这会把安全配置错误、上游异常响应、网络故障统一吞掉，增加认证故障排查难度，也可能延迟发现 SSO 服务被劫持/异常。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>按异常类型分别处理并输出可监控的错误码/指标；对解析失败、证书异常、重定向地址非法等情况增加显式校验和告警，避免仅返回空结果。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>模拟上游 login-url 接口返回非法 URL、证书异常、超时等情况，确认日志与监控可区分具体失败原因。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-d2a1566c6a18" data-file-path="backend/server/src/main/java/com/ubi/server/service/SsoLoginService.java" data-short-name="SsoLoginService.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/server/src/main/java/com/ubi/server/service/SsoLoginService.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">2 Major</span></span><span class="file-group-count">2 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L47-50</span><span class="finding-cat">数据一致性</span></div><div class="finding-desc">这里直接按 `username=email.trim()` 精确查询本地用户，但未对邮箱大小写做归一化。SSO 返回的邮箱大小写与本地账号保存格式不一致时（如 `User@Corp.com` vs `user@corp.com`），会被误判为账号不存在，导致合法用户无法通过 SSO 登录。邮箱作为身份标识通常应按大小写不敏感处理。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>在查询前统一做规范化，例如 `String username = email.trim().toLowerCase(Locale.ROOT);`，并确保本地用户名存储或查询条件也采用同样规则。若历史数据存在混合大小写，建议改为数据库层大小写不敏感查询，或增加唯一规范字段专供登录匹配。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>补充测试：本地用户 `username=user@corp.com`，SSO 返回 `User@Corp.com`；以及反向场景。验证两种大小写组合都能成功登录。</p></div></div></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L59</span><span class="finding-cat">安全风险</span></div><div class="finding-desc">登录成功后将一次性取件码直接拼接到 URL 查询串 `?token=` 中返回。即使这里传递的是 ticket 而非最终 JWT，查询参数仍会通过浏览器历史、Referer、代理/网关日志、前端埋点等链路泄露；而 `exchange()` 仅凭该 ticket 即可换取完整 `LoginData`，因此泄露后可被第三方重放完成登录，形成会话劫持风险。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>避免通过 URL query 传递可直接兑换登录态的凭证。优先改为：1）后端回调时设置短时、HttpOnly、Secure、SameSite 的一次性 cookie；或 2）将 ticket 放入 URL fragment（`#token=`）并确保前端仅在本地读取后立即清除；同时为 `exchange` 增加与浏览器会话绑定（如 nonce/state/session 绑定）以降低泄露后的可利用性。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>验证 SSO 成功跳转后，浏览器地址栏、Referer、访问日志中不会出现可兑换登录态的 ticket；尝试从另一浏览器/会话使用截获的 ticket 调用兑换接口，应无法成功兑换。},{</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-6ffc4e468cd0" data-file-path="backend/server/ubi-server-example.yml" data-short-name="ubi-server-example.yml" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">backend/server/ubi-server-example.yml</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">1 Critical</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L72-76</span><span class="finding-cat">安全风险</span></div><div class="finding-desc">示例配置中新增了可直接访问的外部 SSO user-info 地址，且包含固定的 `authToken` 路径模板。该文件属于仓库内配置样例，结合同一段配置中的真实 UAT 域名，容易被误复制到实际环境；一旦后续有人将真实 token 直接拼入该 URL 进行排障、截图或提交，极易形成凭证泄露面。更重要的是，本次变更同时在文档中公开了真实 UAT SSO 接入域名，扩大了对外暴露面。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>将示例配置中的真实外部 SSO 域名替换为脱敏占位值（如 `https://&lt;sso-domain&gt;/api/sso/oauth/get/{authToken}`），并在注释中明确禁止提交任何真实 token、state、nonce 或环境专属地址到仓库。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>检查示例配置与文档产物中不再出现真实环境域名、token 占位外的任何可用凭证或环境专属接入地址。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-6ece8d8657c0" data-file-path="frontend/apps/dashboard/src/pages/login/login-page.tsx" data-short-name="login-page.tsx" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">frontend/apps/dashboard/src/pages/login/login-page.tsx</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L31-47</span><span class="finding-cat">状态管理</span></div><div class="finding-desc">页面初始化时会同时触发 `ssoConfig()` 和基于 URL `token` 的 `ssoExchange()`。当登录页是从已登录状态进入，且本地已有旧 token 时，`ssoConfig()` 请求会先带着旧 `Authorization` 发出；若后端因此返回 401，现有全局 401 处理通常会清空登录态，而随后 `ssoExchange()` 才写入新的 SSO 登录态。这样会造成一次不必要的登出/重登竞态，表现为 SSO 回跳后偶发闪退、状态被清空或跳转异常。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>在处理 `token`/`ssoError` 的 effect 中优先完成兑换，再决定是否拉取 `ssoConfig`；或者当 URL 中存在 `token`/`ssoError` 时跳过 `ssoConfig()` 请求。示例：`useEffect(() =&gt; { if (searchParams.get(&#x27;token&#x27;) || searchParams.get(&#x27;ssoError&#x27;)) return; authApi.ssoConfig()... }, [searchParams]);`。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>在 localStorage 预置一个已过期 `ubi_token`，然后访问 `/login?token=valid-ticket`，验证不会先触发全局 401 登出逻辑，最终稳定进入 `/apps` 并保留新 token。</p></div></div></details></div></div></details><details class="file-group findings-file-group" id="fg-84f3ff5c2310" data-file-path="frontend/apps/dashboard/vite.config.ts" data-short-name="vite.config.ts" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">frontend/apps/dashboard/vite.config.ts</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L18-21</span><span class="finding-cat">配置变更</span></div><div class="finding-desc">新增了 `/api/sso` 代理到外部 UAT 域名，但本次前端实际新增接口都走 `/api/v1/auth/sso/*`，不会命中这个代理规则。该配置与当前实现不一致，容易让本地联调误以为 SSO 相关请求会直达外部服务，实际仍会走 `/api` 代理到本地后端。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>删除这段未使用的 `/api/sso` 代理，或改为与真实请求路径一致的可配置代理规则；如果只是为文档/临时联调保留，建议补充注释说明不会覆盖 `/api/v1/auth/sso/*`。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>本地启动 dashboard 后访问登录页，确认点击 SSO 按钮时 `/api/v1/auth/sso/config` 与 `/api/v1/auth/sso/redirect-url` 实际命中的代理目标符合预期。</p></div></div></details></div></div></details></div>
     </div>
 
     <div id="panel-dp" class="report-panel" role="tabpanel" aria-labelledby="tab-dp">
       <div class="dp-shell"><div class="dp-header">
   <h1>数据权限分析报告</h1>
   <p class="subtitle">AI Code Review · 接口级别数据权限审计</p>
-  <div class="meta-row"><div class="meta-item">项目 <strong>ubi-api</strong></div><div class="meta-item">涉及接口路径（自动汇总） <strong>/auth/sso/callback</strong></div><div class="meta-item">报告日期 <strong>2026-07-06 23:03:42</strong></div><div class="meta-item">涉及角色标签 <strong>anonymous、authToken</strong></div></div>
+  <div class="meta-row"><div class="meta-item">项目 <strong>ubi-api</strong></div><div class="meta-item">涉及接口路径（自动汇总） <strong>/auth/sso/callback</strong></div><div class="meta-item">报告日期 <strong>2026-07-07 00:09:28</strong></div><div class="meta-item">涉及角色标签 <strong>Public、authToken</strong></div></div>
 </div>
 
 <div class="dp-body">
@@ -1440,7 +1423,7 @@ public void callback(@RequestParam(&quot;authToken&quot;) String authToken,
 
   <div class="dp-section">
     <div class="dp-section-title">接口权限审计总览</div>
-    <div class="table-wrap"><table class="dp-audit"><thead><tr><th>方法</th><th>路径</th><th>Service 方法</th><th>权限校验</th><th>数据范围</th><th>风险</th><th>问题描述</th></tr></thead><tbody><tr class="row-major"><td style='white-space:nowrap;vertical-align:middle;'><span class="badge badge-get">GET</span></td><td style='min-width:120px;'><code style="font-size:.82rem;word-break:break-all;">/auth/sso/callback</code></td><td style='min-width:160px;'><code style="font-size:.82rem;">callback(...)</code></td><td style='white-space:nowrap;'><span style="color:#dd6b20;">待复核</span></td><td style='min-width:140px;font-size:.85rem;'><span style="font-size:.85rem;">当前 diff 中该公开 GET 入口仅检查 SSO 开关，随后直接消费 <code>authToken</code> 并重定向，未见 state/nonce/一次性校验。</span></td><td style='white-space:nowrap;'><div class="risk-zh">高风险（认证流程可被伪造/重放导致登录态混淆）</div><div style="margin-top:6px;"><span class="badge badge-high">HIGH</span></div></td><td style='min-width:220px;'><ul class="issue-list"><li><strong>原因：</strong> 该登录回调入口被 <code>@Public</code> 放行为匿名可访问，并直接将外部请求参数 <code>authToken</code> 交给 <code>ssoLoginService.handleCallback(authToken)</code> 处理后执行 <code>response.sendRedirect(redirectUrl)</code>，但在本分片 diff 中看不到任何与浏览器会话绑定的 <code>state</code>/nonce/一次性挑战值校验，也看不到对回调来源上下文的校验</li><li><strong>影响：</strong> 若服务层未额外做严格校验，攻击者可构造或复用他人的 <code>authToken</code> 直接调用该公开回调接口，触发受害者浏览器完成错误账号登录或登录态绑定，形成典型 SSO 登录 CSRF / 会话混淆风险</li><li>由于这是认证入口，一旦绑定错误身份，后续所有受保护资源访问都可能在错误主体下进行</li></ul></td></tr></tbody></table></div>
+    <div class="table-wrap"><table class="dp-audit"><thead><tr><th>方法</th><th>路径</th><th>Service 方法</th><th>权限校验</th><th>数据范围</th><th>风险</th><th>问题描述</th></tr></thead><tbody><tr class="row-major"><td style='white-space:nowrap;vertical-align:middle;'><span class="badge badge-get">GET</span></td><td style='min-width:120px;'><code style="font-size:.82rem;word-break:break-all;">/auth/sso/callback</code></td><td style='min-width:160px;'><code style="font-size:.82rem;">ubi.server.controller.SsoAuthController.callback(...)</code></td><td style='white-space:nowrap;'><span style="color:#dd6b20;">待复核</span></td><td style='min-width:140px;font-size:.85rem;'><span style="font-size:.85rem;">当前公开 GET 入口直接接收 <code>authToken</code> 并进入登录处理，控制器层未体现 state/nonce/单次票据等绑定校验。</span></td><td style='white-space:nowrap;'><div class="risk-zh">高风险（认证回调可被伪造/重放）</div><div style="margin-top:6px;"><span class="badge badge-high">HIGH</span></div></td><td style='min-width:220px;'><ul class="issue-list"><li><strong>原因：</strong> 该 SSO 回调入口被显式标记为 <code>@Public</code>，且当前控制器代码未见任何来源校验、一次性票据校验、state/nonce 关联校验或回调发起方绑定逻辑</li><li>接口直接接收外部提供的 <code>authToken</code> 并交给登录流程处理，然后执行重定向</li><li><strong>影响：</strong> 若下游 <code>handleCallback</code> 未严格校验该 <code>authToken</code> 的真实性、时效性及与当前登录会话的绑定关系，攻击者可直接构造请求命中公开回调入口，造成登录流程被伪造、会话混淆或未授权登录</li><li>由于该入口是认证边界的一部分，公开暴露但缺少可见的防重放/防伪造校验属于高风险认证面扩大</li></ul></td></tr></tbody></table></div>
   </div>
 
   <div class="section"><div class="file-block endpoint-gap-block"><h3 class="api-surface-sub">Diff 中出现但未出现在「权限与访问控制」接口表中的路径（待核对）</h3><p class="inferred-hint">说明：由脚本从 diff 新增行中的 <code>@GetMapping</code> 等注解提取，未做类级路径拼接；未出现在上表可能表示本次无此类 finding、模型漏标 category/path，或该路径非 HTTP 面。请人工对照 Controller/Facade。</p><table><thead><tr><th>可疑漏列 API</th></tr></thead><tbody><tr><td><code>* /auth/sso</code></td></tr><tr><td><code>GET /callback</code></td></tr><tr><td><code>GET /config</code></td></tr><tr><td><code>GET /exchange</code></td></tr><tr><td><code>GET /redirect-url</code></td></tr></tbody></table></div></div>
@@ -1457,7 +1440,7 @@ public void callback(@RequestParam(&quot;authToken&quot;) String authToken,
     <div class="issue-body">
       <div class="section-title">问题描述</div>
       <p class="loc-hint">关联位置：<code>backend/server/src/main/java/com/ubi/server/controller/SsoAuthController.java L29-40</code></p>
-      <p class="desc">1. <strong>原因：</strong> 该登录回调入口被 <code>@Public</code> 放行为匿名可访问，并直接将外部请求参数 <code>authToken</code> 交给 <code>ssoLoginService.handleCallback(authToken)</code> 处理后执行 <code>response.sendRedirect(redirectUrl)</code>，但在本分片 diff 中看不到任何与浏览器会话绑定的 <code>state</code>/nonce/一次性挑战值校验，也看不到对回调来源上下文的校验。</p>
+      <p class="desc">1. <strong>原因：</strong> 该 SSO 回调入口被显式标记为 <code>@Public</code>，且当前控制器代码未见任何来源校验、一次性票据校验、state/nonce 关联校验或回调发起方绑定逻辑；接口直接接收外部提供的 <code>authToken</code> 并交给登录流程处理，然后执行重定向。</p>
       <div class="section-title">问题代码</div><pre><code>@Public
 @GetMapping(&quot;/callback&quot;)
 public void callback(@RequestParam(&quot;authToken&quot;) String authToken, HttpServletResponse response) throws IOException {
@@ -1468,22 +1451,14 @@ public void callback(@RequestParam(&quot;authToken&quot;) String authToken, Http
       <div class="two-col">
         <div class="impact-box">
           <h4>安全影响</h4>
-          <p>** 若服务层未额外做严格校验，攻击者可构造或复用他人的 <code>authToken</code> 直接调用该公开回调接口，触发受害者浏览器完成错误账号登录或登录态绑定，形成典型 SSO 登录 CSRF / 会话混淆风险。由于这是认证入口，一旦绑定错误身份，后续所有受保护资源访问都可能在错误主体下进行。</p>
+          <p>** 若下游 <code>handleCallback</code> 未严格校验该 <code>authToken</code> 的真实性、时效性及与当前登录会话的绑定关系，攻击者可直接构造请求命中公开回调入口，造成登录流程被伪造、会话混淆或未授权登录。由于该入口是认证边界的一部分，公开暴露但缺少可见的防重放/防伪造校验属于高风险认证面扩大。</p>
         </div>
         <div class="fix-box">
           <h4>修复建议</h4>
-          <p>1. 在回调链路中增加并强制校验与发起登录请求时绑定的 <code>state</code>（必要时同时校验 nonce、ticket 一次性使用、过期时间、User-Agent/会话绑定）。回调接口至少应显式接收并校验 <code>state</code>，校验失败时拒绝登录并不要重定向到成功页。例如：</p><p>并在 <code>SsoLoginService</code> 中校验 <code>state</code> 与服务端保存的会话挑战值完全一致且仅可使用一次。</p>
+          <ul class="list"><li>在回调入口或 <code>SsoLoginService.handleCallback(...)</code> 中强制校验 SSO 回调上下文：1）要求并校验 <code>state</code>/nonce；2）将 <code>authToken</code> 与服务端发起登录时保存的一次性票据绑定；3）校验过期时间与单次使用；4）校验回调来源仅接受受信 SSO 服务端返回。示例：在回调参数中增加 <code>state</code>，并在服务端校验 <code>ticketStore.consume(state, authToken)</code> 成功后才继续登录。</li></ul>
         </div>
       </div>
-      <div class="section-title">修复示意</div><pre><code>@Public
-@GetMapping(&quot;/callback&quot;)
-public void callback(@RequestParam(&quot;authToken&quot;) String authToken,
-                     @RequestParam(&quot;state&quot;) String state,
-                     HttpServletResponse response) throws IOException {
-    requireEnabled();
-    String redirectUrl = ssoLoginService.handleCallback(authToken, state);
-    response.sendRedirect(redirectUrl);
-}</code></pre>
+      
     </div>
   </div>
 </div></details></div>
@@ -1493,7 +1468,7 @@ public void callback(@RequestParam(&quot;authToken&quot;) String authToken,
 
   
 
-  <div class="dp-footer"><p>本报告由 AI Code Review 生成（data_permission 模式）。权限类 finding 涉及文件：<strong>backend/server/src/main/java/com/ubi/server/controller/SsoAuthController.java</strong></p><p style="margin-top:4px;">生成时间：2026-07-06 23:03:42 · 项目：ubi-api</p></div>
+  <div class="dp-footer"><p>本报告由 AI Code Review 生成（data_permission 模式）。权限类 finding 涉及文件：<strong>backend/server/src/main/java/com/ubi/server/controller/SsoAuthController.java</strong></p><p style="margin-top:4px;">生成时间：2026-07-07 00:09:28 · 项目：ubi-api</p></div>
 
 </div>
 </div>
@@ -1826,9 +1801,9 @@ public void callback(@RequestParam(&quot;authToken&quot;) String authToken,
     function exportCsv() { alert('导出为 CSV 功能待实现'); }
 
     // Inject summary data (Task 5)
-    if (typeof updateSeveritySummary === 'function') updateSeveritySummary(0, 6, 1, 0);
-if (typeof renderCategoryChart === 'function') renderCategoryChart({"\u5b89\u5168\u98ce\u9669": 2, "\u6743\u9650\u4e0e\u8bbf\u95ee\u63a7\u5236": 1, "\u4e1a\u52a1\u903b\u8f91": 1, "\u72b6\u6001\u7ba1\u7406": 1, "\u914d\u7f6e\u53d8\u66f4": 1, "\u5f02\u5e38\u5904\u7406": 1});
-if (typeof renderTopCriticals === 'function') renderTopCriticals([]);
+    if (typeof updateSeveritySummary === 'function') updateSeveritySummary(1, 5, 3, 0);
+if (typeof renderCategoryChart === 'function') renderCategoryChart({"\u5b89\u5168\u98ce\u9669": 3, "\u6743\u9650\u4e0e\u8bbf\u95ee\u63a7\u5236": 1, "\u4e1a\u52a1\u903b\u8f91": 1, "\u6570\u636e\u4e00\u81f4\u6027": 1, "\u72b6\u6001\u7ba1\u7406": 1, "\u5f02\u5e38\u5904\u7406": 1, "\u914d\u7f6e\u53d8\u66f4": 1});
+if (typeof renderTopCriticals === 'function') renderTopCriticals([{"file": "backend/server/ubi-server-example.yml", "line": "72-76", "severity": "critical", "category": "安全风险", "description": "示例配置中新增了可直接访问的外部 SSO user-info 地址，且包含固定的 `authToken` 路径模板。该文件属于仓库内配置样例，结合同一段配置中的真实 UAT 域名，容易被误复制到实际环境；一旦后续有人将真实 token 直接拼入该 URL 进行排障、截图或提交，极易形成凭证泄露面。更重要的是，本次变更同时在文档中公开了真实 UAT SSO 接入域名，扩大了对外暴露面。", "suggestion": "将示例配置中的真实外部 SSO 域名替换为脱敏占位值（如 `https://<sso-domain>/api/sso/oauth/get/{authToken}`），并在注释中明确禁止提交任何真实 token、state、nonce 或环境专属地址到仓库。", "test_scenario": "检查示例配置与文档产物中不再出现真实环境域名、token 占位外的任何可用凭证或环境专属接入地址。", "http_method": "", "path_pattern": "", "permission_tags": [], "java_entry_method": "", "expected_permission": "", "actual_behavior": "", "evidence_refs": [], "risk_label_zh": "", "_aggregated_count": 2}]);
 
     // Export dropdown toggle
     (function() {
