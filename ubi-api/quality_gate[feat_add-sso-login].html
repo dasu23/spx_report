@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">ubi-api &nbsp;|&nbsp; 2026-07-07 00:11:29</div>
+      <div class="meta">ubi-api &nbsp;|&nbsp; 2026-07-07 00:43:02</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:5</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:4</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -84,7 +84,7 @@
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
 <li>AI Review: 1 Critical finding(s)</li>
-<li>AI Review: 5 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 4 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -96,24 +96,40 @@
                     <span class="finding-badge">严重</span>
                     <code class="finding-loc">backend/server/ubi-server-example.yml:72-76</code>
                 </div>
-                <div class="finding-desc">示例配置中新增了可直接访问的外部 SSO user-info 地址，且包含固定的 `authToken` 路径模板。该文件属于仓库内配置样例，结合同一段配置中的真实 UAT 域名，容易被误复制到实际环境；一旦后续有人将真实 token 直接拼入该 URL 进行排障、截图或提交，极易形成凭证泄露面。更重要的是，本次变更同时在文档中公开了真实 UAT SSO 接入域名，扩大了对外暴露面。</div>
-                <div class="finding-suggestion">💡 修复建议：将示例配置中的真实外部 SSO 域名替换为脱敏占位值（如 `https://&lt;sso-domain&gt;/api/sso/oauth/get/{authToken}`），并在注释中明确禁止提交任何真实 token、state、nonce 或环境专属地址到仓库。</div>
+                <div class="finding-desc">示例配置中新增了完整的外部 SSO user-info 地址，且路径中直接包含 `{authToken}` 占位符。根据自定义规则 [SEC-002]，这是把认证令牌使用方式硬编码进仓库；一旦开发/测试环境沿用该示例，容易把真实认证流量导向固定外部域名，并放大令牌在错误环境中被发送、记录或误用的风险。</div>
+                <div class="finding-suggestion">💡 修复建议：不要在仓库中的示例文件里写入具体外部 SSO 地址，尤其不要包含带 `authToken` 语义的固定 URL 模板。改为使用占位示例，例如 `https://&lt;sso-domain&gt;/api/sso/oauth/get/{authToken}`，并在部署文档中说明由环境变量或配置中心下发真实值。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/controller/SsoAuthController.java:29-33</code>
+                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/service/SsoLoginService.java:47-49</code>
                 </div>
-                <div class="finding-desc">`/auth/sso/callback` 通过 `response.sendRedirect(redirectUrl)` 直接跳转到由 `ssoLoginService.handleCallback(authToken)` 返回的 URL，当前控制器层未见对跳转目标做白名单、同源或协议限制校验。若下游返回值可被外部输入影响，存在开放重定向风险，可被用于钓鱼、令牌泄露或绕过前端信任边界。</div>
-                <div class="finding-suggestion">💡 修复建议：对 `redirectUrl` 做严格校验，仅允许跳转到预配置白名单域名/固定前端根路径；拒绝非 HTTPS、协议相对 URL、`javascript:` 等危险 scheme。建议在控制器层增加显式校验后再 `sendRedirect`。</div>
+                <div class="finding-desc">SSO 登录按 email 直接执行 selectOne 查询本地用户，但没有保证 username 唯一或处理重复记录。若历史数据中存在多个相同 username/email，MyBatis-Plus 的 selectOne 会抛出 TooManyResultsException，导致整个 SSO 回调失败。该问题会直接影响登录主流程。</div>
+                <div class="finding-suggestion">💡 修复建议：在数据库层为 username 建唯一约束，或在代码中改为 selectList 后显式校验结果数量并给出可诊断错误。例如：查询列表后，size==1 才继续登录，size&gt;1 时记录告警并返回明确错误页。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/controller/SsoAuthController.java:29-40</code>
+                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/service/SsoLoginService.java:58</code>
                 </div>
-                <div class="finding-desc">**原因：** 该 SSO 回调入口被显式标记为 `@Public`，且当前控制器代码未见任何来源校验、一次性票据校验、state/nonce 关联校验或回调发起方绑定逻辑；接口直接接收外部提供的 `authToken` 并交给登录流程处理，然后执行重定向。
+                <div class="finding-desc">将一次性登录取件码直接拼接到 URL 查询参数 `?token=` 中返回。该设计会使凭证暴露在浏览器地址栏、历史记录、前端埋点、反向代理访问日志以及 Referer 头中；一旦前端后续加载第三方资源或发生跳转，取件码可能被被动泄露。虽然取件码是一次性的，但在被前端兑换前仍可被窃取并完成登录，属于认证凭证泄露风险。</div>
+                <div class="finding-suggestion">💡 修复建议：不要通过查询参数传递可兑换登录态的凭证。优先改为：后端回调时设置短时 HttpOnly + Secure + SameSite 的一次性 Cookie，然后前端调用 `/auth/sso/exchange` 时仅凭 Cookie 兑换；或将 ticket 放入 URL fragment（`#token=`，不会进入 Referer/大多数服务端日志）并确保前端首屏立即清除。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">frontend/apps/dashboard/vite.config.ts:18-21</code>
+                </div>
+                <div class="finding-desc">新增了 `/api/sso` 代理并将目标硬编码到 `https://op-uat.nimbusgroup.us`。这会让本地开发/测试环境下凡是直接请求该前缀的流量绕过本地 server，固定打到 UAT；同时该目标不可按环境切换，和同文件已有 `/api -&gt; localhost:3002` 的本地代理策略不一致，容易导致环境串用和联调结果失真。测试报告里也已经体现出代理目标硬编码带来的环境问题。</div>
+                <div class="finding-suggestion">💡 修复建议：不要在 Vite 配置中硬编码 UAT 域名。若确实需要该代理，改为读取环境变量，例如 `target: process.env.VITE_SSO_PROXY_TARGET`，并为本地/测试/预发分别配置；如果当前前端实际只调用 `/api/v1/auth/sso/*` 后端接口，则应删除这段 `/api/sso` 代理，避免误导后续开发者。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/controller/SsoAuthController.java:29-59</code>
+                </div>
+                <div class="finding-desc">**原因：** 该 SSO 回调入口被 `@Public` 放行为匿名可访问，并直接将请求参数 `authToken` 交给 `ssoLoginService.handleCallback(authToken)` 处理后执行 `response.sendRedirect(redirectUrl)`，但在本分片 diff 中看不到任何对回调来源、一次性 state/nonce、或 token 绑定关系的校验。对于 SSO 登录回调，这类校验缺失会使任意人可直接构造请求命中登录完成流程。
 
 ```java
 @Public
@@ -125,32 +141,8 @@ public void callback(@RequestParam(&quot;authToken&quot;) String authToken, Http
 }
 ```
 
-**影响：** 若下游 `handleCallback` 未严格校验该 `authToken` 的真实性、时效性及与当前登录会话的绑定关系，攻击者可直接构造请求命中公开回调入口，造成登录流程被伪造、会话混淆或未授权登录。由于该入口是认证边界的一部分，公开暴露但缺少可见的防重放/防伪造校验属于高风险认证面扩大。</div>
-                <div class="finding-suggestion">💡 修复建议：在回调入口或 `SsoLoginService.handleCallback(...)` 中强制校验 SSO 回调上下文：1）要求并校验 `state`/nonce；2）将 `authToken` 与服务端发起登录时保存的一次性票据绑定；3）校验过期时间与单次使用；4）校验回调来源仅接受受信 SSO 服务端返回。示例：在回调参数中增加 `state`，并在服务端校验 `ticketStore.consume(state, authToken)` 成功后才继续登录。</div>
-            </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/service/SsoLoginService.java:47-50</code>
-                </div>
-                <div class="finding-desc">这里直接按 `username=email.trim()` 精确查询本地用户，但未对邮箱大小写做归一化。SSO 返回的邮箱大小写与本地账号保存格式不一致时（如 `User@Corp.com` vs `user@corp.com`），会被误判为账号不存在，导致合法用户无法通过 SSO 登录。邮箱作为身份标识通常应按大小写不敏感处理。</div>
-                <div class="finding-suggestion">💡 修复建议：在查询前统一做规范化，例如 `String username = email.trim().toLowerCase(Locale.ROOT);`，并确保本地用户名存储或查询条件也采用同样规则。若历史数据存在混合大小写，建议改为数据库层大小写不敏感查询，或增加唯一规范字段专供登录匹配。</div>
-            </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">backend/server/src/main/java/com/ubi/server/service/SsoLoginService.java:59</code>
-                </div>
-                <div class="finding-desc">登录成功后将一次性取件码直接拼接到 URL 查询串 `?token=` 中返回。即使这里传递的是 ticket 而非最终 JWT，查询参数仍会通过浏览器历史、Referer、代理/网关日志、前端埋点等链路泄露；而 `exchange()` 仅凭该 ticket 即可换取完整 `LoginData`，因此泄露后可被第三方重放完成登录，形成会话劫持风险。</div>
-                <div class="finding-suggestion">💡 修复建议：避免通过 URL query 传递可直接兑换登录态的凭证。优先改为：1）后端回调时设置短时、HttpOnly、Secure、SameSite 的一次性 cookie；或 2）将 ticket 放入 URL fragment（`#token=`）并确保前端仅在本地读取后立即清除；同时为 `exchange` 增加与浏览器会话绑定（如 nonce/state/session 绑定）以降低泄露后的可利用性。</div>
-            </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">frontend/apps/dashboard/src/pages/login/login-page.tsx:31-47</code>
-                </div>
-                <div class="finding-desc">页面初始化时会同时触发 `ssoConfig()` 和基于 URL `token` 的 `ssoExchange()`。当登录页是从已登录状态进入，且本地已有旧 token 时，`ssoConfig()` 请求会先带着旧 `Authorization` 发出；若后端因此返回 401，现有全局 401 处理通常会清空登录态，而随后 `ssoExchange()` 才写入新的 SSO 登录态。这样会造成一次不必要的登出/重登竞态，表现为 SSO 回跳后偶发闪退、状态被清空或跳转异常。</div>
-                <div class="finding-suggestion">💡 修复建议：在处理 `token`/`ssoError` 的 effect 中优先完成兑换，再决定是否拉取 `ssoConfig`；或者当 URL 中存在 `token`/`ssoError` 时跳过 `ssoConfig()` 请求。示例：`useEffect(() =&gt; { if (searchParams.get(&#x27;token&#x27;) || searchParams.get(&#x27;ssoError&#x27;)) return; authApi.ssoConfig()... }, [searchParams]);`。</div>
+**影响：** 若 `handleCallback` 未在服务层严格校验该 `authToken` 的签发方、时效性、一次性使用及与当前浏览器会话的绑定关系，攻击者可通过伪造/重放回调请求触发登录态建立或登录流程劫持，属于认证边界放宽风险。由于该入口是公开 GET 接口，攻击面直接暴露在外网。</div>
+                <div class="finding-suggestion">💡 修复建议：在回调入口对应的服务逻辑中强制校验 SSO 防重放与防伪造要素：至少包含 state/nonce、token 时效、一次性消费、签发方校验，以及与发起登录时浏览器会话的绑定；若无法在服务层证明这些校验已存在，建议在控制器参数中显式接收并校验 `state`。同时避免仅凭单个 `authToken` 完成登录。示例：发起登录时生成并保存 state，回调时校验 state 后再兑换 token。</div>
             </div>
             
         </div>
