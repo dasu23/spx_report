@@ -1230,7 +1230,7 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: htsre-api | 生成时间: 2026-07-06 00:04:37</p>
+      <p class="hero-meta">服务: htsre-api | 生成时间: 2026-07-07 11:15:36</p>
       <div class="top-criticals" id="top-criticals">
         <h3>Top 3 Critical 问题</h3>
         <ul id="top-criticals-list"></ul>
@@ -1252,148 +1252,151 @@
     <div id="panel-general" class="report-panel is-active" role="tabpanel" aria-labelledby="tab-general">
     <section class="summary">
       <h2>总体结论</h2>
-      <div id="summary-text" class="summary-body summary-preformatted"><div class="summary-condensed"><p>合并 <strong>26</strong> 个分片审查，共 <strong>19</strong> 条发现 （Critical 3 · Major 12 · Minor 4 · Info 0）。详细列表见下方「按文件的审查发现」；接口与数据权限维度见「权限与业务规则」页签。</p><details class="summary-raw-details"><summary>展开各分片原文结论</summary><pre class="summary-raw-pre">**分片 1**
+      <div id="summary-text" class="summary-body summary-preformatted"><div class="summary-condensed"><p>合并 <strong>26</strong> 个分片审查，共 <strong>18</strong> 条发现 （Critical 2 · Major 13 · Minor 3 · Info 0）。详细列表见下方「按文件的审查发现」；接口与数据权限维度见「权限与业务规则」页签。</p><details class="summary-raw-details"><summary>展开各分片原文结论</summary><pre class="summary-raw-pre">**分片 1**
 
-发现 5 个安全问题：1 个任意文件写入/路径穿越高危风险，2 个认证/刷新契约弱化问题，1 个未知文件类型扩大写盘面问题，1 个硬编码超级管理员账户问题。
+发现 4 个安全问题，其中 2 个同源于后台数据提交流程对 `fileType`/`originalFilename` 缺少边界校验，导致可经审批链落盘到非预期位置；另有 1 个认证续签校验缺失问题和 1 个固定超级管理员身份植入问题。
 
 HTTP 入口清单（方法 + 路径）
-- POST /api/admin/users/grant：实现未在本分片/diff 内，无法断言权限。
-- POST /api/admin/users/revoke：实现未在本分片/diff 内，无法断言权限。
-- POST /api/admin/data/submit：存在新增安全风险，`AdminService.commitToFilesystem()`/`resolveTargetDir()` 对文件名与类型校验不足，可导致越界写盘。
-- POST /api/admin/data/requests/{id}/approve：实现未在本分片/diff 内，无法断言权限；但若走到 `commitToFilesystem()` 同样受上述写盘风险影响。
-- POST /api/admin/data/requests/{id}/reject：实现未在本分片/diff 内，无法断言权限。
-- POST /api/auth/login：存在新增认证契约风险，改为本地长效 JWT 后弱化了与 Nimbus 过期/失效状态的一致性。
-- POST /api/auth/refresh：存在新增认证契约风险，刷新流程直接重签 JWT，未体现对上游会话有效性的校验。
+- POST `/api/admin/users/grant`：实现未在本分片/diff 内，无法断言权限。
+- POST `/api/admin/users/revoke`：实现未在本分片/diff 内，无法断言权限。
+- POST `/api/admin/data/submit`：存在新增权限/安全风险，服务层允许调用方控制落盘路径与目录边界，见上述 findings。
+- POST `/api/admin/data/requests/{id}/approve`：实现未在本分片/diff 内，无法断言权限。
+- POST `/api/admin/data/requests/{id}/reject`：实现未在本分片/diff 内，无法断言权限。
+- POST `/api/auth/login`：本分片可见变更未直接显示新增权限绕过，但登录后改为签发本地长生命周期 JWT，需结合 JwtService/Filter 继续审查。
+- POST `/api/auth/refresh`：存在新增权限风险，刷新逻辑未在方法内校验当前 token 有效性，见上述 findings。
 
 **分片 2**
 
-本分片新增功能整体结构清晰，但存在两个高风险一致性问题：审批/自动审批把数据库事务与文件系统副作用混在一起，失败时会产生部分成功状态；另外 AI 响应解析和文件名处理缺少边界校验。HTTP 入口方面，已给出的接口映射中未从本 diff 直接看到明显的误放行证据。
+本分片新增服务整体结构清晰，但存在 3 个需要优先修复的稳定性/一致性问题：文件落盘路径未校验、事务内执行不可回滚文件副作用、AI 响应解析缺少空结果保护。HTTP 入口的权限问题因本分片未提供对应 Controller 新增行，暂未发现可在当前 diff 上直接定位并报告的权限缺陷。
 
 **分片 3**
 
-本分片提供的实际 diff 仅涉及数据文件 `data/sources/usitc/hts_2026_revision_11_json.json` 的描述文本去除 HTML 斜体标签，未见后端 Java/Spring Boot 安全相关新增/修改代码，未发现可依据本 diff 直接定位的安全问题。由于本分片未展示任何 `@GetMapping/@PostMapping/@PutMapping/@DeleteMapping/@PatchMapping/@RequestMapping` 新增或修改行，HTTP 入口清单为空。
+本分片提供的实际 diff 仅涉及数据文件 `data/sources/usitc/hts_2026_revision_11_json.json` 中描述文本去除 HTML `&lt;i&gt;` 标签的内容调整，未见新增/修改的 Java/Spring Boot 安全相关代码、配置或 HTTP 映射，因此未发现可直接归因到新增行的安全问题。
+
+HTTP 入口清单（方法 + 路径）
+- 本分片实际可见 diff 中未出现 `@GetMapping` / `@PostMapping` / `@PutMapping` / `@DeleteMapping` / `@PatchMapping` / 带路径的 `@RequestMapping` 新增或修改行，因此无可识别的新增 HTTP 入口；其余控制器虽在文件列表中，但实现未在本分片 diff 内，无法断言权限。
 
 **分片 4**
 
-本分片提供的 diff 仅显示数据文件中的文案/描述性文本调整，未见会导致功能异常、类型安全、异常处理或权限逻辑问题的新增/修改代码。基于当前可见变更，整体风险较低。
+本分片可见的 diff 主要是数据文件内容更新（如 HTS 描述文本去除 HTML 斜体标签），未发现新增/修改行上的明确功能性缺陷、异常处理问题或权限放行风险。就当前提供的分片内容看，变更整体较稳健。
 
 **分片 5**
 
-本分片提供的实际 diff 仅包含数据文件 `data/sources/usitc/hts_2026_revision_5_csv.csv` 的删除内容，且按要求只能审查新增/修改行（`+`），当前未见任何可审计的新增/修改代码，因此未发现可定位到 diff 新增行的安全问题。
-
-HTTP 入口清单（方法 + 路径）：本分片给出的实际 diff 中未出现 `@GetMapping`、`@PostMapping`、`@PutMapping`、`@DeleteMapping`、`@PatchMapping` 或带路径的 `@RequestMapping` 新增/修改行，无法识别本分片内可审计的 HTTP 入口。
+本分片提供的实际 diff 仅包含数据文件 data/sources/usitc/hts_2026_revision_5_csv.csv 的删除内容，未见 Java/Spring Boot 新增或修改行，也未出现可审计的 HTTP 映射新增/变更代码；基于“只分析 diff 中 + 行”的约束，未发现可确认的新增安全问题。HTTP 入口清单：本分片实际 diff 未出现 @GetMapping/@PostMapping/@PutMapping/@DeleteMapping/@PatchMapping 或带路径的 @RequestMapping，无法识别新增/变更入口。
 
 **分片 6**
 
-本分片提供的 diff 仅包含一个数据文件删除片段，且未展示任何新增/修改（`+`）代码行。按审查约束仅分析新增/修改行，因此本分片未发现可报告的问题。
+本分片提供的实际 diff 仅包含一个数据文件删除，且没有任何新增/修改行（+）可供审查。按规则仅分析新增/修改行，因此本分片未发现可报告问题。
 
 **分片 7**
 
-本分片前端变更发现 2 个安全问题：一是嵌入模式把 `parentOrigin` 建立在可控 URL 参数上，导致宿主身份可被伪造；二是新增管理员身份探测接口绕过统一认证链，存在 token 来源混乱与过期处理失效风险。未在本分片 diff 中看到可识别的后端 HTTP 映射注解，因此无可列出的 HTTP 入口清单。
+本分片前端改动存在两处安全问题：一是嵌入模式对 `parentOrigin` 的信任边界过宽，允许未知父页面触发宿主认证桥接；二是新增管理接口探测逻辑直接从 `localStorage` 读取 Bearer Token，扩大了令牌被 XSS 窃取的暴露面。未在本分片 diff 中看到后端 HTTP 映射新增代码，因此无可列出的本分片 HTTP 入口清单。
 
 **分片 8**
 
-本分片前端改动整体方向清晰，但嵌入鉴权桥接存在监听器生命周期问题，管理员角色探测也与多种登录态兼容性不足，可能直接影响嵌入模式稳定性和 Admin 功能可用性。
+本分片前端改动整体结构清晰，但嵌入认证链路存在一个会导致请求永久挂起的问题，且管理员角色获取与入口展示逻辑目前未真正打通，建议在合并前补齐。
 
 **分片 9**
 
-本分片仅见 JWT 过滤器日志级别与内容调整，未发现新增 SQL 注入、硬编码密钥或明确越权逻辑；但新增认证日志扩大了敏感认证信息暴露面，并把外部可触发的认证失败提升为 warn，存在日志泄露与日志洪泛风险。
+本分片仅见 `HtsreJwtFilter` 的日志级别与内容调整，未发现新增越权、SQL 注入或硬编码密钥问题；但新增/升级的 JWT 认证日志暴露了身份与凭证处理细节，存在敏感信息泄露风险。
 
 **分片 10**
 
-本分片变更整体较小，主要问题是 JWT 失败日志提升到 warn 后引入了敏感凭证片段暴露风险。除此之外未见明显的编译、空指针或原子性问题。
+本分片变更整体较小，但新增的 JWT 失败日志把 token 预览提升到了 warn 级别，存在明显的敏感信息落日志风险；除此之外未见其他必须阻断的问题。
 
 **分片 11**
 
-本分片存在1处严重认证问题：`AuthController.refresh` 新逻辑信任未验签 JWT 的 `email/role` 并用于刷新令牌，属于明显的认证绕过/权限提升风险。另有多处管理接口把内部异常消息直接返回客户端，增加实现细节泄露面。
+发现 1 个严重认证绕过问题：`POST /refresh` 信任未验签 JWT payload 中的 `email/role` 并直接刷新登录态，攻击者可伪造身份与角色获取新凭证；另有多处新增管理接口把内部异常消息直接返回客户端，存在信息泄露风险。
 
 HTTP 入口清单（方法 + 路径）
-- GET /api/admin/me：实现位于本分片，使用 `Authentication` 读取当前用户并返回角色；未见新增越权逻辑，但仅做控制器内判断，整体鉴权强度仍依赖外部安全配置，本分片无新增权限风险。
-- GET /api/admin/users：实现位于本分片，包含 `SUPER_ADMIN` 角色判断；本分片未见新增越权风险。
-- POST /api/admin/users/grant：实现位于本分片，包含 `SUPER_ADMIN` 角色判断；本分片未见新增越权风险。
-- POST /api/admin/users/revoke：实现位于本分片，包含 `SUPER_ADMIN` 角色判断；本分片未见新增越权风险。
-- POST /api/admin/data/submit：实现位于本分片，包含 admin 角色判断；无新增权限风险，但存在错误信息泄露风险。
-- POST /api/admin/data/analyze：实现位于本分片，包含 admin 角色判断；无新增权限风险，但存在错误信息泄露风险。
-- POST /api/admin/data/preview：实现位于本分片，包含 admin 角色判断；无新增权限风险，但存在错误信息泄露风险。
-- GET /api/admin/data/requests：实现位于本分片，包含 admin 角色判断；本分片未见新增越权风险。
-- POST /api/admin/data/requests/{id}/approve：实现位于本分片，包含 `SUPER_ADMIN` 角色判断；无新增权限风险，但存在错误信息泄露风险。
-- POST /api/admin/data/requests/{id}/reject：实现位于本分片，包含 `SUPER_ADMIN` 角色判断；无新增权限风险，但存在错误信息泄露风险。
-- POST UNKNOWN：`AuthController.refresh` 的类级路径未出现在本 diff，无法从本分片精确还原完整 URL；但该入口存在明确的认证绕过风险，已在 findings 中报告。
+- GET /api/admin/me：有基于 `Authentication` 的身份读取；本次 diff 未见显式角色限制，按接口语义仅返回当前用户信息，未发现新增越权证据。
+- GET /api/admin/users：有 `SUPER_ADMIN` 校验；本次 diff 未见新增权限绕过风险。
+- POST /api/admin/users/grant：有 `SUPER_ADMIN` 校验；本次 diff 未见新增权限绕过风险。
+- POST /api/admin/users/revoke：有 `SUPER_ADMIN` 校验；本次 diff 未见新增权限绕过风险。
+- POST /api/admin/data/submit：有 `isAdminRole` 校验；本次 diff 未见新增权限绕过风险，但存在异常信息泄露。
+- POST /api/admin/data/analyze：有 `isAdminRole` 校验；本次 diff 未见新增权限绕过风险，但存在异常信息泄露。
+- POST /api/admin/data/preview：有 `isAdminRole` 校验；本次 diff 未见新增权限绕过风险，但存在异常信息泄露。
+- GET /api/admin/data/requests：有 `isAdminRole` 校验；本次 diff 未见新增权限绕过风险。
+- POST /api/admin/data/requests/{id}/approve：有 `SUPER_ADMIN` 校验；本次 diff 未见新增权限绕过风险，但存在异常信息泄露。
+- POST /api/admin/data/requests/{id}/reject：有 `SUPER_ADMIN` 校验；本次 diff 未见新增权限绕过风险。
+- POST /refresh：存在严重认证绕过风险，未验签 token 的 `email/role` 可被客户端伪造并用于刷新凭证。
 
 **分片 12**
 
-本分片主要问题集中在认证刷新链路：`/refresh` 的新实现绕过了原 token 校验，存在严重认证风险。其余管理接口整体结构清晰，但列表筛选存在可预见的全量加载性能问题。
+本分片主要问题集中在认证刷新链路和两个管理接口的可扩展性上。其中 `/refresh` 当前实现绕过原 token 校验，属于需要优先修复的功能性缺陷；其余问题为大文件处理和全量加载带来的性能隐患。
 
 **分片 13**
 
-本分片仅看到 `DataUpdateRequest` 新增实体定义，未见 HTTP 映射变更，无法断言新增鉴权路径问题。已发现一项明文持久化文件内容的敏感数据暴露风险，以及一项缺少大小约束导致的资源消耗隐患。
+本分片仅看到新增 JPA 实体 `DataUpdateRequest`，未出现 HTTP 映射或鉴权代码，无法断言新增接口级越权问题。已发现一处安全风险：将上传文件原文以 LONGTEXT 明文持久化，存在敏感数据暴露面扩大的风险。
 
 HTTP 入口清单（方法 + 路径）
-- 本分片提供的 diff 中未出现 `@GetMapping/@PostMapping/@PutMapping/@DeleteMapping/@PatchMapping` 或带路径的 `@RequestMapping`，无可识别 HTTP 入口可列；相关控制器虽在文件列表中，但实现未在本分片/diff 内，无法断言权限。
+- 本分片 diff 未出现 `@GetMapping` / `@PostMapping` / `@PutMapping` / `@DeleteMapping` / `@PatchMapping` / 带路径的 `@RequestMapping`，无可识别 HTTP 入口。
 
 **分片 14**
 
-本分片新增实体整体结构清晰，可正常映射 JPA。主要风险集中在审计时间字段和状态字段缺少强约束，后续容易引入脏数据或状态流转不一致。
+本分片新增实体整体结构清晰，可正常作为基础持久化模型使用；但大文本字段加载策略和状态字段约束仍建议尽快收紧，以避免后续性能与状态流转问题。
 
 **分片 15**
 
-本分片仅包含两个 Repository 接口的新增/修改方法声明，未见 SQL 拼接、硬编码密钥/密码、敏感日志、permitAll 放行、并发共享状态修改或可直接确认的越权入口变更。当前 diff 为 Spring Data JPA 派生查询声明，单独从这些新增行无法断言新增安全缺陷。
+本分片仅包含两个 Repository 接口新增/修改的方法声明，未出现 SQL 拼接、硬编码凭证、日志泄露、permitAll 放行、HTTP 映射或显式鉴权变更；基于当前 diff 无法直接确认新增安全缺陷。未发现 HTTP 入口变更，本分片无需列出 HTTP 入口清单。
 
 **分片 16**
 
-本分片仅包含两个 Repository 接口的新增/修改方法声明；基于当前 diff，未发现会直接导致编译错误、空指针、异常处理缺陷或明显业务逻辑问题的新增代码。整体变更较为安全、影响面可控。
+本分片仅包含两个 Repository 接口的新增/修改方法声明，未见新增代码中的空指针、异常处理、类型安全、并发原子性或明显业务逻辑问题。整体变更较为安全，建议在后续分片结合调用方继续关注这些新查询方法是否被用于大结果集场景。
 
 **分片 17**
 
-本分片发现 3 个安全问题：2 个为将 multipart 上限提升到 100MB 带来的拒绝服务风险，1 个为数据库迁移中硬编码植入 `SUPER_ADMIN` 账户的高危问题。当前 diff 未出现可识别的 HTTP 映射注解，因此无可列出的 HTTP 入口清单。
+本分片仅涉及 YAML 配置变更，未出现可识别的 HTTP 映射新增/修改。主要安全问题是 Flyway `ignore-missing-migrations` 被开启，削弱了迁移完整性校验；其次是 multipart 上传上限提升到 100MB，扩大了潜在的大文件拒绝服务攻击面。
+
+HTTP 入口清单（方法 + 路径）：本分片 diff 未包含 `@GetMapping`/`@PostMapping`/`@PutMapping`/`@DeleteMapping`/`@PatchMapping`/带路径 `@RequestMapping` 的新增或修改，无法识别需逐项闭环的 HTTP 入口。
 
 **分片 18**
 
-本分片变更整体较小，主要风险集中在 V5 迁移中混入依赖现有 `users` 结构的数据初始化，以及上传大小上限放宽后的环境一致性与资源评估不足。
+本分片主要是配置调整，未见代码级明显缺陷；但 Flyway 在 mysql/prod 中放宽缺失迁移校验属于高风险配置变更，建议优先收紧。
 
 **分片 19**
 
-本分片提供的实际 diff 仅包含大量数据文件内容更新（如 HTS 税率来源版本从 rev8 调整为 rev11），未展示 backend/controller/service/security 配置等 Java/Spring Boot 变更的新增/修改行；基于“只分析当前 diff 且只报告 + 行问题”的约束，未发现可直接定位到本分片 diff 新增行的安全问题。
+本分片提供的实际 diff 仅显示数据文件 `data/base_duties/hts_general_rates.json` 中来源版本号由 `USITC HTS 2026 rev8` 更新为 `rev11`，未见 Java/Spring Boot 代码、HTTP 映射、鉴权配置、SQL、密钥、日志或并发控制相关新增/修改行，因此基于当前可见 diff 未发现可确认的安全问题。
 
-HTTP 入口清单：本分片可见 diff 中未出现 @GetMapping/@PostMapping/@PutMapping/@DeleteMapping/@PatchMapping 或带路径的 @RequestMapping 新增/修改行，因此无可识别的 HTTP 入口可供权限审查。
+HTTP 入口清单（方法 + 路径）：本分片可见 diff 中未出现 `@GetMapping`、`@PostMapping`、`@PutMapping`、`@DeleteMapping`、`@PatchMapping` 或带路径的 `@RequestMapping`，因此无可识别的新增/修改 HTTP 入口可审查。
 
 **分片 20**
 
-本分片可见的 diff 仅涉及数据文件中 HTS 来源版本号由 rev8 更新为 rev11，未发现新增/修改行上的常规代码质量问题。由于当前分片未提供其余文件的具体 diff，无法对列表中的 Java/配置文件变更做进一步审查。
+本分片提供的 diff 仅展示了数据文件 `data/base_duties/hts_general_rates.json` 中来源版本号从 rev8 更新为 rev11，未见可确认的新增/修改行问题。基于当前可见变更，未发现需要报告的常规代码缺陷。
 
 **分片 21**
 
-本分片可见变更均为 data/lists/section_122 下 JSON 清单项的编码替换/细分，未出现后端 Java/Spring Boot 代码、HTTP 入口、鉴权配置、SQL、密钥、日志或会话处理相关新增/修改行；基于当前 diff 片段，未发现可直接定位到新增行的安全问题。
-
-HTTP 入口清单（方法 + 路径）：本分片未出现任何可识别的 @GetMapping/@PostMapping/@PutMapping/@DeleteMapping/@PatchMapping/@RequestMapping 变更，无法识别新增或修改的 HTTP 入口。
+本分片 diff 仅展示了多个 data/lists/section_122/*.json 中 HTS 编码清单的增删替换，未出现 Java/Spring Boot 代码、HTTP 映射、鉴权配置、密钥、SQL 或日志相关新增/修改行；基于当前可见变更，未发现可直接定位到新增行的安全问题。HTTP 入口清单：本分片可见 diff 中未出现 @GetMapping/@PostMapping/@PutMapping/@DeleteMapping/@PatchMapping 或带路径的 @RequestMapping，故无可识别的新增/修改 HTTP 入口。
 
 **分片 22**
 
-本分片展示的变更均为 JSON 数据清单中的编码替换/细分，未见可从 diff 直接确认的常规代码缺陷。基于当前截断内容，未发现需要报告的问题。
+本分片展示的变更均为 JSON 数据清单中的 HTS 编码替换/细分，未见新增代码逻辑、异常处理、并发控制、权限配置或 API 契约变更。基于当前 diff 片段，未发现可直接定位到新增/修改行的常规质量问题。
 
 **分片 23**
 
-本分片仅包含多个 JSON 数据清单的编码项调整，未出现 Java/Spring Boot 代码、HTTP 入口、鉴权配置、SQL、密钥、日志或会话处理相关新增/修改行。基于当前 diff，未发现可直接定位到新增行的安全问题。
+本分片仅包含 JSON 数据清单变更，未出现 Java/Spring Boot 代码、HTTP 入口、鉴权配置、SQL、日志或凭证处理逻辑的新增/修改行；基于当前 diff，未发现可直接落到新增行上的安全问题。HTTP 入口清单：本分片 diff 中未出现 @GetMapping/@PostMapping/@PutMapping/@DeleteMapping/@PatchMapping 或带路径的 @RequestMapping，故无可识别的新增/修改 HTTP 入口。
 
 **分片 24**
 
-本分片展示的变更均为 JSON 清单数据项替换/补充，未见新增代码逻辑、权限放行、异常处理或类型安全问题。就当前 diff 可见范围看，数据文件格式保持有效，整体变更较稳妥。
+本分片仅包含多份 JSON 清单数据调整，变更均为静态编码列表替换/细分，未见新增语法、异常处理、并发、权限或配置层面的常规代码问题。基于当前 diff 无法确认这些税则编码替换的业务正确性，但从变更本身未发现可直接定位到新增行的缺陷。
 
 **分片 25**
 
-本分片仅包含 data/sources/raw_links.txt 的一行外部数据源 URL 更新，未见新增/修改的 Java/Spring Boot 代码、HTTP 入口、鉴权逻辑、SQL、密钥、日志或并发控制相关变更；基于当前 diff 未发现可直接归因到新增行的安全问题。
+本分片 diff 仅变更 data/sources/raw_links.txt 中一条外部数据源 URL，从 revision_9_json 切换到 revision_11_json；未见新增/修改的 Java/Spring Boot 代码、HTTP 入口、鉴权配置、密钥、日志或 SQL 相关变更，因此未发现可直接归因于新增行的安全问题。
+
+HTTP 入口清单（方法 + 路径）：本分片 diff 未出现 @GetMapping/@PostMapping/@PutMapping/@DeleteMapping/@PatchMapping 或带路径的 @RequestMapping，故无可识别的新增/修改 HTTP 入口。
 
 **分片 26**
 
-本分片提供的 diff 仅涉及 data/sources/raw_links.txt 中一条数据源链接替换，未见新增/修改行上的明显功能性、异常处理、类型安全或配置兼容性问题。整体变更较小且风险较低。</pre></details></div></div>
+本分片提供的实际 diff 仅涉及 data/sources/raw_links.txt 中一个数据源链接版本号更新，未见新增/修改代码引入的常规质量问题。该变更范围很小，当前看不存在需要报告的边界条件、异常处理、并发、类型安全或兼容性问题。</pre></details></div></div>
       <div class="filter-row">
         <span class="filter-label">点击筛选:</span>
         <div class="chips">
-          <span class="chip critical filter-chip" data-filter="critical" onclick="filterBySeverity(this)">Critical: 3</span>
-          <span class="chip major filter-chip" data-filter="major" onclick="filterBySeverity(this)">Major: 12</span>
-          <span class="chip minor filter-chip" data-filter="minor" onclick="filterBySeverity(this)">Minor: 4</span>
+          <span class="chip critical filter-chip" data-filter="critical" onclick="filterBySeverity(this)">Critical: 2</span>
+          <span class="chip major filter-chip" data-filter="major" onclick="filterBySeverity(this)">Major: 13</span>
+          <span class="chip minor filter-chip" data-filter="minor" onclick="filterBySeverity(this)">Minor: 3</span>
           <span class="chip info filter-chip" data-filter="info" onclick="filterBySeverity(this)">Info: 0</span>
-          <span class="chip">Total: 19</span>
+          <span class="chip">Total: 18</span>
         </div>
       </div>
     </section>
@@ -1441,64 +1444,97 @@ HTTP 入口清单（方法 + 路径）：本分片未出现任何可识别的 @G
       </div>
     </div>
 
-    <h2 class="section-title subsection-title">按文件的审查发现</h2><div class="findings-list-wrap"><details class="file-group findings-file-group" open="open" id="fg-81d18a7a7590" data-file-path="backend/src/main/java/com/htsre/config/HtsreJwtFilter.java" data-short-name="HtsreJwtFilter.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/src/main/java/com/htsre/config/HtsreJwtFilter.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L60-62</span><span class="finding-cat">安全风险</span></div><div class="finding-desc">新增日志在 HS256 本地令牌校验成功时输出 `sub`，且该日志语句本身包含 `token` 语义上下文（JWT 过滤器认证路径）。认证成功日志会把用户标识稳定写入日志，结合同文件其他失败日志中的 tokenPreview，容易形成可关联的认证轨迹；一旦日志系统被低权限运维、聚合平台或第三方采集访问，可被用于枚举有效账号、重放排查或侧信道分析。该变更属于认证链路上的敏感信息扩散。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>删除该成功认证日志，或降级为不含主体标识的统计型日志，例如仅记录固定文案和请求追踪 ID；如确需排障，使用受控开关并对主体做不可逆脱敏。示例：`log.trace(&quot;[JWT] HS256 token validated&quot;)`。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>开启 debug 日志后，使用有效 HS256 token 访问任意受保护接口，确认日志中不再出现用户 `sub`、email、token 片段或其他可识别认证主体信息。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-8b4c2052c5cd" data-file-path="backend/src/main/java/com/htsre/controller/AdminController.java" data-short-name="AdminController.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/src/main/java/com/htsre/controller/AdminController.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span> <span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">2 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L113-204</span><span class="finding-cat">安全风险</span></div><div class="finding-desc">异常处理将 `e.getMessage()` 直接返回给客户端。该接口处理文件上传与后台持久化，底层异常消息可能包含数据库结构、存储路径、解析细节或第三方组件报错，形成内部实现信息泄露，便于攻击者进一步枚举系统行为。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>对外返回固定的通用错误信息，例如 `Submit failed`，详细异常仅记录到服务端日志；同时对已知业务异常单独分类返回安全的提示文本。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>构造触发底层解析/存储异常的上传请求，验证响应体不包含具体异常消息、SQL/路径/堆栈关键词。</p></div></div></details></div><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L166-169</span><span class="finding-cat">性能隐患</span></div><div class="finding-desc">按状态筛选请求时先调用 `adminService.getAllRequests()` 拉取全部记录，再在内存中 `stream().filter(...)`。当数据更新申请量增长后，这里会造成不必要的全量加载和内存过滤，列表接口性能会明显下降。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>将状态过滤下推到持久层，例如在 repository/service 中新增按状态查询的方法（如 `findByStatusIgnoreCase(status)`），控制器只调用带条件的查询接口，避免全表读取。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>准备大量 `DataUpdateRequest` 数据（如 10 万条），分别调用带 `status` 和不带 `status` 的列表接口，对比响应时间和数据库扫描行数，确认筛选查询不再全量加载。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-0109a8e016f0" data-file-path="backend/src/main/java/com/htsre/controller/AuthController.java" data-short-name="AuthController.java" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">backend/src/main/java/com/htsre/controller/AuthController.java</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">1 Critical</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L56-63</span><span class="finding-cat">权限与访问控制</span></div><div class="finding-desc">**原因：** 刷新接口新增逻辑直接对客户端提交的 JWT 做 `Base64` 解码并读取 `email`/`role`，随后调用 `authService.refresh(null, email, role)`，显式绕过了原本基于旧 token 的服务端校验。这里既没有签名校验，也没有校验 token 是否由本系统签发，攻击者只需伪造任意 payload 即可把自己声明为任意邮箱和角色。
+    <h2 class="section-title subsection-title">按文件的审查发现</h2><div class="findings-list-wrap"><details class="file-group findings-file-group" open="open" id="fg-81d18a7a7590" data-file-path="backend/src/main/java/com/htsre/config/HtsreJwtFilter.java" data-short-name="HtsreJwtFilter.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/src/main/java/com/htsre/config/HtsreJwtFilter.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L60-62</span><span class="finding-cat">安全风险</span></div><div class="finding-desc">新增日志在 HS256 token 校验成功时直接输出 `sub`：`log.debug(&quot;[JWT] HS256 token valid: sub={}&quot;, email);`。鉴于该过滤器处理认证凭证，`sub/email` 属于身份敏感信息；一旦 debug 日志在生产或聚合日志系统中开启，会形成可枚举的有效账号清单，并帮助攻击者确认某个 token 是否对应真实有效主体。该变更还与同文件已有 token 校验日志组合后，放大了认证侧信息泄露面。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>删除该成功认证日志，或仅记录不可逆摘要/内部 requestId，不要记录 `sub/email/token` 等身份与凭证相关字段。例如改为：`log.debug(&quot;[JWT] HS256 token valid&quot;);`。如确需排障，建议仅在本地开发环境通过显式开关输出脱敏值。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>开启 debug 日志后，使用有效 HS256 token 发起请求，确认日志中不出现邮箱、用户名、subject、token 片段等可识别身份信息。随后检查集中日志平台检索条件，确保无法通过日志枚举有效账号。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-8b4c2052c5cd" data-file-path="backend/src/main/java/com/htsre/controller/AdminController.java" data-short-name="AdminController.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/src/main/java/com/htsre/controller/AdminController.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span> <span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">2 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L111-188</span><span class="finding-cat">异常处理</span></div><div class="finding-desc">异常分支将 `e.getMessage()` 直接返回给客户端，新增管理端数据提交接口后，这会把底层解析、存储、数据库或第三方组件的内部错误细节暴露给调用方。攻击者可借此枚举后端实现、字段约束、文件处理逻辑，辅助进一步攻击。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>对外返回固定的通用错误信息，详细异常仅记录到服务端日志；同时对已知业务异常做白名单化映射。
 
 ```java
-String[] parts = token.split(&quot;\\.&quot;);
-...
+catch (Exception e) {
+    log.error(&quot;[ADMIN] Submit failed for {}&quot;, email, e);
+    return ResponseEntity.status(500).body(Map.of(&quot;error&quot;, &quot;Submit failed&quot;));
+}
+```</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>上传畸形文件或触发数据库异常，确认响应体不包含具体异常消息、SQL/类名/路径等内部细节。</p></div></div></details></div><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L102-170</span><span class="finding-cat">性能隐患</span></div><div class="finding-desc">`/api/admin/data/submit` 直接对上传文件执行 `file.getBytes()`，PDF 还会再做一次 Base64 编码，等于在内存中同时持有原始字节和编码后的字符串。对大文件提交时，容易造成单次请求内存占用过高，影响接口稳定性。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>在控制层增加文件大小上限校验，并尽量避免一次性把整个文件读入内存；例如先校验 `file.getSize()`，对超限文件返回 400/413。若必须保存内容，可在服务层采用流式处理或落盘/对象存储后仅保存引用。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>上传接近系统允许上限的大 PDF 文件，观察接口内存占用和响应情况；超限文件应被明确拒绝，而不是在处理过程中触发 OOM 或长时间卡顿。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-0109a8e016f0" data-file-path="backend/src/main/java/com/htsre/controller/AuthController.java" data-short-name="AuthController.java" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">backend/src/main/java/com/htsre/controller/AuthController.java</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">1 Critical</span> <span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">2 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L59-61</span><span class="finding-cat">权限与访问控制</span></div><div class="finding-desc">**原因：** 刷新接口新增逻辑直接对客户端提交的 JWT 进行 `Base64` 解码并从未校验签名、签发者、过期状态或服务端绑定关系，就把其中的 `email` 与 `role` 当作可信身份使用，并调用 `authService.refresh(null, email, role)` 生成新登录态。这样攻击者可自行构造任意 payload（例如伪造 `SUPER_ADMIN` 角色），即使原 token 从未由系统签发，也可能换取新的有效凭证。
+
+```java
 Map&lt;String, Object&gt; claims = new ObjectMapper().readValue(payloadJson, Map.class);
 String email = String.valueOf(claims.getOrDefault(&quot;email&quot;, claims.getOrDefault(&quot;sub&quot;, &quot;unknown&quot;)));
 String role = String.valueOf(claims.getOrDefault(&quot;role&quot;, &quot;USER&quot;));
+log.info(&quot;[AUTH] Refresh: email={}&quot;, email);
 LoginResponse response = authService.refresh(null, email, role);
 ```
 
-**影响：** 若该接口用于签发新访问令牌，则未持有有效签名 token 的攻击者也可能通过构造伪造 JWT 获取任意身份/角色的新 token，形成认证绕过与权限提升，风险为高危。
+**影响：** 这是典型的认证绕过/权限提升风险。未持有合法签名 token 的攻击者可伪造任意用户身份和角色刷新出新 token，进一步访问受保护接口，导致后台管理能力被接管或敏感数据被越权访问。
 
 ---
 
-刷新接口现在仅通过 Base64 解码旧 token 的 payload 提取 email/role，然后调用 `authService.refresh(null, email, role)`，不再把原 token 传入服务层做校验。这样即使请求方提交的是伪造的 JWT 字符串，只要 payload 中带有任意 email/role，也可能被当作合法身份刷新出新 token，导致认证边界失效。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>刷新接口必须仅接受并验证由服务端签发的 refresh token/expired access token，禁止从未验签的 payload 直接信任 `email` 和 `role`。应恢复/增加服务端验签与过期、签发者、用途校验，例如先调用 `jwtService.parseClaims(token)` 或在 `authService.refresh(token, ...)` 内完成完整校验，再从已验证 claims 中提取身份信息；若校验失败统一返回 401。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>构造一个签名为空或伪造签名的 JWT，payload 中填入 `{&quot;email&quot;:&quot;admin@example.com&quot;,&quot;role&quot;:&quot;SUPER_ADMIN&quot;}`，调用刷新接口；期望返回 401，且绝不能签发新的管理员 token。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-2948ef5000b2" data-file-path="backend/src/main/java/com/htsre/model/DataUpdateRequest.java" data-short-name="DataUpdateRequest.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/src/main/java/com/htsre/model/DataUpdateRequest.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span> <span class="stat-chip stat-minor">2 Minor</span></span><span class="file-group-count">3 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L21-22</span><span class="finding-cat">安全风险</span></div><div class="finding-desc">新增实体将上传文件内容以 `String` 明文持久化到 `LONGTEXT` 字段：`file_content`。从当前 diff 可见未体现任何加密、脱敏或最小化存储措施；若后续上传内容包含用户提交的敏感业务数据、凭证片段或受限文档，数据库泄露、备份外流或低权限运维读取都会直接暴露原文内容。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>避免将原始文件全文长期明文入库；优先只保存解析后的必要字段或文件摘要。若业务必须留存原文，应在写库前进行应用层加密，并对读取路径增加严格授权与审计。例如将 `fileContent` 改为保存加密后的密文，并使用独立密钥管理方案。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>构造包含敏感字段（如账号、内部标识、业务备注）的上传文件，验证持久化后数据库中是否仍可直接读取原文；同时检查备份导出场景下是否会暴露完整文件内容。</p></div></div></details></div><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L26-27</span><span class="finding-cat">状态管理</span></div><div class="finding-desc">`status` 使用普通字符串并默认赋值为 `&quot;PENDING&quot;`，但当前实体层没有任何枚举或取值约束。后续业务代码可写入任意字符串（如大小写不一致、拼写错误），会导致审核流状态不可控，查询条件和状态迁移逻辑也容易失配。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>将状态改为枚举并显式映射，例如定义 `enum DataUpdateRequestStatus { PENDING, APPROVED, REJECTED }`，字段使用 `@Enumerated(EnumType.STRING)`；若暂时保留字符串，至少增加 Bean Validation 或数据库 `CHECK` 约束限制允许值。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>补充状态持久化测试：保存合法状态应成功；保存非法状态（如 `pending`、`DONE`）应在应用层校验失败或被数据库拒绝。</p></div></div></details></div><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L29-30</span><span class="finding-cat">数据一致性</span></div><div class="finding-desc">`submittedAt` 仅在 Java 对象初始化时赋值，且列未声明 `nullable = false`。如果后续通过反序列化、映射复制或显式调用 `setSubmittedAt(null)` 保存实体，数据库层不会阻止写入空值，容易出现同一表中部分记录缺失提交时间，影响排序、审计和状态追踪。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>将该字段约束收紧到实体和数据库两层，例如：`@Column(name = &quot;submitted_at&quot;, nullable = false, updatable = false)`，并配合 `@PrePersist` 统一赋值：`if (submittedAt == null) submittedAt = LocalDateTime.now();`。这样可避免调用方绕过默认值导致脏数据。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>新增持久化测试：构造 `DataUpdateRequest` 后显式执行 `setSubmittedAt(null)` 再保存，验证保存前会自动补齐时间或数据库拒绝空值；同时验证更新已有记录时不会意外改写 `submittedAt`。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-14d112aa5a11" data-file-path="backend/src/main/java/com/htsre/service/AdminService.java" data-short-name="AdminService.java" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">backend/src/main/java/com/htsre/service/AdminService.java</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">1 Critical</span> <span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">2 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L181-224</span><span class="finding-cat">安全风险</span></div><div class="finding-desc">将 `originalFilename` 直接用于 `targetDir.resolve(req.getOriginalFilename())` 后写入文件，未做文件名规范化、路径穿越校验或白名单限制。攻击者只要能提交或审批请求，即可通过诸如 `../../application-prod.yml`、绝对路径或带分隔符的文件名把内容写到预期目录之外，造成任意文件覆盖，进一步可能导致配置篡改、凭据破坏甚至远程代码执行。
+**原因：** 刷新接口不再调用上游 Nimbus 刷新能力，也未在该方法内校验 `currentToken` 的有效性、过期状态或签发来源，而是直接基于传入的 `email`、`role` 重新签发本地 JWT：
+```java
+String token = jwtService.generateToken(email, email, role);
+return new LoginResponse(token, email, email, role, null, null);
+```
+如果控制器层把 `email`/`role` 来自请求参数、请求体或未经严格校验的上下文传入，这里会形成“凭声明刷新”的能力，导致令牌续签绕过真实会话状态。
 
-问题代码：
+**影响：** 认证过期控制被削弱：已失效、被吊销或来源不可信的会话仍可能获得新 token；在最坏情况下，攻击者可借构造的身份字段刷新出更高权限令牌，造成长期会话维持或权限提升。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>刷新接口必须只接受并验证由服务端签发的 refresh/access token，严禁从未验签的 payload 直接信任 `email/role`。应调用统一的 JWT 校验逻辑（验签、过期、issuer、token type），并从校验后的 claims 中取身份；同时不要把 `null` 传给刷新服务。
+
+```java
+@PostMapping(&quot;/refresh&quot;)
+public ResponseEntity&lt;?&gt; refresh(@RequestHeader(&quot;Authorization&quot;) String authHeader) {
+    String token = extractBearer(authHeader);
+    Claims claims = jwtService.parseAndValidate(token); // 验签+校验过期/类型
+    String email = claims.getSubject();
+    String role = claims.get(&quot;role&quot;, String.class);
+    LoginResponse response = authService.refresh(token, email, role);
+    return ResponseEntity.ok(response);
+}
+```
+如系统采用独立 refresh token，应额外校验 token type=refresh，并结合服务端存储/黑名单机制防重放。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>1. 构造一个未签名或使用错误密钥签名的 JWT，payload 中填入 `email=admin@example.com, role=SUPER_ADMIN`，调用 `POST /refresh`，预期应返回 401/403，绝不能签发新 token。2. 使用已过期 access token 调用刷新接口，若不是合法 refresh token，预期拒绝。3. 篡改合法 token 的 role 后再次调用，预期拒绝。</p></div></div></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L61-62</span><span class="finding-cat">业务逻辑</span></div><div class="finding-desc">刷新接口在仅解析 JWT payload 后，直接调用 `authService.refresh(null, email, role)`，不再把原 refresh token/旧 token 传给服务层校验。这样只要客户端构造一个格式合法的三段式字符串并在 payload 中伪造 email/role，就可能拿到新的登录态，导致刷新流程失去对原令牌真实性和可刷新性的校验。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>保持服务层对原 token 的校验链路，不要在控制层仅凭未验签 payload 生成新会话。至少应继续传入原 token：`authService.refresh(token, email, role)`，并由服务层校验签名、过期策略、token 类型/黑名单等；如果需要支持过期 access token 刷新，也应使用专门的 refresh token 或显式的 `parseClaimsAllowExpiredButVerifySignature` 方案。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>构造一个未签名或伪造签名的 JWT（payload 含任意 email/role），调用 `POST /refresh`，验证接口应返回 401/400，而不是成功返回新的 `LoginResponse`。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-2948ef5000b2" data-file-path="backend/src/main/java/com/htsre/model/DataUpdateRequest.java" data-short-name="DataUpdateRequest.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/src/main/java/com/htsre/model/DataUpdateRequest.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span> <span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">2 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L22-23</span><span class="finding-cat">安全风险</span></div><div class="finding-desc">新增实体将上传文件内容以 `String fileContent` 形式直接持久化到数据库，并映射为 `LONGTEXT`。从本次 diff 可见这里没有任何加密、脱敏或最小化存储约束；若后续该实体用于保存用户上传的原始数据文件，数据库泄露、误查库或备份外流时会直接暴露完整文件内容，扩大敏感数据暴露面。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>避免直接持久化完整原始文件内容；优先只保存受控文件存储中的引用（如对象存储 key）及必要元数据。若业务必须入库，至少对 `fileContent` 做字段级加密，并限制可写入内容类型/大小。例如引入 `AttributeConverter` 对该字段透明加解密，或改为保存摘要/解析结果而非原文。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>提交包含敏感业务数据/个人信息的文件，验证数据库中是否能直接明文检索到原始内容；同时检查备份库、审计查询和管理后台是否会暴露该字段。</p></div></div></details></div><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L27-28</span><span class="finding-cat">业务逻辑</span></div><div class="finding-desc">`status` 使用普通字符串并以字面量 `&quot;PENDING&quot;` 作为默认值，缺少枚举约束。后续审核流转若写入拼写不一致或未定义状态（如 `pending`、`APPROVE`），实体层无法阻止，容易造成状态机分支遗漏和脏数据。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>将状态改为枚举并使用 `@Enumerated(EnumType.STRING)` 持久化，例如定义 `enum DataUpdateStatus { PENDING, APPROVED, REJECTED }`，字段改为 `private DataUpdateStatus status = DataUpdateStatus.PENDING;`；同时在服务层限制合法状态转换。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>补充持久化测试：分别保存合法状态与非法状态值，验证非法值在编译期或转换期被拦截；再补充审核流转测试，确认仅允许 `PENDING -&gt; APPROVED/REJECTED`。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-14d112aa5a11" data-file-path="backend/src/main/java/com/htsre/service/AdminService.java" data-short-name="AdminService.java" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">backend/src/main/java/com/htsre/service/AdminService.java</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">1 Critical</span> <span class="stat-chip stat-major">2 Major</span></span><span class="file-group-count">3 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L181-193</span><span class="finding-cat">权限与访问控制</span></div><div class="finding-desc">**原因：** `submitRequest()` 最终会把 `originalFilename` 直接拼接到目标目录：
 ```java
 Path targetDir  = resolveTargetDir(req.getFileType());
 Path targetFile = targetDir.resolve(req.getOriginalFilename());
-...
-Files.write(targetFile, ...);
-```</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>对 `originalFilename` 仅允许安全文件名白名单（如 `[a-zA-Z0-9._-]+`），并在写入前执行规范化校验，确保目标路径仍位于 `targetDir` 下。例如：
+```
+且对 `originalFilename` 未做任何规范化、父目录跳转（`..`）、绝对路径校验。结合该服务对应的 HTTP 入口 `/api/admin/data/submit`，攻击者只要能提交请求并让后续审批通过（或自身为 `SUPER_ADMIN` 自动审批），即可通过构造如 `../../application-prod.yml`、绝对路径等文件名把内容写到预期目录之外。
+
+**影响：** 这是可利用的任意路径写入/目录穿越风险，可能覆盖配置文件、规则文件或其他服务器可写文件，进而导致权限绕过、服务破坏，甚至在特定部署下形成进一步代码执行链。由于 `SUPER_ADMIN` 提交会自动审批，风险面更高。
+
+---
+
+**原因：** `resolveTargetDir()` 对未识别的 `fileType` 直接走默认分支：
 ```java
-String safeName = Paths.get(originalFilename).getFileName().toString();
-if (!safeName.matches(&quot;[a-zA-Z0-9._-]+&quot;)) {
+default -&gt; ingestionDataPath.resolve(fileType);
+```
+这意味着调用方可通过构造任意 `fileType` 控制写入的子目录名；若 `fileType` 含路径分隔或 `..`，会进一步扩大写入范围。该逻辑与 `/api/admin/data/submit` 的落盘流程直接关联，但没有看到对 `fileType` 的白名单拒绝策略。
+
+**影响：** 攻击者可借此把上传内容写入非预期目录，绕过“仅允许更新固定数据类型”的业务边界；与未校验的 `originalFilename` 叠加后，可显著放大为任意文件写入风险。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>对 `originalFilename` 做严格白名单校验，仅允许基础文件名，不允许路径分隔符、`..`、绝对路径；并在 `normalize()` 后校验目标路径必须仍位于 `targetDir` 下。例如：
+```java
+Path targetDir = resolveTargetDir(req.getFileType()).toAbsolutePath().normalize();
+String filename = Paths.get(req.getOriginalFilename()).getFileName().toString();
+if (!filename.matches(&quot;[A-Za-z0-9._-]+&quot;)) {
     throw new IllegalArgumentException(&quot;Invalid filename&quot;);
 }
-Path normalized = targetDir.resolve(safeName).normalize();
-if (!normalized.startsWith(targetDir.normalize())) {
+Path targetFile = targetDir.resolve(filename).normalize();
+if (!targetFile.startsWith(targetDir)) {
     throw new IllegalArgumentException(&quot;Path traversal detected&quot;);
 }
 ```
-同时建议按 `fileType` 维护允许的固定文件名集合，避免任意命名写盘。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>调用 `/api/admin/data/submit` 提交 `originalFilename=../../application-prod.yml` 或 `/tmp/pwned`，随后走审批/自动提交流程；验证服务应拒绝请求，且目标目录外不存在被创建/覆盖的文件。</p></div></div></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L124-156</span><span class="finding-cat">数据一致性</span></div><div class="finding-desc">SUPER_ADMIN 提交数据时，代码先将请求状态保存为 `APPROVED`，再调用 `commitToFilesystem(req)`。如果文件写入或后续 `dataIngestionService.run(null)` 失败，数据库事务会回滚，但文件系统写入无法回滚，可能出现“数据库无审批记录/状态未生效，但磁盘文件已被覆盖”的部分成功状态。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>避免在数据库事务内直接执行不可回滚的文件系统副作用。可改为：先将请求持久化为待处理状态，事务提交后通过 `TransactionSynchronization`/事件监听执行文件写入；或先写入临时文件，待数据库提交成功后再原子 rename 到正式位置，并在失败时清理临时文件。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>构造一个会让 `dataIngestionService.run(null)` 抛异常的场景，验证提交后数据库状态与磁盘文件不会出现不一致；失败时正式目标文件应保持原状。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-97aafab7aedd" data-file-path="backend/src/main/java/com/htsre/service/AiAnalysisService.java" data-short-name="AiAnalysisService.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/src/main/java/com/htsre/service/AiAnalysisService.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L82-88</span><span class="finding-cat">边界条件</span></div><div class="finding-desc">解析 Gemini 响应时直接执行 `candidates.get(0)`、`parts.get(0)`，未检查 `candidates`/`parts` 是否为空，也未校验 `content`、`text` 是否存在。Gemini 在限流、内容拦截或返回非标准结构时很容易触发 `IndexOutOfBoundsException`/`NullPointerException`，导致分析接口直接报 500。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>在读取前逐层校验响应结构，并对空候选、空 parts、缺失 text 给出明确业务异常，例如：`if (candidates == null || candidates.isEmpty()) throw new RuntimeException(&quot;AI 未返回可解析结果&quot;);`。同时可兼容读取错误字段并记录原始响应摘要。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>模拟 Gemini 返回 `{ &quot;candidates&quot;: [] }`、`content.parts=[]` 或缺失 `text` 的响应，接口应返回可理解的错误信息，而不是数组越界/NPE。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-a8b44d710399" data-file-path="backend/src/main/java/com/htsre/service/AuthService.java" data-short-name="AuthService.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/src/main/java/com/htsre/service/AuthService.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L38-70</span><span class="finding-cat">API契约</span></div><div class="finding-desc">登录成功后不再返回 Nimbus 的 `refreshAt/expireAt`，而是改为签发“long-lived JWT”。这会改变既有认证契约：原先依赖上游令牌过期/刷新语义的调用链现在失去服务端强制失效点，若本地 JWT 生命周期更长或未绑定 Nimbus 会话状态，则用户在 Nimbus 侧已失效、禁用或登出后，仍可能继续持有本系统有效令牌，形成认证失效窗口。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>保持与上游身份源一致的过期与刷新语义：本地 JWT 的 `exp` 不应超过 Nimbus 令牌有效期，并在校验时结合上游会话状态或用户状态做二次校验。若必须自签 JWT，至少在响应中保留明确的过期时间，并在服务端实现吊销/黑名单机制。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>使用 `/api/auth/login` 登录后，在 Nimbus 侧使该会话过期或禁用账号；随后继续携带本系统 JWT 访问受保护接口，验证应被拒绝而不是继续通过。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-885beb4b53fd" data-file-path="backend/src/main/java/com/htsre/service/UserSeeder.java" data-short-name="UserSeeder.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/src/main/java/com/htsre/service/UserSeeder.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span> <span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">2 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L37-54</span><span class="finding-cat">权限与访问控制</span></div><div class="finding-desc">**原因：** 代码在启动时无条件为固定邮箱 `junjie.ma@agslogistics.com` 自动创建 `SUPER_ADMIN` 账户，只要数据库中不存在该邮箱就会补种。该高权限主体不依赖外部配置、审批流程或环境隔离，属于将最高权限身份硬编码进应用逻辑。
+同时建议按 `fileType` 绑定固定文件名集合，避免客户端任意指定落盘文件名。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>调用 POST `/api/admin/data/submit`，提交 `originalFilename=../../application-prod.yml` 或 `/tmp/poc.txt`；验证服务应拒绝请求，且审批/自动审批后不会在目标目录外生成或覆盖文件。</p></div></div></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L126-131</span><span class="finding-cat">数据一致性</span></div><div class="finding-desc">`submitRequest` 在 SUPER_ADMIN 自动审批分支中，先把请求状态保存为 `APPROVED`，再执行 `commitToFilesystem(req)`。如果文件写入或后续数据重载失败，事务会因运行时异常回滚数据库，但文件系统写入无法回滚，可能出现“数据库无审批记录/仍回滚，但磁盘文件已更新”的部分成功状态。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>避免在数据库事务内直接执行不可回滚的文件系统副作用。可改为：先持久化请求并提交事务，再通过事务提交后回调（如 `TransactionSynchronizationManager`）执行文件写入；或引入补偿逻辑，在失败时删除已写入文件并恢复旧版本。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>模拟 `commitToFilesystem` 中 `Files.write*` 成功、`dataIngestionService.run(null)` 抛异常的场景，验证不会出现数据库回滚但磁盘文件已被替换的状态。</p></div></div></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L183-186</span><span class="finding-cat">边界条件</span></div><div class="finding-desc">将 `originalFilename` 直接用于 `targetDir.resolve(...)` 写文件，未做规范化或路径穿越校验。若上游允许传入包含 `../` 或绝对路径片段的文件名，这里会把已审批内容写到目标目录之外，导致文件落盘位置失控，也可能覆盖应用其他文件。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>在落盘前仅保留文件名本身并校验规范化后的路径必须位于目标目录内，例如：`Path normalized = targetDir.resolve(Paths.get(req.getOriginalFilename()).getFileName()).normalize(); if (!normalized.startsWith(targetDir.normalize())) { throw new IllegalArgumentException(&quot;Invalid filename&quot;); }`。同时建议对白名单扩展名做限制。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>构造 `originalFilename` 为 `../app.yml`、`../../data/rules/x.json`、绝对路径等值，审批请求后应被拒绝，且目标目录外不存在新写入文件。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-97aafab7aedd" data-file-path="backend/src/main/java/com/htsre/service/AiAnalysisService.java" data-short-name="AiAnalysisService.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/src/main/java/com/htsre/service/AiAnalysisService.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L82-89</span><span class="finding-cat">边界条件</span></div><div class="finding-desc">解析 Gemini 响应时直接链式访问 `candidates.get(0) / parts.get(0)`，未校验 `candidates`、`content`、`parts` 是否为空或缺失。模型在限流、内容过滤、返回结构变化时可能返回无候选结果，当前代码会抛出 `IndexOutOfBoundsException`/`NullPointerException`，导致接口异常失败且错误信息不明确。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>在读取前显式校验响应结构，例如先判断 `candidates != null &amp;&amp; !candidates.isEmpty()`、`parts != null &amp;&amp; !parts.isEmpty()`，否则记录原始响应并抛出业务化异常：`throw new RuntimeException(&quot;AI 分析返回结果为空，请稍后重试&quot;)`。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>模拟 Gemini 返回 `{}`、`{&quot;candidates&quot;:[]}`、`{&quot;candidates&quot;:[{&quot;content&quot;:{&quot;parts&quot;:[]}}]}` 等响应，接口应返回可理解的业务错误而不是数组越界/NPE。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-885beb4b53fd" data-file-path="backend/src/main/java/com/htsre/service/UserSeeder.java" data-short-name="UserSeeder.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/src/main/java/com/htsre/service/UserSeeder.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L37-53</span><span class="finding-cat">安全风险</span></div><div class="finding-desc">代码在启动时硬编码植入一个固定邮箱的 `SUPER_ADMIN` 账户：`junjie.ma@agslogistics.com`。虽然密码使用随机值，但该高权限主体被无条件创建，属于将生产级特权身份写死在代码中的做法。一旦该邮箱对应的外部认证链路、账号绑定或后续找回流程存在缺陷，攻击面会被永久保留，且不同环境都会自动出现同一特权账号。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>移除代码中的固定超级管理员身份，改为通过受控配置、初始化脚本或一次性运维流程创建；至少要求仅在明确的 bootstrap 开关开启时执行，并把超级管理员邮箱放入环境变量/密钥管理系统中。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>在新环境启动应用，验证不会因默认代码逻辑自动生成固定 `SUPER_ADMIN` 账号；仅在显式初始化参数开启时才允许创建首个超级管理员。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-5113d464f7d1" data-file-path="backend/src/main/resources/application-mysql.yml" data-short-name="application-mysql.yml" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/src/main/resources/application-mysql.yml</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L12-42</span><span class="finding-cat">配置变更</span></div><div class="finding-desc">新增 `spring.flyway.ignore-missing-migrations: true` 会在数据库中已记录的历史 migration 文件缺失时继续启动并跳过校验，削弱了迁移完整性保护。攻击者或误操作若删除/遗漏了包含安全修复、权限收敛或约束加固的 migration，应用仍可能带着不完整 schema 正常运行，导致安全控制失效且难以及时发现。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>生产与测试环境均应保持 `ignore-missing-migrations: false`，让缺失 migration 在启动阶段失败暴露；如确有历史清理需求，应通过受控的基线重建或显式修复流程处理，而不是全局忽略。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>构造一个数据库已执行过 Vx migration、但部署包中移除该 migration 文件的场景；验证应用启动应失败并明确报错，而不是继续提供服务。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-605e9cdff070" data-file-path="backend/src/main/resources/application-prod.yml" data-short-name="application-prod.yml" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/src/main/resources/application-prod.yml</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L4-30</span><span class="finding-cat">配置变更</span></div><div class="finding-desc">生产配置新增 `spring.flyway.ignore-missing-migrations: true`，会允许缺失的历史迁移被静默忽略。对生产环境而言，这会直接降低对 schema 漂移和安全迁移缺失的检测能力，可能使本应由 migration 建立的唯一约束、外键、权限字段或审计结构未生效而继续对外服务。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>将生产环境配置改回 `ignore-missing-migrations: false`；若担心历史脚本管理问题，建立发布前 migration 完整性校验流程，并对缺失脚本执行人工审批和数据库一致性核验。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>在生产等价环境中删除一个已执行 migration 文件后启动应用，确认系统应阻止启动；同时检查告警/发布流程是否能识别该类迁移缺失。</p></div></div></details></div></div></details><details class="file-group findings-file-group" id="fg-891140183fca" data-file-path="review-ui/src/App.tsx" data-short-name="App.tsx" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">review-ui/src/App.tsx</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L64-65</span><span class="finding-cat">业务逻辑</span></div><div class="finding-desc">这里将 `adminRole` 固定为 `undefined`，同时又把该值传给 `Layout` 并用它控制 `AdminPage` 渲染，导致本次新增的 Admin 入口在运行时永远不会出现，相关页面与 API 实际不可达。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>接入已新增的 `useAdminRole()` 获取真实角色，例如根据 `loading/role` 决定是否展示 Admin tab；若功能未准备好，建议整块代码通过 feature flag 隐藏，而不是保留不可达分支。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>使用返回 `SUPER_ADMIN` 的账号登录，验证顶部能出现 Admin 标签并可进入管理页；普通用户则不显示该入口。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-b54727560650" data-file-path="review-ui/src/api/adminApi.ts" data-short-name="adminApi.ts" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">review-ui/src/api/adminApi.ts</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L101-106</span><span class="finding-cat">安全风险</span></div><div class="finding-desc">`fetchAdminMe()` 新增了直接从 `localStorage` 读取 `htsre_token` 并手工拼接 `Authorization` 头的逻辑。将访问令牌长期暴露在 `localStorage` 中会使任意同源 XSS 一旦发生即可直接窃取 Bearer Token；同时这里绕过了统一的 `authFetch` 凭证管理链路，形成第二套令牌读取路径，增加敏感凭证暴露面。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>避免在业务 API 中直接读取 `localStorage` 中的 token。统一通过内存态 provider / `authFetch` 获取凭证；若必须持久化，优先改为 HttpOnly/SameSite Cookie 或至少封装单点读取并配合严格 CSP、最小化暴露范围。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>在浏览器控制台模拟同源脚本执行 `localStorage.getItem(&#x27;htsre_token&#x27;)`，确认当前可直接读取令牌；修复后应无法通过前端脚本直接获取长期有效访问令牌。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-747d7e68caef" data-file-path="review-ui/src/lib/embedBridge.ts" data-short-name="embedBridge.ts" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">review-ui/src/lib/embedBridge.ts</span></span><span class="file-group-stats"><span class="stat-chip stat-major">2 Major</span></span><span class="file-group-count">2 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L17-21</span><span class="finding-cat">权限与访问控制</span></div><div class="finding-desc">**原因：** 嵌入模式仅依据 `window.parent !== window` 和 URL 查询参数中的 `parentOrigin` 判定，并直接信任该参数作为后续 `postMessage` 的目标/来源校验基准：
 
-```java
-private static final String SUPER_ADMIN_EMAIL = &quot;junjie.ma@agslogistics.com&quot;;
-...
-if (!userRepository.existsByEmail(SUPER_ADMIN_EMAIL)) {
-    HtsUser superAdmin = HtsUser.builder()
-            .email(SUPER_ADMIN_EMAIL)
-            ...
-            .role(&quot;SUPER_ADMIN&quot;)
-            .active(true)
-            .build();
-    userRepository.save(superAdmin);
+```ts
+export function detectEmbedMode(): EmbedMode {
+  if (window.parent === window) return { embedded: false, parentOrigin: null };
+  const parentOrigin = new URLSearchParams(window.location.search).get(PARENT_ORIGIN_PARAM);
+  if (!parentOrigin) return { embedded: false, parentOrigin: null };
+  return { embedded: true, parentOrigin };
 }
 ```
 
-**影响：** 一旦该邮箱可被外部身份系统映射、接管或误配，攻击者将直接获得系统最高权限；同时这也绕过了正常的权限授予与审计流程，扩大了生产环境的特权暴露面。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>移除代码中的固定 `SUPER_ADMIN` 自动补种逻辑。若确需初始化最高权限账户，应仅在受控初始化脚本或一次性 migration 中执行，并通过环境变量/密钥管理注入目标主体，且默认在生产环境禁用。另建议增加显式审计与双人审批流程。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>在空数据库环境启动应用，验证不会因代码默认逻辑自动生成固定邮箱的 `SUPER_ADMIN`；仅在显式启用初始化开关且提供受控配置时才创建。</p></div></div></details></div><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L42-50</span><span class="finding-cat">业务逻辑</span></div><div class="finding-desc">新建默认管理员时仍写入角色 `ADMIN`，但本次新增的管理逻辑只识别 `SUPER_ADMIN` 和 `DATA_ADMIN`（见 `AdminService.isAdminRole`）。这会导致通过 seeder 创建的默认管理员无法被新后台管理能力识别，出现“账号存在但没有管理权限”的角色断层。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>统一角色枚举，至少将默认管理员角色改为当前系统可识别的管理角色之一，或在 `isAdminRole` 中兼容旧角色 `ADMIN` 并补充迁移脚本。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>使用全新数据库启动应用，验证 `adminEmail` 种子账号登录后是否能访问 `/api/admin/...` 管理功能；若不能，应通过角色兼容或迁移修复。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-5113d464f7d1" data-file-path="backend/src/main/resources/application-mysql.yml" data-short-name="application-mysql.yml" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/src/main/resources/application-mysql.yml</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L12-13</span><span class="finding-cat">安全风险</span></div><div class="finding-desc">将 multipart 上传上限提升到 100MB，但本次 diff 未见同步增加鉴权前置拦截、内容类型限制、文件数量限制或更严格的上传端点约束。较大的请求体会显著放大未授权/低成本请求对内存、磁盘缓冲和线程池的消耗，增加拒绝服务风险。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>仅对确有业务需要的上传接口单独放宽限制，并同时增加服务端防护：限制允许的 Content-Type/扩展名、限制单次文件数量、在反向代理和应用层同时设置更小的默认请求体上限；若必须保留 100MB，建议为上传接口增加专用限流与鉴权校验。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>构造多个并发 100MB multipart 请求（含未登录和低权限场景），验证应用、网关和容器是否会出现线程阻塞、OOM、磁盘临时目录打满或 5xx 激增。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-605e9cdff070" data-file-path="backend/src/main/resources/application-prod.yml" data-short-name="application-prod.yml" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/src/main/resources/application-prod.yml</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L4-5</span><span class="finding-cat">安全风险</span></div><div class="finding-desc">生产环境将 multipart 上传上限提升到 100MB，但 diff 中未见与之配套的上传安全控制。生产环境暴露面更大，若上传接口存在匿名访问、弱鉴权或缺少限流，攻击者可利用大体积请求持续占用带宽和应用资源，形成可利用的 DoS 面。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>在生产环境采用更保守的默认 multipart 限制，并将大文件上传能力收敛到明确的受保护接口；同时在网关/Nginx、Spring Boot 和业务层统一配置大小限制、速率限制、超时和临时文件目录配额。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>在生产等价环境对上传入口执行压力测试与恶意大包测试，确认网关先于应用拒绝超限请求，且应用在高并发大文件场景下无资源耗尽。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-2ff0d9c852d6" data-file-path="backend/src/main/resources/db/migration/V5__add_data_update_requests.sql" data-short-name="V5__add_data_update_requests.sql" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">backend/src/main/resources/db/migration/V5__add_data_update_requests.sql</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">1 Critical</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L17-20</span><span class="finding-cat">安全风险</span></div><div class="finding-desc">迁移脚本直接写入一个固定邮箱的 `SUPER_ADMIN` 账户，属于硬编码高权限身份。即使 `password_hash` 看似不可登录，该记录仍会在生产数据库中长期存在，并可能与后续认证/用户初始化逻辑叠加，造成未经过审批的特权账户植入与审计绕过风险。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>删除该硬编码种子数据，改为通过受控的初始化流程或运维脚本在部署时显式创建管理员，并要求管理员标识、凭据和启用状态全部来自安全配置或人工审批流程；若必须保留初始化逻辑，至少限定仅在本地/开发环境执行。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>在空库初始化后检查 `users` 表，确认生产迁移不会自动出现预置 `SUPER_ADMIN`；验证管理员创建必须经过显式配置或人工审批。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-b54727560650" data-file-path="review-ui/src/api/adminApi.ts" data-short-name="adminApi.ts" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">review-ui/src/api/adminApi.ts</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L100-106</span><span class="finding-cat">安全风险</span></div><div class="finding-desc">`fetchAdminMe()` 直接从 `localStorage` 读取 `htsre_token` 并用原生 `fetch` 发送认证请求，绕过了统一的 token provider / refresh / unauthorized 处理链。这样会在 token 过期、嵌入模式或未来认证介质切换时继续使用陈旧本地 token，导致认证状态与全局请求层不一致；在嵌入模式下还可能错误地优先使用残留本地 token，而不是宿主下发 token。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>避免在业务 API 中直接读取 `localStorage` 令牌。应复用统一认证抽象（例如扩展 `authFetch` 支持“静默 401 不触发 logout”的选项，或暴露统一 `getAccessToken()` 方法）来获取当前有效 token，并保持 refresh/嵌入模式行为一致。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>先在本地 `localStorage` 写入一个过期或低权限 `htsre_token`，再以嵌入模式加载页面并由宿主下发有效高权限 token；验证 `fetchAdminMe()` 是否仍错误使用本地 token，导致角色识别失败或身份错乱。</p></div></div></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-747d7e68caef" data-file-path="review-ui/src/lib/embedBridge.ts" data-short-name="embedBridge.ts" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">review-ui/src/lib/embedBridge.ts</span></span><span class="file-group-stats"><span class="stat-chip stat-major">2 Major</span></span><span class="file-group-count">2 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L17-22</span><span class="finding-cat">安全风险</span></div><div class="finding-desc">嵌入模式仅依据 `window.parent !== window` 和 URL 查询参数中的 `parentOrigin` 判定，并直接信任该值作为后续 `postMessage` 的目标/来源校验基准。攻击者若能构造一个恶意父页面，以任意 `?parentOrigin=https://evil.example` 打开该 iframe，即可伪装成“合法宿主”，向子应用发送 `HTS_EMBED_TOKEN` 消息并接管嵌入态认证上下文。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>不要把 `parentOrigin` 的信任根放在可篡改的 URL 参数上。应至少在前端对 `parentOrigin` 做白名单校验（仅允许受控宿主域名），更稳妥的是由后端下发签名配置或在握手时增加一次性 nonce / 签名校验，确保只有受信宿主可建立 token bridge。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>构造一个第三方页面嵌入该应用，并在 iframe URL 上附带 `parentOrigin` 为第三方自身域名；随后从父页面发送 `HTS_EMBED_TOKEN` 消息，验证子应用是否接受该 token 并以嵌入态访问受保护 API。</p></div></div></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L42-49</span><span class="finding-cat">资源管理</span></div><div class="finding-desc">`installEmbedProviders` 每次调用都会新增一个全局 `message` 监听器，但没有任何卸载逻辑。React 18 开发模式下根组件 effect 可能执行两次，或后续若该初始化被重复触发，会导致重复监听、重复唤醒 `tokenWaiters`，并造成内存泄漏和难以定位的鉴权异常。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>让 `installEmbedProviders` 返回 cleanup 函数，并在 `App.tsx` 的 effect 中调用；或在模块内做幂等保护，确保只注册一次监听。例如保存 handler 引用并在重复安装前先 `removeEventListener`。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>在 React StrictMode 下启动应用并嵌入宿主，连续发送一次 `HTS_EMBED_TOKEN` 消息，验证 token 处理只发生一次；反复挂载/卸载 App 后检查不会累积多个 `message` 监听器。</p></div></div></details></div></div></details></div>
+这意味着任意站点只要以 iframe 方式加载当前应用，并在 URL 中注入自己控制的 `parentOrigin`，子应用就会进入“信任宿主”的认证桥接流程。这里缺少对允许宿主来源的白名单校验或签名校验，属于对外部身份边界的错误信任。
+
+**影响：** 若后端接受宿主下发的 token，恶意父页面可冒充合法宿主参与握手、向子应用投递其控制的 token/刷新响应，导致认证上下文被外部页面接管；即使后端最终拒绝非法 token，前端也已被切换到嵌入认证路径，扩大了认证绕过与会话混淆攻击面。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>对 `parentOrigin` 做严格白名单校验，至少限制为受控宿主域名集合；更稳妥的做法是由后端/构建配置下发允许的宿主列表，并在进入 embed 模式前校验 `new URL(parentOrigin).origin` 是否命中白名单。若无法校验，则回退到独立登录模式而不是启用桥接。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>在非 Nimbus 域名页面中嵌入该应用，并拼接 `?parentOrigin=https://evil.example`；验证应用当前会进入 embedded 模式。修复后应拒绝该来源并继续走正常登录流程。</p></div></div></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L53-56</span><span class="finding-cat">异常处理</span></div><div class="finding-desc">嵌入模式下的 tokenProvider 在首个 token 未到达前会一直等待 `waitForNextToken()`，但这里没有任何超时或失败兜底。如果父窗口未按协议回传 `HTS_EMBED_TOKEN`、`parentOrigin` 配错，或宿主脚本异常，所有依赖 `authFetch` 的请求都会永久挂起，页面表现为一直加载且无法恢复。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>为初始 token 和 refresh 等待增加超时与失败分支，例如 `Promise.race([waitForNextToken(), timeoutPromise])`，超时后显式 reject/返回 null，并在 UI 层提示“宿主认证初始化失败，请刷新或重新进入页面”。同时可在 READY 发出后记录一次初始化状态，避免无界等待。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>在 iframe 模式下让父窗口不响应 `HTS_EMBED_READY`，验证首个 API 请求会在预期超时时间内失败并展示可恢复错误，而不是一直 pending。</p></div></div></details></div></div></details></div>
     </div>
 
     <div id="panel-dp" class="report-panel" role="tabpanel" aria-labelledby="tab-dp">
       <div class="dp-shell"><div class="dp-header">
   <h1>数据权限分析报告</h1>
   <p class="subtitle">AI Code Review · 接口级别数据权限审计</p>
-  <div class="meta-row"><div class="meta-item">项目 <strong>htsre-api</strong></div><div class="meta-item">涉及接口路径（自动汇总） <strong>/refresh · UserSeeder.run(ApplicationArguments)</strong></div><div class="meta-item">报告日期 <strong>2026-07-06 00:04:37</strong></div><div class="meta-item">涉及角色标签 <strong>SUPER_ADMIN、USER、role</strong></div></div>
+  <div class="meta-row"><div class="meta-item">项目 <strong>htsre-api</strong></div><div class="meta-item">涉及接口路径（自动汇总） <strong>/api/admin/data/submit · /refresh · detectEmbedMode()</strong></div><div class="meta-item">报告日期 <strong>2026-07-07 11:15:36</strong></div><div class="meta-item">涉及角色标签 <strong>USER、role、DATA_ADMIN、SUPER_ADMIN、embedded、parentOrigin</strong></div></div>
 </div>
 
 <div class="dp-body">
@@ -1506,16 +1542,16 @@ if (!userRepository.existsByEmail(SUPER_ADMIN_EMAIL)) {
   <div class="dp-stats">
     
   <div class="summary-grid">
-    <div class="summary-card critical"><div class="count">2</div><div class="label">高风险（语义）</div></div>
+    <div class="summary-card critical"><div class="count">3</div><div class="label">高风险（语义）</div></div>
     <div class="summary-card high"><div class="count">0</div><div class="label">中风险（语义）</div></div>
     <div class="summary-card medium"><div class="count">0</div><div class="label">低风险（语义）</div></div>
-    <div class="summary-card info"><div class="count">2</div><div class="label">接口总数（已解析路径）</div></div>
+    <div class="summary-card info"><div class="count">3</div><div class="label">接口总数（已解析路径）</div></div>
   </div>
   <div class="summary-grid" style="margin-top:8px;opacity:.92;">
-    <div class="summary-card critical"><div class="count">1</div><div class="label">Critical</div></div>
+    <div class="summary-card critical"><div class="count">2</div><div class="label">Critical</div></div>
     <div class="summary-card high"><div class="count">1</div><div class="label">Major</div></div>
     <div class="summary-card medium"><div class="count">0</div><div class="label">Minor+</div></div>
-    <div class="summary-card info"><div class="count">2</div><div class="label">权限类条数</div></div>
+    <div class="summary-card info"><div class="count">3</div><div class="label">权限类条数</div></div>
   </div>
 
   </div>
@@ -1529,16 +1565,71 @@ if (!userRepository.existsByEmail(SUPER_ADMIN_EMAIL)) {
 
   <div class="dp-section">
     <div class="dp-section-title">接口权限审计总览</div>
-    <div class="table-wrap"><table class="dp-audit"><thead><tr><th>方法</th><th>路径</th><th>Service 方法</th><th>权限校验</th><th>数据范围</th><th>风险</th><th>问题描述</th></tr></thead><tbody><tr class="row-critical"><td style='white-space:nowrap;vertical-align:middle;'><span class="badge badge-post">POST</span></td><td style='min-width:120px;'><code style="font-size:.82rem;word-break:break-all;">/refresh</code></td><td style='min-width:160px;'><code style="font-size:.82rem;">refresh(...)</code></td><td style='white-space:nowrap;'><span style="color:#dd6b20;">待复核</span></td><td style='min-width:140px;font-size:.85rem;'><span style="font-size:.85rem;">当前实现直接解码客户端 token payload 并把其中的 email/role 传给 refresh 逻辑，未见任何签名或来源校验。</span></td><td style='white-space:nowrap;'><div class="risk-zh">高风险（认证绕过/权限提升）</div><div style="margin-top:6px;"><span class="badge badge-critical">CRITICAL</span></div></td><td style='min-width:220px;'><ul class="issue-list"><li><strong>原因：</strong> 刷新接口新增逻辑直接对客户端提交的 JWT 做 <code>Base64</code> 解码并读取 <code>email</code>/<code>role</code>，随后调用 <code>authService.refresh(null, email, role)</code>，显式绕过了原本基于旧 token 的服务端校验</li><li>这里既没有签名校验，也没有校验 token 是否由本系统签发，攻击者只需伪造任意 payload 即可把自己声明为任意邮箱和角色</li><li><strong>影响：</strong> 若该接口用于签发新访问令牌，则未持有有效签名 token 的攻击者也可能通过构造伪造 JWT 获取任意身份/角色的新 token，形成认证绕过与权限提升，风险为高危</li><li>---
+    <div class="table-wrap"><table class="dp-audit"><thead><tr><th>方法</th><th>路径</th><th>Service 方法</th><th>权限校验</th><th>数据范围</th><th>风险</th><th>问题描述</th></tr></thead><tbody><tr class="row-critical"><td style='white-space:nowrap;vertical-align:middle;'><span class="badge badge-post">POST</span></td><td style='min-width:120px;'><code style="font-size:.82rem;word-break:break-all;">/api/admin/data/submit</code></td><td style='min-width:160px;'><code style="font-size:.82rem;">submitRequest(String,String,String,String,String,String)</code></td><td style='white-space:nowrap;'><span style="color:#dd6b20;">待复核</span></td><td style='min-width:140px;font-size:.85rem;'><span style="font-size:.85rem;">当前实现允许请求携带任意 <code>originalFilename</code>，审批通过后直接用于文件系统写入，缺少路径边界校验。</span></td><td style='white-space:nowrap;'><div class="risk-zh">高风险（任意路径写入/目录穿越）</div><div style="margin-top:6px;"><span class="badge badge-critical">CRITICAL</span></div></td><td style='min-width:220px;'><ul class="issue-list"><li><strong>原因：</strong> <code>submitRequest()</code> 最终会把 <code>originalFilename</code> 直接拼接到目标目录：
 
-刷新接口现在仅通过 Base64 解码旧 token 的 payload 提取 email/role，然后调用 <code>authService.refresh(null, email, role)</code>，不再把原 token 传入服务层做校验</li><li>这样即使请求方提交的是伪造的 JWT 字符串，只要 payload 中带有任意 email/role，也可能被当作合法身份刷新出新 token，导致认证边界失效</li></ul></td></tr><tr class="row-major"><td style='white-space:nowrap;vertical-align:middle;'><span class="badge badge-service" style="background:#718096;color:#fff;font-size:.75rem;">Java 方法</span></td><td style='min-width:120px;'><code style="font-size:.82rem;word-break:break-all;">UserSeeder.run(ApplicationArguments)</code></td><td style='min-width:160px;'><code style="font-size:.82rem;">run(ApplicationArguments)</code></td><td style='white-space:nowrap;'><span style="color:#dd6b20;">待复核</span></td><td style='min-width:140px;font-size:.85rem;'><span style="font-size:.85rem;">应用启动时若数据库不存在该邮箱，即自动创建并激活 <code>SUPER_ADMIN</code> 账户。</span></td><td style='white-space:nowrap;'><div class="risk-zh">高风险（特权账户硬编码与越权授予）</div><div style="margin-top:6px;"><span class="badge badge-high">HIGH</span></div></td><td style='min-width:220px;'><ul class="issue-list"><li><strong>原因：</strong> 代码在启动时无条件为固定邮箱 <code>junjie.ma@agslogistics.com</code> 自动创建 <code>SUPER_ADMIN</code> 账户，只要数据库中不存在该邮箱就会补种</li><li>该高权限主体不依赖外部配置、审批流程或环境隔离，属于将最高权限身份硬编码进应用逻辑</li><li><strong>影响：</strong> 一旦该邮箱可被外部身份系统映射、接管或误配，攻击者将直接获得系统最高权限</li><li>同时这也绕过了正常的权限授予与审计流程，扩大了生产环境的特权暴露面</li></ul></td></tr></tbody></table></div>
+且对 <code>originalFilename</code> 未做任何规范化、父目录跳转（<code>..</code>）、绝对路径校验</li><li>结合该服务对应的 HTTP 入口 <code>/api/admin/data/submit</code>，攻击者只要能提交请求并让后续审批通过（或自身为 <code>SUPER_ADMIN</code> 自动审批），即可通过构造如 <code>../../application-prod.yml</code>、绝对路径等文件名把内容写到预期目录之外</li><li><strong>影响：</strong> 这是可利用的任意路径写入/目录穿越风险，可能覆盖配置文件、规则文件或其他服务器可写文件，进而导致权限绕过、服务破坏，甚至在特定部署下形成进一步代码执行链</li><li>由于 <code>SUPER_ADMIN</code> 提交会自动审批，风险面更高</li><li>---
+
+<strong>原因：</strong> <code>resolveTargetDir()</code> 对未识别的 <code>fileType</code> 直接走默认分支：
+
+这意味着调用方可通过构造任意 <code>fileType</code> 控制写入的子目录名</li></ul></td></tr><tr class="row-critical"><td style='white-space:nowrap;vertical-align:middle;'><span class="badge badge-post">POST</span></td><td style='min-width:120px;'><code style="font-size:.82rem;word-break:break-all;">/refresh</code></td><td style='min-width:160px;'><code style="font-size:.82rem;">refresh(...)</code></td><td style='white-space:nowrap;'><span style="color:#dd6b20;">待复核</span></td><td style='min-width:140px;font-size:.85rem;'><span style="font-size:.85rem;">当前实现从未验签的 token payload 直接提取 email/role，并调用 refresh 生成新登录态。</span></td><td style='white-space:nowrap;'><div class="risk-zh">高风险（认证绕过/权限提升）</div><div style="margin-top:6px;"><span class="badge badge-critical">CRITICAL</span></div></td><td style='min-width:220px;'><ul class="issue-list"><li><strong>原因：</strong> 刷新接口新增逻辑直接对客户端提交的 JWT 进行 <code>Base64</code> 解码并从未校验签名、签发者、过期状态或服务端绑定关系，就把其中的 <code>email</code> 与 <code>role</code> 当作可信身份使用，并调用 <code>authService.refresh(null, email, role)</code> 生成新登录态</li><li>这样攻击者可自行构造任意 payload（例如伪造 <code>SUPER_ADMIN</code> 角色），即使原 token 从未由系统签发，也可能换取新的有效凭证</li><li><strong>影响：</strong> 这是典型的认证绕过/权限提升风险</li><li>未持有合法签名 token 的攻击者可伪造任意用户身份和角色刷新出新 token，进一步访问受保护接口，导致后台管理能力被接管或敏感数据被越权访问</li><li>---
+
+<strong>原因：</strong> 刷新接口不再调用上游 Nimbus 刷新能力，也未在该方法内校验 <code>currentToken</code> 的有效性、过期状态或签发来源，而是直接基于传入的 <code>email</code>、<code>role</code> 重新签发本地 JWT：
+
+如果控制器层把 <code>email</code>/<code>role</code> 来自请求参数、请求体或未经严格校验的上下文传入，这里会形成“凭声明刷新”的能力，导致令牌续签绕过真实会话状态</li></ul></td></tr><tr class="row-major"><td style='white-space:nowrap;vertical-align:middle;'><span class="badge badge-service" style="background:#718096;color:#fff;font-size:.75rem;">Java 方法</span></td><td style='min-width:120px;'><code style="font-size:.82rem;word-break:break-all;">detectEmbedMode()</code></td><td style='min-width:160px;'><code style="font-size:.82rem;">detectEmbedMode()</code></td><td style='white-space:nowrap;'><span style="color:#dd6b20;">待复核</span></td><td style='min-width:140px;font-size:.85rem;'><span style="font-size:.85rem;">任何 iframe 父页面只要提供任意 <code>parentOrigin</code> 参数即可触发嵌入模式。</span></td><td style='white-space:nowrap;'><div class="risk-zh">高风险（认证边界信任错误/宿主冒充）</div><div style="margin-top:6px;"><span class="badge badge-high">HIGH</span></div></td><td style='min-width:220px;'><ul class="issue-list"><li><strong>原因：</strong> 嵌入模式仅依据 <code>window.parent !== window</code> 和 URL 查询参数中的 <code>parentOrigin</code> 判定，并直接信任该参数作为后续 <code>postMessage</code> 的目标/来源校验基准：
+
+
+
+这意味着任意站点只要以 iframe 方式加载当前应用，并在 URL 中注入自己控制的 <code>parentOrigin</code>，子应用就会进入“信任宿主”的认证桥接流程</li><li>这里缺少对允许宿主来源的白名单校验或签名校验，属于对外部身份边界的错误信任</li><li><strong>影响：</strong> 若后端接受宿主下发的 token，恶意父页面可冒充合法宿主参与握手、向子应用投递其控制的 token/刷新响应，导致认证上下文被外部页面接管</li><li>即使后端最终拒绝非法 token，前端也已被切换到嵌入认证路径，扩大了认证绕过与会话混淆攻击面</li></ul></td></tr></tbody></table></div>
   </div>
 
   <div class="section"><div class="file-block endpoint-gap-block"><h3 class="api-surface-sub">Diff 中出现但未出现在「权限与访问控制」接口表中的路径（待核对）</h3><p class="inferred-hint">说明：由脚本从 diff 新增行中的 <code>@GetMapping</code> 等注解提取，未做类级路径拼接；未出现在上表可能表示本次无此类 finding、模型漏标 category/path，或该路径非 HTTP 面。请人工对照 Controller/Facade。</p><table><thead><tr><th>可疑漏列 API</th></tr></thead><tbody><tr><td><code>* /api/admin</code></td></tr><tr><td><code>POST /data/analyze</code></td></tr><tr><td><code>POST /data/preview</code></td></tr><tr><td><code>GET /data/requests</code></td></tr><tr><td><code>POST /data/requests/{id}/approve</code></td></tr><tr><td><code>POST /data/requests/{id}/reject</code></td></tr><tr><td><code>POST /data/submit</code></td></tr><tr><td><code>GET /me</code></td></tr><tr><td><code>GET /users</code></td></tr><tr><td><code>POST /users/grant</code></td></tr><tr><td><code>POST /users/revoke</code></td></tr></tbody></table></div></div>
 
   <div class="dp-section">
     <div class="dp-section-title">端点详情</div>
-    <div class="dp-folds"><details class="issue-fold"><summary>POST /refresh</summary><div class="issue-fold-body">
+    <div class="dp-folds"><details class="issue-fold"><summary>POST /api/admin/data/submit</summary><div class="issue-fold-body">
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="badge critical">Critical</span>
+      <span class="method-badge">POST</span>
+      <span class="endpoint">/api/admin/data/submit</span>
+    </div>
+    <div class="issue-body">
+      <div class="section-title">问题描述</div>
+      <p class="loc-hint">关联位置：<code>backend/src/main/java/com/htsre/service/AdminService.java L181-193</code></p>
+      <p class="desc">1. <strong>原因：</strong> <code>submitRequest()</code> 最终会把 <code>originalFilename</code> 直接拼接到目标目录：</p><p class="desc">且对 <code>originalFilename</code> 未做任何规范化、父目录跳转（<code>..</code>）、绝对路径校验。结合该服务对应的 HTTP 入口 <code>/api/admin/data/submit</code>，攻击者只要能提交请求并让后续审批通过（或自身为 <code>SUPER_ADMIN</code> 自动审批），即可通过构造如 <code>../../application-prod.yml</code>、绝对路径等文件名把内容写到预期目录之外。</p>
+      <div class="section-title">问题代码</div><pre><code>Path targetDir  = resolveTargetDir(req.getFileType());
+Path targetFile = targetDir.resolve(req.getOriginalFilename());</code></pre>
+      <div class="two-col">
+        <div class="impact-box">
+          <h4>安全影响</h4>
+          <p><strong> 这是可利用的任意路径写入/目录穿越风险，可能覆盖配置文件、规则文件或其他服务器可写文件，进而导致权限绕过、服务破坏，甚至在特定部署下形成进一步代码执行链。由于 <code>SUPER_ADMIN</code> 提交会自动审批，风险面更高。
+
+---
+
+</strong>原因：<strong> <code>resolveTargetDir()</code> 对未识别的 <code>fileType</code> 直接走默认分支：
+
+这意味着调用方可通过构造任意 <code>fileType</code> 控制写入的子目录名；若 <code>fileType</code> 含路径分隔或 <code>..</code>，会进一步扩大写入范围。该逻辑与 <code>/api/admin/data/submit</code> 的落盘流程直接关联，但没有看到对 <code>fileType</code> 的白名单拒绝策略。
+
+</strong>影响：** 攻击者可借此把上传内容写入非预期目录，绕过“仅允许更新固定数据类型”的业务边界；与未校验的 <code>originalFilename</code> 叠加后，可显著放大为任意文件写入风险。</p>
+        </div>
+        <div class="fix-box">
+          <h4>修复建议</h4>
+          <p>1. 对 <code>originalFilename</code> 做严格白名单校验，仅允许基础文件名，不允许路径分隔符、<code>..</code>、绝对路径；并在 <code>normalize()</code> 后校验目标路径必须仍位于 <code>targetDir</code> 下。例如：</p><p>同时建议按 <code>fileType</code> 绑定固定文件名集合，避免客户端任意指定落盘文件名。</p>
+        </div>
+      </div>
+      <div class="section-title">修复示意</div><pre><code>Path targetDir = resolveTargetDir(req.getFileType()).toAbsolutePath().normalize();
+String filename = Paths.get(req.getOriginalFilename()).getFileName().toString();
+if (!filename.matches(&quot;[A-Za-z0-9._-]+&quot;)) {
+    throw new IllegalArgumentException(&quot;Invalid filename&quot;);
+}
+Path targetFile = targetDir.resolve(filename).normalize();
+if (!targetFile.startsWith(targetDir)) {
+    throw new IllegalArgumentException(&quot;Path traversal detected&quot;);
+}</code></pre>
+    </div>
+  </div>
+</div></details>
+<details class="issue-fold"><summary>POST /refresh</summary><div class="issue-fold-body">
   <div class="issue-card">
     <div class="issue-header">
       <span class="badge critical">Critical</span>
@@ -1547,62 +1638,68 @@ if (!userRepository.existsByEmail(SUPER_ADMIN_EMAIL)) {
     </div>
     <div class="issue-body">
       <div class="section-title">问题描述</div>
-      <p class="loc-hint">关联位置：<code>backend/src/main/java/com/htsre/controller/AuthController.java L56-63</code></p>
-      <p class="desc">1. <strong>原因：</strong> 刷新接口新增逻辑直接对客户端提交的 JWT 做 <code>Base64</code> 解码并读取 <code>email</code>/<code>role</code>，随后调用 <code>authService.refresh(null, email, role)</code>，显式绕过了原本基于旧 token 的服务端校验。这里既没有签名校验，也没有校验 token 是否由本系统签发，攻击者只需伪造任意 payload 即可把自己声明为任意邮箱和角色。</p>
-      <div class="section-title">问题代码</div><pre><code>String[] parts = token.split(&quot;\\.&quot;);
-...
-Map&lt;String, Object&gt; claims = new ObjectMapper().readValue(payloadJson, Map.class);
+      <p class="loc-hint">关联位置：<code>backend/src/main/java/com/htsre/controller/AuthController.java L59-61</code></p>
+      <p class="desc">1. <strong>原因：</strong> 刷新接口新增逻辑直接对客户端提交的 JWT 进行 <code>Base64</code> 解码并从未校验签名、签发者、过期状态或服务端绑定关系，就把其中的 <code>email</code> 与 <code>role</code> 当作可信身份使用，并调用 <code>authService.refresh(null, email, role)</code> 生成新登录态。这样攻击者可自行构造任意 payload（例如伪造 <code>SUPER_ADMIN</code> 角色），即使原 token 从未由系统签发，也可能换取新的有效凭证。</p>
+      <div class="section-title">问题代码</div><pre><code>Map&lt;String, Object&gt; claims = new ObjectMapper().readValue(payloadJson, Map.class);
 String email = String.valueOf(claims.getOrDefault(&quot;email&quot;, claims.getOrDefault(&quot;sub&quot;, &quot;unknown&quot;)));
 String role = String.valueOf(claims.getOrDefault(&quot;role&quot;, &quot;USER&quot;));
+log.info(&quot;[AUTH] Refresh: email={}&quot;, email);
 LoginResponse response = authService.refresh(null, email, role);</code></pre>
       <div class="two-col">
         <div class="impact-box">
           <h4>安全影响</h4>
-          <p>** 若该接口用于签发新访问令牌，则未持有有效签名 token 的攻击者也可能通过构造伪造 JWT 获取任意身份/角色的新 token，形成认证绕过与权限提升，风险为高危。
+          <p><strong> 这是典型的认证绕过/权限提升风险。未持有合法签名 token 的攻击者可伪造任意用户身份和角色刷新出新 token，进一步访问受保护接口，导致后台管理能力被接管或敏感数据被越权访问。
 
 ---
 
-刷新接口现在仅通过 Base64 解码旧 token 的 payload 提取 email/role，然后调用 <code>authService.refresh(null, email, role)</code>，不再把原 token 传入服务层做校验。这样即使请求方提交的是伪造的 JWT 字符串，只要 payload 中带有任意 email/role，也可能被当作合法身份刷新出新 token，导致认证边界失效。</p>
+</strong>原因：<strong> 刷新接口不再调用上游 Nimbus 刷新能力，也未在该方法内校验 <code>currentToken</code> 的有效性、过期状态或签发来源，而是直接基于传入的 <code>email</code>、<code>role</code> 重新签发本地 JWT：
+
+如果控制器层把 <code>email</code>/<code>role</code> 来自请求参数、请求体或未经严格校验的上下文传入，这里会形成“凭声明刷新”的能力，导致令牌续签绕过真实会话状态。
+
+</strong>影响：** 认证过期控制被削弱：已失效、被吊销或来源不可信的会话仍可能获得新 token；在最坏情况下，攻击者可借构造的身份字段刷新出更高权限令牌，造成长期会话维持或权限提升。</p>
         </div>
         <div class="fix-box">
           <h4>修复建议</h4>
-          <ul class="list"><li>刷新接口必须仅接受并验证由服务端签发的 refresh token/expired access token，禁止从未验签的 payload 直接信任 <code>email</code> 和 <code>role</code>。应恢复/增加服务端验签与过期、签发者、用途校验，例如先调用 <code>jwtService.parseClaims(token)</code> 或在 <code>authService.refresh(token, ...)</code> 内完成完整校验，再从已验证 claims 中提取身份信息；若校验失败统一返回 401。</li></ul>
+          <p>1. 刷新接口必须只接受并验证由服务端签发的 refresh/access token，严禁从未验签的 payload 直接信任 <code>email/role</code>。应调用统一的 JWT 校验逻辑（验签、过期、issuer、token type），并从校验后的 claims 中取身份；同时不要把 <code>null</code> 传给刷新服务。</p><p>如系统采用独立 refresh token，应额外校验 token type=refresh，并结合服务端存储/黑名单机制防重放。</p>
         </div>
       </div>
-      
+      <div class="section-title">修复示意</div><pre><code>@PostMapping(&quot;/refresh&quot;)
+public ResponseEntity&lt;?&gt; refresh(@RequestHeader(&quot;Authorization&quot;) String authHeader) {
+    String token = extractBearer(authHeader);
+    Claims claims = jwtService.parseAndValidate(token); // 验签+校验过期/类型
+    String email = claims.getSubject();
+    String role = claims.get(&quot;role&quot;, String.class);
+    LoginResponse response = authService.refresh(token, email, role);
+    return ResponseEntity.ok(response);
+}</code></pre>
     </div>
   </div>
 </div></details>
-<details class="issue-fold"><summary>SERVICE UserSeeder.run(ApplicationArguments)</summary><div class="issue-fold-body">
+<details class="issue-fold"><summary>SERVICE detectEmbedMode()</summary><div class="issue-fold-body">
   <div class="issue-card">
     <div class="issue-header">
       <span class="badge high">High</span>
       <span class="method-badge">SERVICE</span>
-      <span class="endpoint">UserSeeder.run(ApplicationArguments)</span>
+      <span class="endpoint">detectEmbedMode()</span>
     </div>
     <div class="issue-body">
       <div class="section-title">问题描述</div>
-      <p class="loc-hint">关联位置：<code>backend/src/main/java/com/htsre/service/UserSeeder.java L37-54</code></p>
-      <p class="desc">1. <strong>原因：</strong> 代码在启动时无条件为固定邮箱 <code>junjie.ma@agslogistics.com</code> 自动创建 <code>SUPER_ADMIN</code> 账户，只要数据库中不存在该邮箱就会补种。该高权限主体不依赖外部配置、审批流程或环境隔离，属于将最高权限身份硬编码进应用逻辑。</p>
-      <div class="section-title">问题代码</div><pre><code>private static final String SUPER_ADMIN_EMAIL = &quot;junjie.ma@agslogistics.com&quot;;
-...
-if (!userRepository.existsByEmail(SUPER_ADMIN_EMAIL)) {
-    HtsUser superAdmin = HtsUser.builder()
-            .email(SUPER_ADMIN_EMAIL)
-            ...
-            .role(&quot;SUPER_ADMIN&quot;)
-            .active(true)
-            .build();
-    userRepository.save(superAdmin);
+      <p class="loc-hint">关联位置：<code>review-ui/src/lib/embedBridge.ts L17-21</code></p>
+      <p class="desc">1. <strong>原因：</strong> 嵌入模式仅依据 <code>window.parent !== window</code> 和 URL 查询参数中的 <code>parentOrigin</code> 判定，并直接信任该参数作为后续 <code>postMessage</code> 的目标/来源校验基准：</p><p class="desc">这意味着任意站点只要以 iframe 方式加载当前应用，并在 URL 中注入自己控制的 <code>parentOrigin</code>，子应用就会进入“信任宿主”的认证桥接流程。这里缺少对允许宿主来源的白名单校验或签名校验，属于对外部身份边界的错误信任。</p>
+      <div class="section-title">问题代码</div><pre><code>export function detectEmbedMode(): EmbedMode {
+  if (window.parent === window) return { embedded: false, parentOrigin: null };
+  const parentOrigin = new URLSearchParams(window.location.search).get(PARENT_ORIGIN_PARAM);
+  if (!parentOrigin) return { embedded: false, parentOrigin: null };
+  return { embedded: true, parentOrigin };
 }</code></pre>
       <div class="two-col">
         <div class="impact-box">
           <h4>安全影响</h4>
-          <p>** 一旦该邮箱可被外部身份系统映射、接管或误配，攻击者将直接获得系统最高权限；同时这也绕过了正常的权限授予与审计流程，扩大了生产环境的特权暴露面。</p>
+          <p>** 若后端接受宿主下发的 token，恶意父页面可冒充合法宿主参与握手、向子应用投递其控制的 token/刷新响应，导致认证上下文被外部页面接管；即使后端最终拒绝非法 token，前端也已被切换到嵌入认证路径，扩大了认证绕过与会话混淆攻击面。</p>
         </div>
         <div class="fix-box">
           <h4>修复建议</h4>
-          <ul class="list"><li>移除代码中的固定 <code>SUPER_ADMIN</code> 自动补种逻辑。若确需初始化最高权限账户，应仅在受控初始化脚本或一次性 migration 中执行，并通过环境变量/密钥管理注入目标主体，且默认在生产环境禁用。另建议增加显式审计与双人审批流程。</li></ul>
+          <ul class="list"><li>对 <code>parentOrigin</code> 做严格白名单校验，至少限制为受控宿主域名集合；更稳妥的做法是由后端/构建配置下发允许的宿主列表，并在进入 embed 模式前校验 <code>new URL(parentOrigin).origin</code> 是否命中白名单。若无法校验，则回退到独立登录模式而不是启用桥接。</li></ul>
         </div>
       </div>
       
@@ -1615,7 +1712,7 @@ if (!userRepository.existsByEmail(SUPER_ADMIN_EMAIL)) {
 
   
 
-  <div class="dp-footer"><p>本报告由 AI Code Review 生成（data_permission 模式）。权限类 finding 涉及文件：<strong>backend/src/main/java/com/htsre/controller/AuthController.java、backend/src/main/java/com/htsre/service/UserSeeder.java</strong></p><p style="margin-top:4px;">生成时间：2026-07-06 00:04:37 · 项目：htsre-api</p></div>
+  <div class="dp-footer"><p>本报告由 AI Code Review 生成（data_permission 模式）。权限类 finding 涉及文件：<strong>backend/src/main/java/com/htsre/controller/AuthController.java、backend/src/main/java/com/htsre/service/AdminService.java、review-ui/src/lib/embedBridge.ts</strong></p><p style="margin-top:4px;">生成时间：2026-07-07 11:15:36 · 项目：htsre-api</p></div>
 
 </div>
 </div>
@@ -1948,9 +2045,9 @@ if (!userRepository.existsByEmail(SUPER_ADMIN_EMAIL)) {
     function exportCsv() { alert('导出为 CSV 功能待实现'); }
 
     // Inject summary data (Task 5)
-    if (typeof updateSeveritySummary === 'function') updateSeveritySummary(3, 12, 4, 0);
-if (typeof renderCategoryChart === 'function') renderCategoryChart({"\u5b89\u5168\u98ce\u9669": 9, "\u6570\u636e\u4e00\u81f4\u6027": 2, "\u6743\u9650\u4e0e\u8bbf\u95ee\u63a7\u5236": 2, "\u6027\u80fd\u9690\u60a3": 1, "\u72b6\u6001\u7ba1\u7406": 1, "\u8fb9\u754c\u6761\u4ef6": 1, "API\u5951\u7ea6": 1, "\u8d44\u6e90\u7ba1\u7406": 1, "\u4e1a\u52a1\u903b\u8f91": 1});
-if (typeof renderTopCriticals === 'function') renderTopCriticals([{"file": "backend/src/main/java/com/htsre/controller/AuthController.java", "line": "56-63", "severity": "critical", "category": "权限与访问控制", "description": "**原因：** 刷新接口新增逻辑直接对客户端提交的 JWT 做 `Base64` 解码并读取 `email`/`role`，随后调用 `authService.refresh(null, email, role)`，显式绕过了原本基于旧 token 的服务端校验。这里既没有签名校验，也没有校验 token 是否由本系统签发，攻击者只需伪造任意 payload 即可把自己声明为任意邮箱和角色。\n\n```java\nString[] parts = token.split(\"\\\\.\");\n...\nMap<String, Object> claims = new ObjectMapper().readValue(payloadJson, Map.class);\nString email = String.valueOf(claims.getOrDefault(\"email\", claims.getOrDefault(\"sub\", \"unknown\")));\nString role = String.valueOf(claims.getOrDefault(\"role\", \"USER\"));\nLoginResponse response = authService.refresh(null, email, role);\n```\n\n**影响：** 若该接口用于签发新访问令牌，则未持有有效签名 token 的攻击者也可能通过构造伪造 JWT 获取任意身份/角色的新 token，形成认证绕过与权限提升，风险为高危。\n\n---\n\n刷新接口现在仅通过 Base64 解码旧 token 的 payload 提取 email/role，然后调用 `authService.refresh(null, email, role)`，不再把原 token 传入服务层做校验。这样即使请求方提交的是伪造的 JWT 字符串，只要 payload 中带有任意 email/role，也可能被当作合法身份刷新出新 token，导致认证边界失效。", "suggestion": "刷新接口必须仅接受并验证由服务端签发的 refresh token/expired access token，禁止从未验签的 payload 直接信任 `email` 和 `role`。应恢复/增加服务端验签与过期、签发者、用途校验，例如先调用 `jwtService.parseClaims(token)` 或在 `authService.refresh(token, ...)` 内完成完整校验，再从已验证 claims 中提取身份信息；若校验失败统一返回 401。", "test_scenario": "构造一个签名为空或伪造签名的 JWT，payload 中填入 `{\"email\":\"admin@example.com\",\"role\":\"SUPER_ADMIN\"}`，调用刷新接口；期望返回 401，且绝不能签发新的管理员 token。", "http_method": "POST", "path_pattern": "/refresh", "permission_tags": ["USER", "role"], "java_entry_method": "AuthController.refresh(...)", "expected_permission": "仅持有服务端签发且通过验签/用途校验的 refresh 凭证的用户，才能为其自身身份刷新 token；客户端声明的 role 不应被直接信任。", "actual_behavior": "当前实现直接解码客户端 token payload 并把其中的 email/role 传给 refresh 逻辑，未见任何签名或来源校验。", "evidence_refs": ["backend/src/main/java/com/htsre/controller/AuthController.java:56-63", "backend/src/main/java/com/htsre/controller/AuthController.java:62", "backend/src/main/java/com/htsre/controller/AuthController.java:63", "backend/src/main/java/com/htsre/controller/AuthController.java:64"], "risk_label_zh": "高风险（认证绕过/权限提升）", "_aggregated_count": 1}, {"file": "backend/src/main/java/com/htsre/service/AdminService.java", "line": "181-224", "severity": "critical", "category": "安全风险", "description": "将 `originalFilename` 直接用于 `targetDir.resolve(req.getOriginalFilename())` 后写入文件，未做文件名规范化、路径穿越校验或白名单限制。攻击者只要能提交或审批请求，即可通过诸如 `../../application-prod.yml`、绝对路径或带分隔符的文件名把内容写到预期目录之外，造成任意文件覆盖，进一步可能导致配置篡改、凭据破坏甚至远程代码执行。\n\n问题代码：\n```java\nPath targetDir  = resolveTargetDir(req.getFileType());\nPath targetFile = targetDir.resolve(req.getOriginalFilename());\n...\nFiles.write(targetFile, ...);\n```", "suggestion": "对 `originalFilename` 仅允许安全文件名白名单（如 `[a-zA-Z0-9._-]+`），并在写入前执行规范化校验，确保目标路径仍位于 `targetDir` 下。例如：\n```java\nString safeName = Paths.get(originalFilename).getFileName().toString();\nif (!safeName.matches(\"[a-zA-Z0-9._-]+\")) {\n    throw new IllegalArgumentException(\"Invalid filename\");\n}\nPath normalized = targetDir.resolve(safeName).normalize();\nif (!normalized.startsWith(targetDir.normalize())) {\n    throw new IllegalArgumentException(\"Path traversal detected\");\n}\n```\n同时建议按 `fileType` 维护允许的固定文件名集合，避免任意命名写盘。", "test_scenario": "调用 `/api/admin/data/submit` 提交 `originalFilename=../../application-prod.yml` 或 `/tmp/pwned`，随后走审批/自动提交流程；验证服务应拒绝请求，且目标目录外不存在被创建/覆盖的文件。", "http_method": "POST", "path_pattern": "/api/admin/data/submit", "permission_tags": [], "java_entry_method": "", "expected_permission": "", "actual_behavior": "", "evidence_refs": [], "risk_label_zh": "", "_aggregated_count": 2}, {"file": "backend/src/main/resources/db/migration/V5__add_data_update_requests.sql", "line": "17-20", "severity": "critical", "category": "安全风险", "description": "迁移脚本直接写入一个固定邮箱的 `SUPER_ADMIN` 账户，属于硬编码高权限身份。即使 `password_hash` 看似不可登录，该记录仍会在生产数据库中长期存在，并可能与后续认证/用户初始化逻辑叠加，造成未经过审批的特权账户植入与审计绕过风险。", "suggestion": "删除该硬编码种子数据，改为通过受控的初始化流程或运维脚本在部署时显式创建管理员，并要求管理员标识、凭据和启用状态全部来自安全配置或人工审批流程；若必须保留初始化逻辑，至少限定仅在本地/开发环境执行。", "test_scenario": "在空库初始化后检查 `users` 表，确认生产迁移不会自动出现预置 `SUPER_ADMIN`；验证管理员创建必须经过显式配置或人工审批。", "http_method": "", "path_pattern": "", "permission_tags": [], "java_entry_method": "", "expected_permission": "", "actual_behavior": "", "evidence_refs": [], "risk_label_zh": "", "_aggregated_count": 1}]);
+    if (typeof updateSeveritySummary === 'function') updateSeveritySummary(2, 13, 3, 0);
+if (typeof renderCategoryChart === 'function') renderCategoryChart({"\u5b89\u5168\u98ce\u9669": 4, "\u4e1a\u52a1\u903b\u8f91": 3, "\u6743\u9650\u4e0e\u8bbf\u95ee\u63a7\u5236": 3, "\u5f02\u5e38\u5904\u7406": 2, "\u8fb9\u754c\u6761\u4ef6": 2, "\u914d\u7f6e\u53d8\u66f4": 2, "\u6027\u80fd\u9690\u60a3": 1, "\u6570\u636e\u4e00\u81f4\u6027": 1});
+if (typeof renderTopCriticals === 'function') renderTopCriticals([{"file": "backend/src/main/java/com/htsre/controller/AuthController.java", "line": "59-61", "severity": "critical", "category": "权限与访问控制", "description": "**原因：** 刷新接口新增逻辑直接对客户端提交的 JWT 进行 `Base64` 解码并从未校验签名、签发者、过期状态或服务端绑定关系，就把其中的 `email` 与 `role` 当作可信身份使用，并调用 `authService.refresh(null, email, role)` 生成新登录态。这样攻击者可自行构造任意 payload（例如伪造 `SUPER_ADMIN` 角色），即使原 token 从未由系统签发，也可能换取新的有效凭证。\n\n```java\nMap<String, Object> claims = new ObjectMapper().readValue(payloadJson, Map.class);\nString email = String.valueOf(claims.getOrDefault(\"email\", claims.getOrDefault(\"sub\", \"unknown\")));\nString role = String.valueOf(claims.getOrDefault(\"role\", \"USER\"));\nlog.info(\"[AUTH] Refresh: email={}\", email);\nLoginResponse response = authService.refresh(null, email, role);\n```\n\n**影响：** 这是典型的认证绕过/权限提升风险。未持有合法签名 token 的攻击者可伪造任意用户身份和角色刷新出新 token，进一步访问受保护接口，导致后台管理能力被接管或敏感数据被越权访问。\n\n---\n\n**原因：** 刷新接口不再调用上游 Nimbus 刷新能力，也未在该方法内校验 `currentToken` 的有效性、过期状态或签发来源，而是直接基于传入的 `email`、`role` 重新签发本地 JWT：\n```java\nString token = jwtService.generateToken(email, email, role);\nreturn new LoginResponse(token, email, email, role, null, null);\n```\n如果控制器层把 `email`/`role` 来自请求参数、请求体或未经严格校验的上下文传入，这里会形成“凭声明刷新”的能力，导致令牌续签绕过真实会话状态。\n\n**影响：** 认证过期控制被削弱：已失效、被吊销或来源不可信的会话仍可能获得新 token；在最坏情况下，攻击者可借构造的身份字段刷新出更高权限令牌，造成长期会话维持或权限提升。", "suggestion": "刷新接口必须只接受并验证由服务端签发的 refresh/access token，严禁从未验签的 payload 直接信任 `email/role`。应调用统一的 JWT 校验逻辑（验签、过期、issuer、token type），并从校验后的 claims 中取身份；同时不要把 `null` 传给刷新服务。\n\n```java\n@PostMapping(\"/refresh\")\npublic ResponseEntity<?> refresh(@RequestHeader(\"Authorization\") String authHeader) {\n    String token = extractBearer(authHeader);\n    Claims claims = jwtService.parseAndValidate(token); // 验签+校验过期/类型\n    String email = claims.getSubject();\n    String role = claims.get(\"role\", String.class);\n    LoginResponse response = authService.refresh(token, email, role);\n    return ResponseEntity.ok(response);\n}\n```\n如系统采用独立 refresh token，应额外校验 token type=refresh，并结合服务端存储/黑名单机制防重放。", "test_scenario": "1. 构造一个未签名或使用错误密钥签名的 JWT，payload 中填入 `email=admin@example.com, role=SUPER_ADMIN`，调用 `POST /refresh`，预期应返回 401/403，绝不能签发新 token。2. 使用已过期 access token 调用刷新接口，若不是合法 refresh token，预期拒绝。3. 篡改合法 token 的 role 后再次调用，预期拒绝。", "http_method": "POST", "path_pattern": "/refresh", "permission_tags": ["USER", "role"], "java_entry_method": "AuthController.refresh(...)", "expected_permission": "仅允许持有服务端签发且通过验签/过期校验的合法刷新凭证的用户刷新自身会话；客户端不得自行决定 email/role。", "actual_behavior": "当前实现从未验签的 token payload 直接提取 email/role，并调用 refresh 生成新登录态。", "evidence_refs": ["backend/src/main/java/com/htsre/controller/AuthController.java:56-61", "backend/src/main/java/com/htsre/service/AuthService.java:68-70"], "risk_label_zh": "高风险（认证绕过/权限提升）", "_aggregated_count": 1}, {"file": "backend/src/main/java/com/htsre/service/AdminService.java", "line": "181-193", "severity": "critical", "category": "权限与访问控制", "description": "**原因：** `submitRequest()` 最终会把 `originalFilename` 直接拼接到目标目录：\n```java\nPath targetDir  = resolveTargetDir(req.getFileType());\nPath targetFile = targetDir.resolve(req.getOriginalFilename());\n```\n且对 `originalFilename` 未做任何规范化、父目录跳转（`..`）、绝对路径校验。结合该服务对应的 HTTP 入口 `/api/admin/data/submit`，攻击者只要能提交请求并让后续审批通过（或自身为 `SUPER_ADMIN` 自动审批），即可通过构造如 `../../application-prod.yml`、绝对路径等文件名把内容写到预期目录之外。\n\n**影响：** 这是可利用的任意路径写入/目录穿越风险，可能覆盖配置文件、规则文件或其他服务器可写文件，进而导致权限绕过、服务破坏，甚至在特定部署下形成进一步代码执行链。由于 `SUPER_ADMIN` 提交会自动审批，风险面更高。\n\n---\n\n**原因：** `resolveTargetDir()` 对未识别的 `fileType` 直接走默认分支：\n```java\ndefault -> ingestionDataPath.resolve(fileType);\n```\n这意味着调用方可通过构造任意 `fileType` 控制写入的子目录名；若 `fileType` 含路径分隔或 `..`，会进一步扩大写入范围。该逻辑与 `/api/admin/data/submit` 的落盘流程直接关联，但没有看到对 `fileType` 的白名单拒绝策略。\n\n**影响：** 攻击者可借此把上传内容写入非预期目录，绕过“仅允许更新固定数据类型”的业务边界；与未校验的 `originalFilename` 叠加后，可显著放大为任意文件写入风险。", "suggestion": "对 `originalFilename` 做严格白名单校验，仅允许基础文件名，不允许路径分隔符、`..`、绝对路径；并在 `normalize()` 后校验目标路径必须仍位于 `targetDir` 下。例如：\n```java\nPath targetDir = resolveTargetDir(req.getFileType()).toAbsolutePath().normalize();\nString filename = Paths.get(req.getOriginalFilename()).getFileName().toString();\nif (!filename.matches(\"[A-Za-z0-9._-]+\")) {\n    throw new IllegalArgumentException(\"Invalid filename\");\n}\nPath targetFile = targetDir.resolve(filename).normalize();\nif (!targetFile.startsWith(targetDir)) {\n    throw new IllegalArgumentException(\"Path traversal detected\");\n}\n```\n同时建议按 `fileType` 绑定固定文件名集合，避免客户端任意指定落盘文件名。", "test_scenario": "调用 POST `/api/admin/data/submit`，提交 `originalFilename=../../application-prod.yml` 或 `/tmp/poc.txt`；验证服务应拒绝请求，且审批/自动审批后不会在目标目录外生成或覆盖文件。", "http_method": "POST", "path_pattern": "/api/admin/data/submit", "permission_tags": ["USER", "DATA_ADMIN", "SUPER_ADMIN"], "java_entry_method": "AdminService.submitRequest(String,String,String,String,String,String)", "expected_permission": "仅允许具备相应后台管理权限的角色提交，且即使有权限也只能写入受控目录内的受限文件名。", "actual_behavior": "当前实现允许请求携带任意 `originalFilename`，审批通过后直接用于文件系统写入，缺少路径边界校验。", "evidence_refs": ["backend/src/main/java/com/htsre/service/AdminService.java:181-193", "backend/src/main/java/com/htsre/service/AdminService.java:112-132", "backend/src/main/java/com/htsre/service/AdminService.java:214-222"], "risk_label_zh": "高风险（任意路径写入/目录穿越）", "_aggregated_count": 1}]);
 
     // Export dropdown toggle
     (function() {
