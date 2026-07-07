@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-api &nbsp;|&nbsp; 2026-07-07 16:42:57</div>
+      <div class="meta">pos-api &nbsp;|&nbsp; 2026-07-07 18:52:10</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -96,88 +96,67 @@
                     <span class="finding-badge">严重</span>
                     <code class="finding-loc">pos-api/src/main/java/com/miq/posapi/controller/LabelController.java:297-300</code>
                 </div>
-                <div class="finding-desc">**原因：** 新增的 HTTP 写接口直接暴露为 `POST /innerApi/syncRelabelingNum`，但在本次 diff 可见代码中未看到 `@PreAuthorize`、`AuthUtil.requireRole()` 或其他显式鉴权/来源校验逻辑。按照审查基线，POST/PUT/DELETE 接口缺失角色校验应视为高危。若该 `innerApi` 路径未被网关、内网隔离或统一安全配置严格保护，则任意可访问该接口的调用方都可能触发标签重贴号同步。
+                <div class="finding-desc">**原因：** 新增 HTTP 写接口直接暴露了 `labelInfoService.syncRelabelingNum(form)`，但在新增代码中未看到任何 `@PreAuthorize`、`AuthUtil.requireRole()`、签名校验或来源校验逻辑。按照审查基线，POST/PUT/DELETE 接口缺失角色校验即属于高危越权风险。
 
 ```java
-@ApiOperation(value = &quot;sync relabeling num&quot;)
 @PostMapping(&quot;/innerApi/syncRelabelingNum&quot;)
 public ResponseObject&lt;Boolean&gt; syncRelabelingNum(@RequestBody @Valid RelabelingNumForm form) throws Exception {
     return ResponseObject.success(labelInfoService.syncRelabelingNum(form));
 }
 ```
 
-**影响：** 该接口属于状态变更操作，一旦被未授权主体调用，可能导致标签/重贴号相关业务数据被篡改，形成越权修改；若服务间调用边界被误配，还会扩大内部接口暴露面。
-
----
-
-新增的内部接口直接暴露了 `/innerApi/syncRelabelingNum`，但在变更行中看不到任何权限注解、内部调用来源校验或访问限制。结合知识库已识别该 API 路径，这类会修改业务数据的同步接口如果未被网关/安全配置显式收口，容易被普通调用方误用，导致 relabeling num 被越权同步。
-
----
-
-**原因：** 新增的 `syncRelabelingNum(RelabelingNumForm form)` 会根据外部传入的 `spxTrackingNumber` 直接创建或更新 `PosThirdLabel`，并写入 `thirdTrackingNumber` / `provider`，代码中未见任何调用方身份校验、角色校验或对该 tracking number 归属的校验。
-
+**影响：** 若该 `innerApi` 路径未被网关/安全配置强制限制为可信内部调用，任意可访问该接口的主体都可能触发“同步 relabeling 数量”这一状态变更操作，造成标签相关业务数据被未授权修改，进一步引发数据污染、流程绕过或批量篡改。</div>
+                <div class="finding-suggestion">💡 修复建议：为该 POST 接口补充明确的鉴权与调用方校验，至少满足其一：1）增加 `@PreAuthorize(...)` 进行角色限制；2）在方法内调用 `AuthUtil.requireRole(...)`；3）若设计为内部接口，增加服务间签名/白名单/网关隔离，并在控制器层显式校验来源。示例：
 ```java
-Label label = labelDao.findByTrackingNumber(form.getSpxTrackingNumber());
-...
-Optional&lt;PosThirdLabel&gt; existing = posThirdLabelDao.findByTrackingNumber(form.getSpxTrackingNumber());
-...
-posThirdLabel.setThirdTrackingNumber(form.getThirdTrackingNumber());
-posThirdLabel.setProvider(form.getProvider());
-posThirdLabelDao.save(posThirdLabel);
-```
-
-**影响：** 一旦该 Service 通过 Controller、MQ 消费或内部 RPC 暴露给低权限主体，攻击者可构造任意 `spxTrackingNumber` 篡改第三方单号映射，导致跨租户/跨业务单据被错误关联，进一步影响面单追踪、改派或对账流程。当前 diff 无法证明其上游入口已做强鉴权，因此应按越权写风险处理。</div>
-                <div class="finding-suggestion">💡 修复建议：为该入口补充显式鉴权与调用来源校验，至少满足以下之一：1）在控制器方法上增加 `@PreAuthorize(...)`；2）在方法入口调用 `AuthUtil.requireRole(...)`；3）若设计为仅内部服务调用，增加可靠的服务间认证（如 mTLS、签名、专用 token 校验）且不要仅依赖路径名 `innerApi`。示例：
-```java
-@PreAuthorize(&quot;hasAuthority(&#x27;label:syncRelabelingNum&#x27;)&quot;)
+@PreAuthorize(&quot;hasAnyRole(&#x27;SYSTEM&#x27;,&#x27;INTERNAL_SERVICE&#x27;)&quot;)
 @PostMapping(&quot;/innerApi/syncRelabelingNum&quot;)
-public ResponseObject&lt;Boolean&gt; syncRelabelingNum(@RequestBody @Valid RelabelingNumForm form) {
-    AuthUtil.requireRole(&quot;label:syncRelabelingNum&quot;);
+public ResponseObject&lt;Boolean&gt; syncRelabelingNum(@RequestBody @Valid RelabelingNumForm form) throws Exception {
+    AuthUtil.requireRole(&quot;SYSTEM&quot;);
     return ResponseObject.success(labelInfoService.syncRelabelingNum(form));
 }
 ```
-若仅允许内部系统调用，建议同时校验调用方身份并限制来源网络。</div>
+同时建议在安全配置中对 `/innerApi/**` 默认拒绝外部访问。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">backend-common/src/main/java/com/miq/backendcommon/form/exchange/trk/InsertEventForm.java:211-226</code>
+                    <code class="finding-loc">backend-common/src/main/java/com/miq/backendcommon/form/exchange/trk/maersk/MaerskTrackingResponse.java:24-34</code>
                 </div>
-                <div class="finding-desc">新增的 `ParcelInfoForm` 仅校验字段非空/非空白，但未对 `length/width/height/weight` 增加正数、上限或精度约束，也未对 `dimensionUom/weightUom` 限定允许值。这样会放行负数、零、超大数值或任意单位字符串进入后续业务链路，形成输入校验缺口；若下游依赖这些值进行计费、标签生成、第三方接口调用或资源分配，可能导致异常放大、业务绕过或拒绝服务类风险。</div>
-                <div class="finding-suggestion">💡 修复建议：为新增字段补充严格白名单校验：对数值字段增加 `@DecimalMin(value = &quot;0.0&quot;, inclusive = false)`、必要的 `@Digits`/`@DecimalMax`；对单位字段增加枚举白名单校验（如 `@EnumValidator` 或自定义 `@Pattern`）。示例：`@DecimalMin(value=&quot;0.0&quot;, inclusive=false) @Digits(integer=8, fraction=3) private BigDecimal weight;`，`@EnumValidator(enumClass = WeightUnitType.class) private String weightUom;`。</div>
+                <div class="finding-desc">resolveLatestProvider() 在比较器中直接调用 DateUtils.parseIso8601Str(event.getUtcDateTime())。如果某条新增的 tracking event 带有非 ISO8601 格式时间，stream 的 max 比较阶段会直接抛出运行时异常，导致整个响应解析失败，而不是仅忽略该异常事件。这里新增逻辑把单个脏数据放大成整体功能异常。</div>
+                <div class="finding-suggestion">💡 修复建议：对时间解析失败做兜底处理，将无法解析的事件视为无效时间并参与 null 排序，避免整个方法失败。例如先提取一个安全解析方法：`private Date safeParse(String s){ try { return DateUtils.parseIso8601Str(s); } catch (Exception e) { return null; } }`，然后在 comparing 中使用 `safeParse(event.getUtcDateTime())`。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">backend-common/src/main/java/com/miq/backendcommon/form/label/PushLabelForm.java:481-482</code>
+                </div>
+                <div class="finding-desc">新增字段 `changeOrder` 使用 `Boolean` 包装类型且未提供默认值/校验，调用方未传该字段时会得到 `null`。该字段注释表明其承载明确业务语义（是否需要换单），后续若在新增链路中直接进行 `if (form.getChangeOrder())`、序列化透传或落库映射，容易触发空指针或出现三态语义（true/false/null）与既有二态业务不一致。</div>
+                <div class="finding-suggestion">💡 修复建议：如果业务上只允许二态，建议改为基本类型 `boolean` 并显式给默认值，或保留 `Boolean` 但增加 `@NotNull` 并在接口层强制传参。例如：`@NotNull(message = &quot;changeOrder cannot be null&quot;) private Boolean changeOrder;`。同时补充反序列化/映射测试，确保缺省值行为符合预期。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">pos-api/src/main/java/com/miq/posapi/consume/CnuspsFacilityNotifyListener.java:27</code>
                 </div>
-                <div class="finding-desc">新增消费者在 info 日志中直接打印完整入站消息体 `jsonString`。该消息来自外部 Kafka topic，内容不可控，若消息中包含运单号、仓库编码或其他业务敏感字段，将被明文写入日志；同时攻击者可构造超长/恶意内容造成日志注入、日志污染，扩大敏感数据暴露面。</div>
-                <div class="finding-suggestion">💡 修复建议：避免记录完整原始消息体，改为仅记录必要的非敏感标识字段（如消息 ID、摘要、长度），并对日志内容做长度限制与换行清洗。例如先解析后记录 `msgId`/`trackingNo` 的脱敏值，而不是直接输出原始 JSON。</div>
+                <div class="finding-desc">新增消费者在收到 Kafka 消息后直接记录完整原始报文：`log.info(&quot;[CnuspsFacilityNotifyListener] received: {}&quot;, jsonString);`。该消息体来自外部 Pickup 系统，且后续会用于更新包裹 label 的 poe/originPoe，通常可能包含 trackingNumber、facility/poe 等业务敏感字段。将未脱敏的原始消息全文写入 info 日志，会扩大敏感业务数据暴露面；一旦日志平台、运维账号或下游采集链路被非最小权限访问，可导致批量包裹流转信息泄露。</div>
+                <div class="finding-suggestion">💡 修复建议：避免记录完整原始消息体，改为仅记录必要的非敏感标识字段，或在解析后按字段白名单输出并对 trackingNumber 等做脱敏。例如先解析后记录 `msgId/facilityCode`，对 trackingNumber 仅保留后 4 位。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-api/src/main/java/com/miq/posapi/consume/CnuspsFacilityNotifyListener.java:29-30</code>
+                    <code class="finding-loc">pos-api/src/main/java/com/miq/posapi/consume/CnuspsFacilityNotifyListener.java:29-33</code>
                 </div>
-                <div class="finding-desc">反序列化结果未做空值校验，`JSON.parseObject` 在输入为 `null`、空串或结构不匹配时可能返回 `null`，随后直接调用 `labelService.updatePoeForCnusps(msg)`，容易在下游触发空指针并导致消息处理失败。</div>
-                <div class="finding-suggestion">💡 修复建议：在调用服务前校验消息体和关键字段，空消息应明确拒绝并进入重试/死信流程。例如：`CnuspsFacilityNotifyMsg msg = JSON.parseObject(jsonString, CnuspsFacilityNotifyMsg.class); if (msg == null) { throw new IllegalArgumentException(&quot;Invalid cnusps facility notify message&quot;); }`。如已知必填字段，也应逐项校验。</div>
+                <div class="finding-desc">Kafka 消费异常被统一 catch 后仅记录日志、不抛出异常，监听方法会以“正常消费完成”结束。对于 JSON 解析失败或 `labelService.updatePoeForCnusps(msg)` 执行失败的消息，通常会导致消息被直接确认并丢失，后续无法重试，造成 POE/originPoe 更新遗漏。</div>
+                <div class="finding-suggestion">💡 修复建议：仅对可忽略的异常做降级处理；对解析失败或业务更新失败应抛出异常，让 Kafka 容器按既定重试/死信策略处理。例如：`CnuspsFacilityNotifyMsg msg = JSON.parseObject(...); Assert.notNull(msg, &quot;msg is null&quot;); labelService.updatePoeForCnusps(msg);`，在 catch 中记录后 `throw e;`（或包装为 `RuntimeException` 抛出）。如果确需吞掉异常，请显式接入 DLT/补偿表。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/META-INF/persistence.xml:6</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/dao/LabelDao.java:525-526</code>
                 </div>
-                <div class="finding-desc">新增 `com.miq.posservice.entity.PosThirdLabel` 到 `persistence.xml`，但当前分片未看到与之配套的持久化单元兼容性校验或迁移说明。对于显式维护实体列表的 JPA 配置，新增实体后如果目标环境未同步建表/字段，应用启动后的实体管理、查询或 schema 校验会直接失败，属于运行时契约变更。</div>
-                <div class="finding-suggestion">💡 修复建议：确认 `PosThirdLabel` 对应表结构已在所有目标环境完成迁移，并补充集成测试覆盖实体加载与基础 CRUD。若项目允许，优先改为包扫描或在发布说明中明确该实体依赖的 DDL 版本。</div>
-            </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/dao/LabelDao.java:523-524</code>
-                </div>
-                <div class="finding-desc">新增方法 `findFirstByTrackingNumberOrCustomerRefId` 使用了自定义 JPQL 并声明返回单个 `Label`，但查询条件 `trackingNumber = :input OR customerRefId = :input` 在业务上天然可能命中多条记录（尤其本次变更已引入换单后通过 `customerRefId` 反查的场景）。该查询仅 `ORDER BY l.id DESC`，未限制返回 1 条；Spring Data 在单对象返回场景下若结果超过 1 条，通常会抛出 `NonUniqueResultException`/`IncorrectResultSizeDataAccessException`，导致查询直接失败。</div>
-                <div class="finding-suggestion">💡 修复建议：改为使用 Spring Data 的派生查询并显式限制首条结果，例如保留前面已新增的 `findFirstByTrackingNumberOrCustomerRefIdOrderByCreatedAtDesc(...)`，或将该 JPQL 改为支持分页/`Pageable` 后只取第一页第一条。示例：`Label findFirstByTrackingNumberOrCustomerRefIdOrderByIdDesc(String trackingNumber, String customerRefId);`</div>
+                <div class="finding-desc">新增的 `findFirstByTrackingNumberOrCustomerRefId` 使用 JPQL 返回单个 `Label`，但查询条件是 `trackingNumber = :input OR customerRefId = :input`，仅按 `id DESC` 排序且没有 `LIMIT/Top1` 语义。若同一个输入同时命中多条记录（例如换单后 customerRefId 与 trackingNumber 复用、历史脏数据或一对多关系），JPA 在执行 `getSingleResult` 时会抛出 `NonUniqueResultException`，导致调用链直接失败。</div>
+                <div class="finding-suggestion">💡 修复建议：将方法改为显式的单条派生查询或分页取首条，例如：`Label findFirstByTrackingNumberOrCustomerRefIdOrderByIdDesc(String trackingNumber, String customerRefId);`，或改为返回 `List&lt;Label&gt;`/`Page&lt;Label&gt;` 后由服务层安全取第一条。若必须保留自定义 JPQL，请配合 `Pageable.ofSize(1)` 使用。</div>
             </div>
             <p class="more-note">... 还有 26 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
