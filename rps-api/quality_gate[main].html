@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">rps-api &nbsp;|&nbsp; 2026-06-30 18:36:08</div>
+      <div class="meta">rps-api &nbsp;|&nbsp; 2026-07-07 17:38:32</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -56,13 +56,13 @@
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#4caf50">39.0%</div>
+      <div class="metric-value" style="color:#4caf50">39.3%</div>
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#4caf50">62.2%</div>
+            <div class="metric-value" style="color:#4caf50">60.5%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:3 &nbsp; 主要:51</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:4 &nbsp; 主要:48</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,8 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube analysis timed out after 1 minutes</li>
-<li>AI Review: 3 Critical finding(s)</li>
-<li>AI Review: 51 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 4 Critical finding(s)</li>
+<li>AI Review: 48 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -96,44 +96,55 @@
                     <span class="finding-badge">严重</span>
                     <code class="finding-loc">rps-api/src/main/java/io/speedx/rps/api/config/ConfigInterceptor.java:43</code>
                 </div>
-                <div class="finding-desc">**原因：** 新增了对路径 `/label/internal/download/**` 的拦截器放行配置，但本分片 diff 未展示该路径对应控制器/方法上的 `@PreAuthorize`、`AuthUtil.requireRole()`、Inner API Key 校验或其他等效鉴权措施。该变更会直接扩大未经过当前拦截器校验的攻击面，属于典型的鉴权绕过风险。
+                <div class="finding-desc">**原因：** 在拦截器放行名单中新增了 `&quot;/label/internal/download/**&quot;`，该变更会使该路径绕过当前 `ConfigInterceptor` 所承载的统一鉴权/校验逻辑。由于本分片未展示该下载接口在 Controller/方法级是否存在 `@PreAuthorize`、`AuthUtil.requireRole()`、内部 API Key 校验或资源归属校验，因此这里形成了明确的鉴权旁路风险。
 
 ```java
 +                        &quot;/label/internal/download/**&quot;,
 ```
 
-**影响：** 若该下载接口承载标签文件、面单、批量导出结果或其他内部资源，攻击者可在缺少上层补充鉴权的情况下直接访问下载内容，导致未授权读取内部文件/业务数据；若该接口原本依赖当前拦截器完成认证，则本次变更会造成实际匿名可达或弱认证可达。</div>
-                <div class="finding-suggestion">💡 修复建议：不要直接将 `/label/internal/download/**` 加入全局放行列表。应改为：1）仅对确认为内部调用的最小路径放行，并在对应入口强制校验 `InnerApiKeyInterceptor` 或签名；或 2）移除此放行配置，保持统一鉴权链路。若必须放行，请在对应 Controller 方法上补充明确的权限校验，例如 `@PreAuthorize(...)`，并校验下载资源归属。</div>
+**影响：** 若对应下载接口对外可达，攻击者或低权限主体可能直接访问标签下载资源，导致未授权文件下载、标签数据泄露，甚至基于可枚举参数批量获取他人面单/内部文件。对于下载类接口，这类放行通常会直接扩大敏感数据暴露面。</div>
+                <div class="finding-suggestion">💡 修复建议：移除该路径的全局放行；若确需内部调用，仅允许在专用内部鉴权拦截器中校验后访问，并在对应 Controller 方法上补充明确的权限控制与资源归属校验。例如仅允许携带有效内部 API Key 的调用方访问，且按 labelId/orgId 校验资源归属。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/builder/MaerskDspRateRequestBuilder.java:224-230</code>
+                </div>
+                <div class="finding-desc">`resolveDimDivisor` 新增后只返回 DSP 专属 `dspDimDivisor`，完全丢弃了通用 `rateConfig.getDimDivisor()` 回退：
+```java
+if (rateConfig.getDspDimDivisor() != null) {
+    BigDecimal dspSpecific = rateConfig.getDspDimDivisor().get(dspCode);
+    if (dspSpecific != null) {
+        return dspSpecific;
+    }
+}
+return null;
+```
+而上方注释明确声明“DSP-specific value ... takes precedence over the general one”，但实际代码在未配置 DSP 专属值时直接返回 `null`。这会导致体积重计算参数缺失，进而影响运费计算，属于资金计算错误：当通用 dim divisor 已配置、DSP 专属未配置时，系统会错误地不应用体积重规则，造成低收费风险。</div>
+                <div class="finding-suggestion">💡 修复建议：按注释语义补齐通用值回退逻辑，例如在未命中 `dspDimDivisor[dspCode]` 时返回 `rateConfig.getDimDivisor()`；若两者都为空，应显式记录错误并阻断计费而不是静默返回 null。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/module/rate/CainiaoUspsRateModule.java:20-41</code>
+                </div>
+                <div class="finding-desc">新增的 Cainiao USPS 费率实现将创建面单时的 postage_base、postage_amount 直接固定为 0，且清空 rate_id/rate_version。若该模块被用于真实出单而非仅测试/占位逻辑，会导致运费校验、余额拦截和后续计费链路失效，形成资金计算错误风险。当前代码中也没有任何显式保护（如仅限 CHECK_RATE_ONLY、仅限特定 carrier/product、或抛出 unsupported 异常）来防止该零费率逻辑进入生产路径。</div>
+                <div class="finding-suggestion">💡 修复建议：不要以固定 0 金额作为默认成功结果。若该渠道暂不支持计费，应显式抛出业务异常阻断出单；若确有免邮业务场景，应增加明确的白名单条件和审计字段，并保留可追踪的 rate_id/rate_version。示例：在不支持时 `throw new RRException(&quot;rate lookup not supported for Cainiao USPS&quot;)`。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
                     <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/service/oms/impl/ZipCodeSurchargeServiceImpl.java:89-94</code>
                 </div>
-                <div class="finding-desc">新增变更将 `enableBillingZoneMatrix` 开关判断整体注释掉，导致无论调用方是否显式关闭该能力，都会强制走 `getZipCodeSurchargeByCache(...)` 分支并优先返回缓存中的 surcharge 结果。这会绕过原有的业务安全边界/配置隔离：当某些租户、产品或场景依赖 `enableBillingZoneMatrix=false` 来禁止使用该附加费数据源时，当前实现会在未授权启用的情况下继续应用缓存数据，可能造成费率/附加费被错误套用，属于资金计算错误风险。</div>
-                <div class="finding-suggestion">💡 修复建议：恢复对 `enableBillingZoneMatrix` 的显式判断，确保仅在开关开启时才读取 billing-zone 相关缓存；若需要灰度放量，应增加受控配置并记录审计，而不是直接注释条件。示例：`if (BooleanUtil.isTrue(enableBillingZoneMatrix)) { ... }`。</div>
-            </div>
-            <div class="finding-card finding-critical">
-                <div class="finding-header">
-                    <span class="finding-badge">严重</span>
-                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/OmsVoidLabelCmd.java:341-343</code>
-                </div>
-                <div class="finding-desc">**原因：** 变更将原本仅对 `SPX` 渠道执行的 `pushLogService.saveVoidLabelToPos(rpsLabel, rpsLabel.getOrgId())` 放开为对所有 DSP 都执行，但当前新增代码未见任何按 `dspCode`、租户配置或调用主体权限的限制。
-
+                <div class="finding-desc">新增变更将 `enableBillingZoneMatrix` 开关判断整体注释掉，导致无论配置是否关闭，都会强制执行 `getZipCodeSurchargeByCache(...)` 并优先返回 surcharge 结果。该方法名表明其结果会参与费率/附加费类型判定，属于计费路径上的业务安全控制；移除开关后会绕过原有的配置保护边界，在未启用该能力的租户/产品上错误应用附加费规则，存在资金计算错误风险。</div>
+                <div class="finding-suggestion">💡 修复建议：恢复对 `enableBillingZoneMatrix` 的显式判断，仅在开关开启时查询并应用 zipcode surcharge；同时为关闭开关场景增加保护性测试。示例：
 ```java
-//if (DspCode.SPX.equals(rpsLabel.getDspCode())) {
-    pushLogService.saveVoidLabelToPos(rpsLabel, rpsLabel.getOrgId());
-//}
-```
-
-这会把原先受渠道边界约束的外部副作用扩展到全部作废接口入口。对于 `/label/void-label*` 与 `/ags/label/void-label*`，一旦调用方具备基础作废能力，就可能额外触发不属于该渠道/租户预期的 POS 推送。
-
-**影响：** 扩大了外部系统操作面，可能导致非 SPX 标签在作废时被错误同步到 POS，形成跨渠道越权操作或错误状态传播；若 POS 侧按推送即执行，可能造成未授权的外部状态变更、审计污染，甚至影响后续财务/履约流程。</div>
-                <div class="finding-suggestion">💡 修复建议：恢复渠道边界校验，至少按 `rpsLabel.getDspCode()` 白名单控制可推送的 DSP；若确需放开，必须增加基于租户配置和调用主体权限的显式授权判断，并补充审计日志。例如：
-```java
-if (DspCode.SPX.equals(rpsLabel.getDspCode())
-        &amp;&amp; Boolean.TRUE.equals(canPushVoidToPos(rpsLabel.getOrgId(), rpsLabel.getDspCode()))) {
-    pushLogService.saveVoidLabelToPos(rpsLabel, rpsLabel.getOrgId());
+if (BooleanUtil.isTrue(enableBillingZoneMatrix)) {
+    ZipCodeSurchargeDto zipCodeSurchargeDto = getZipCodeSurchargeByCache(
+        request.getProductCode(), request.getRecipientCountry(), sortCodeDto.getZipCode());
+    if (zipCodeSurchargeDto != null) {
+        return valueOfDeliveryAreaSurchargeType(zipCodeSurchargeDto.getSurchargeCode());
+    }
 }
 ```</div>
             </div>
@@ -141,44 +152,66 @@ if (DspCode.SPX.equals(rpsLabel.getDspCode())
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">rps-api/src/main/java/io/speedx/rps/api/controller/api/AddressValidationApiController.java:30-69</code>
+                    <code class="finding-loc">rps-api/src/main/java/io/speedx/rps/api/controller/admin/MemoryCacheController.java:74-75</code>
                 </div>
-                <div class="finding-desc">通过块注释直接移除了整个地址校验 API 的依赖注入与入口方法，编译虽可能通过，但该控制器对外将不再暴露原有接口，属于破坏性 API 变更；现有调用方会收到 404/无路由，业务能力被直接下线。</div>
-                <div class="finding-suggestion">💡 修复建议：如果目标是临时下线接口，建议显式保留方法并返回明确的停用响应（如 503/业务错误码），同时补充变更说明；如果不是有意下线，应恢复 `@Autowired` 与 `@RequestMapping` 方法。示例：保留方法体并 `throw new RRException(&quot;address validation api is temporarily unavailable&quot;)`，避免静默消失。</div>
+                <div class="finding-desc">`clearCatch` 调用 `billingZoneMatrixService.clearCacheByKey(...)` 时新增了 `dspCode` 参数，但当前控制器方法签名与校验仍只体现 `@Valid ClearBillingZoneCacheForm`，本次 diff 中没有同步展示任何兼容处理。若前端/调用方仍按旧契约不传 `dspCode`，这里会把 `null` 继续下传，容易导致缓存清理范围变化（清不掉目标缓存，或误走“按空条件清理”分支），属于接口行为变更风险。</div>
+                <div class="finding-suggestion">💡 修复建议：为 `dspCode` 明确兼容策略：1）若为新增必填字段，在 `ClearBillingZoneCacheForm` 上增加非空校验并同步更新接口文档；2）若需兼容旧调用方，在 controller 或 service 层对 `null` 做显式分支处理，例如 `if (StringUtils.isBlank(form.getDspCode())) { clearCacheByKey(productCode, pickUp, originFacilityCode); } else { clearCacheByKey(productCode, pickUp, originFacilityCode, dspCode); }`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">rps-api/src/main/java/io/speedx/rps/api/controller/api/SackApiController.java:35-45</code>
+                    <code class="finding-loc">rps-api/src/main/resources/templates/zpl/203dpi/spx_v5.zpl:62</code>
                 </div>
-                <div class="finding-desc">生成 sack label 的控制器方法被整体注释，直接切断了 `generateSackLabelCmd` 的 HTTP 入口。根据清单提交流程规则，`generateSackLabelCmd` 属于 manifest 相关能力的一部分，接口消失会导致相关业务流程无法继续。</div>
-                <div class="finding-suggestion">💡 修复建议：如果该能力仍被业务依赖，应恢复 `@RequestMapping(&quot;/generate-label&quot;)` 方法；若需要禁用，请在方法内返回明确错误并同步通知调用方，不要通过注释移除路由。</div>
+                <div class="finding-desc">将 `customer_initial_name` 的 Y 坐标从 1075 下移到 1103，但标签总高度仍是 `^LL1218`。结合同文件新增的 `creation_date`/`item_type` 也同步下移到 1162/1163，这会把底部三块内容压缩到距标签底边仅约 55px 的区域；一旦 `customer_initial_name` 稍长或字体渲染存在差异，极易与底部元素/裁切边界重叠，导致标签底部信息不可读。</div>
+                <div class="finding-suggestion">💡 修复建议：补充对应模板渲染回归，确认底部区域在最长客户简称、最长 item_type 场景下仍不越界；若只是为上方内容腾挪空间，建议同步增大 `^LL` 或重新分配底部三个字段的字号/坐标，例如保持 `customer_initial_name` 不超过原有 1075 附近，或把 `creation_date`/`item_type` 改为更小字号后再下移。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">rps-api/src/main/java/io/speedx/rps/api/controller/api/UserApiController.java:59-143</code>
+                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/OmsCreateLabelCmd.java:493-498</code>
                 </div>
-                <div class="finding-desc">用户 API 中整段对外方法被块注释，导致原有“Get courier list”能力从控制器层消失。该类变更会让现有客户端在无兼容提示的情况下失去接口，属于破坏性契约变更。</div>
-                <div class="finding-suggestion">💡 修复建议：恢复原接口，或保留路由并返回明确的废弃说明；若要替换为新接口，请采用版本化路径并保留旧接口过渡期。</div>
+                <div class="finding-desc">这里把尺寸兜底与必填校验提前到了创建流程中，并且对所有非 RET 请求统一执行。根据既有标签创建规则，尺寸必填应由具体产品/计费链路决定；本次改动会把原本可能允许“无尺寸创建标签”的账号/产品直接拦截为 PARAMETER_ERROR，属于接口行为收紧，存在向后不兼容风险。尤其当账号未配置 mockDimension 且历史调用只传重量不传尺寸时，会在进入后续产品矩阵/费率逻辑前失败。</div>
+                <div class="finding-suggestion">💡 修复建议：仅在确实要求尺寸的产品或费率链路上执行该校验，避免全局前置拦截。可将 `validateDimensionsAfterFallback(createLabelForm)` 下沉到需要尺寸的 product/rate module，或先依据 productMatrix / courier 配置判断是否必须校验尺寸。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">rps-api/src/main/resources/templates/zpl/203dpi/spx_v5.zpl:16</code>
+                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/OmsCreateLabelCmd.java:577-605</code>
                 </div>
-                <div class="finding-desc">将固定二维码指令 `^FO610,20^BQ,2,7^FDQA,{{qr_code}}^FS` 替换为 `{{qr_section}}` 后，模板新增了一个必填占位片段契约；但本分片未看到对应默认兜底或兼容输出。若渲染侧未同步为所有 SPX v5 标签提供 `qr_section`，最终标签会直接缺失二维码区域或输出未替换占位符，导致面单不可扫。</div>
-                <div class="finding-suggestion">💡 修复建议：在渲染器中为 `qr_section` 提供向后兼容默认值，例如当未显式传入时回退到原始二维码 ZPL：`^FO610,20^BQ,2,7^FDQA,${qr_code}^FS`；同时为模板渲染增加占位符完整性校验，发现 `{{qr_section}}` 未替换时直接失败而不是生成坏标签。</div>
+                <div class="finding-desc">`parseMockDimension` 在解析配置时吞掉了所有异常并返回 null，调用方会静默忽略账号配置错误，最终退化为后续“Length/Width/Height is required”之类的通用参数错误。这样会把“账号配置非法”伪装成“请求参数缺失”，排障困难，而且配置问题不会被及时暴露。</div>
+                <div class="finding-suggestion">💡 修复建议：不要对所有异常直接降级为 null。至少对配置格式错误抛出明确的配置异常（如 `RRException(&quot;Invalid mockDimension config&quot;, ResponseCode.ACCOUNT_CONFIG_ERROR)`），或在返回前记录 error 级别日志并携带 accountId、原始字段名，避免静默吞没。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">rps-api/src/main/resources/templates/zpl/203dpi/spx_v5.zpl:52-56</code>
+                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/OmsCreateLabelCmd.java:302-306</code>
                 </div>
-                <div class="finding-desc">底部字段整体下移后，`customer_initial_name`、`creation_date`、`item_type` 的 Y 坐标分别改为 1103/1162/1163，而标签总高度仍是 `^LL1218`。这使底部内容距离页尾仅剩约 55px，且 `creation_date` 与 `item_type` 几乎同一水平线，稍有字体放大、打印机边距或多语言字符高度差就可能发生裁切或重叠，影响面单可读性。</div>
-                <div class="finding-suggestion">💡 修复建议：重新核对底部区域布局，至少为页尾保留稳定安全边距，并避免相邻字段共享几乎相同的 Y 坐标。建议结合渲染探针/快照测试验证极端场景；若确需下移，考虑同步调整 `^LL` 或压缩上方可变区域。</div>
+                <div class="finding-desc">**原因：** 新增逻辑允许请求方在 `CreateLabelForm` 中直接传入 `dspCode`，并在未见任何归属/可用渠道校验的情况下优先采用该值覆盖系统路由结果：
+```java
+if (StrUtil.isNotBlank(createLabelForm.getDspCode())) {
+    String dspCode = createLabelForm.getDspCode();
+    context.setDspCode(dspCode);
+    return dspCode;
+}
+```
+这会绕过后续基于账号配置的 `CHANNEL_ROUTING_STRATEGY`、产品路由或最优渠道选择。对于创建面单接口，渠道选择通常属于租户侧受控能力，不应由外部调用方任意指定。
+
+**影响：** 若上游 HTTP 入口 `/label/create-label` 或 `/ags/label/create-label` 可由普通客户调用，则攻击者可构造任意 `dspCode` 强制走未授权渠道，导致跨渠道下单、绕过账号级路由限制，进一步引发计费错误、访问未授权承运商能力或生成不属于该账号策略范围的面单。</div>
+                <div class="finding-suggestion">💡 修复建议：禁止直接信任请求中的 `dspCode`。仅允许在明确的白名单场景下由服务端校验后使用，例如校验该 `dspCode` 是否属于当前 `customerAccount` 可用渠道集合；否则始终走服务端路由策略。
+可参考：
+```java
+if (StrUtil.isNotBlank(createLabelForm.getDspCode())) {
+    String requested = createLabelForm.getDspCode();
+    if (!channelRoutingCmd.isAllowedChannel(context, requested)) {
+        throw new RRException(&quot;dspCode is not allowed&quot;, ResponseCode.FORBIDDEN);
+    }
+    context.setDspCode(requested);
+    return requested;
+}
+```
+同时在 Controller/Facade 层补充针对该字段的鉴权与审计。</div>
             </div>
-            <p class="more-note">... 还有 46 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 43 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
