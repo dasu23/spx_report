@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-exchange-api &nbsp;|&nbsp; 2026-07-08 12:22:57</div>
+      <div class="meta">pos-exchange-api &nbsp;|&nbsp; 2026-07-08 15:00:20</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:28</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:30</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -84,7 +84,7 @@
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube analysis timed out after 1 minutes</li>
 <li>AI Review: 1 Critical finding(s)</li>
-<li>AI Review: 28 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 30 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,29 +94,26 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/web/WebReLabelController.java:24-43</code>
+                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/web/WebReLabelController.java:25-43</code>
                 </div>
-                <div class="finding-desc">**原因：** 新增的查询接口未添加任何鉴权注解（如 `@RequiresPermissions` / `@PreAuthorize`），也未在 diff 中看到基于当前登录人对 `trackingNumber` 归属或 `facilityCode` 数据范围的校验。任意已登录甚至被全局放行的调用方，都可能直接通过追踪号读取换单页面预填充的重量/尺寸信息。
+                <div class="finding-desc">**原因：** 新增的查询接口未添加任何鉴权注解（如 `@RequiresPermissions` / `@PreAuthorize`），且直接按路径参数 `trackingNumber` 返回换单页面预填充所需的重量/尺寸数据。根据本分片可见代码，接口没有做调用主体权限校验，也没有做基于 `facilityCode`/资源归属的数据范围限制。
 
 ```java
 @GetMapping(&quot;/{trackingNumber}&quot;)
-public ResponseObject&lt;ReLabelReq&gt; fetchLabelDimensions(@ApiParam(value = &quot;trackingNumber&quot;) @PathVariable String trackingNumber) {
-    return ResponseObject.success(webReLabelService.fetchLabelDimensions(trackingNumber));
-}
+public ResponseObject&lt;ReLabelReq&gt; fetchLabelDimensions(...)
 ```
 
-**影响：** 该接口可被用于枚举追踪号并探测包裹存在性及业务属性，造成跨租户/跨网点的数据越权读取；若重量、尺寸等信息被后续业务用于计费或操作决策，还会扩大业务信息泄露面。
+**影响：** 任意已登录但不具备换单权限的主体，甚至在全局安全配置放行时的未授权主体，都可能通过枚举/猜测 `trackingNumber` 读取包裹尺寸与重量等业务数据，形成越权读取与数据探测面扩大。
 
 ---
 
-新增加的查询换单信息接口未添加任何 `@RequiresPermissions` 鉴权注解。按当前代码，已登录但无换单权限的用户也可通过 trackingNumber 查询包裹重量/尺寸等换单预填信息，扩大了换单相关数据的可见范围。</div>
-                <div class="finding-suggestion">💡 修复建议：为该入口补充明确的权限控制，并在服务层增加资源归属校验。例如至少增加 `@RequiresPermissions(&quot;label:update:relabel&quot;)`（或更细粒度只读权限），同时校验当前用户仅可访问其 `facilityCode`/租户范围内的 trackingNumber。
-
+新增加的换单查询接口未添加任何权限控制注解。该接口可直接按 trackingNumber 查询换单预填充数据（重量/尺寸），与同文件中的 POST 换单接口一样属于敏感业务入口；当前代码会允许已登录但无对应业务权限的用户访问。</div>
+                <div class="finding-suggestion">💡 修复建议：为该接口补充明确的权限控制，并在服务层校验包裹归属范围（至少校验当前用户可访问该 `trackingNumber` 所属 `facilityCode`/业务范围）。例如：
 ```java
 @RequiresPermissions(&quot;label:update:relabel&quot;)
 @GetMapping(&quot;/{trackingNumber}&quot;)
 public ResponseObject&lt;ReLabelReq&gt; fetchLabelDimensions(@PathVariable String trackingNumber) {
-    webReLabelService.assertAccessible(trackingNumber, LoginUserUtil.getCurFacilityCode(), LoginUserUtil.getUserId());
+    webReLabelService.assertAccessible(trackingNumber, LoginUserUtil.getCurFacilityCode());
     return ResponseObject.success(webReLabelService.fetchLabelDimensions(trackingNumber));
 }
 ```</div>
@@ -127,42 +124,42 @@ public ResponseObject&lt;ReLabelReq&gt; fetchLabelDimensions(@PathVariable Strin
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">pos-exchange-api/pom.xml:34-38</code>
                 </div>
-                <div class="finding-desc">新增 `org.springframework.retry:spring-retry:1.2.5.RELEASE`，该版本发布时间较早，且当前项目基于 Spring Boot 2.2.12.RELEASE。将过旧重试组件直接引入生产依赖会扩大已知漏洞暴露面，并可能因与现有 Spring 生态版本不匹配导致异常重试、认证上下文丢失或请求重复执行等安全相关副作用。</div>
-                <div class="finding-suggestion">💡 修复建议：优先移除显式固定旧版本，改为使用与当前 Spring Boot BOM 对齐的受支持版本；若必须引入，请补充依赖漏洞扫描并锁定到无已知高危漏洞的版本。同时对所有 `@Retryable` 使用点补充幂等性与认证上下文测试。</div>
+                <div class="finding-desc">新增 `org.springframework.retry:spring-retry:1.2.5.RELEASE`，该版本发布时间较早，且当前项目基于 Spring Boot 2.2.12.RELEASE，直接显式锁定旧版重试组件会引入已知第三方组件漏洞暴露面的风险。安全上这类基础依赖一旦被用于远程调用重试、AOP 代理或表达式解析链路，历史漏洞会扩大攻击面。</div>
+                <div class="finding-suggestion">💡 修复建议：不要手工固定到过旧版本；优先使用与当前 Spring Boot BOM 对齐的受支持版本，或升级到已验证无已知高危漏洞的 `spring-retry` 版本，并补充依赖漏洞扫描基线（如 OWASP Dependency-Check / SCA）。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/web/WebInboundSortStatController.java:43-66</code>
                 </div>
-                <div class="finding-desc">新增实现将原先基于 `facility` 时区的时间边界转换删除，直接把前端传入的 `LocalDateTime` 交给服务层查询。对于按时间窗口统计的接口，这会导致同一请求在不同时区 facility 下查询到错误时间范围的数据，形成跨日/跨班次的数据越界读取风险，攻击者可通过构造边界时间扩大可见统计范围。</div>
-                <div class="finding-suggestion">💡 修复建议：恢复基于当前登录 `facilityCode` 的时区归一化，再将统一时区的时间范围传入服务层；若服务层已改为接收本地时间，也必须在服务层内部显式按 facility 时区转换并固定查询边界。</div>
+                <div class="finding-desc">该变更移除了按 facility 时区将前端本地时间转换为 UTC 的逻辑，改为直接把 `query.getStartTime()` / `query.getEndTime()` 传入服务层。若服务层/持久层仍按 UTC 或服务器默认时区解释时间，攻击者可通过构造边界时间扩大或偏移统计窗口，读取到超出预期时间范围的数据，形成时间边界上的数据暴露风险。</div>
+                <div class="finding-suggestion">💡 修复建议：保持控制层或服务层统一做时区归一化，并明确约定入参时区；至少在进入查询前将用户所属 facility 的本地时间转换为统一时区后再查询。补充接口文档说明时间语义。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/web/WebPosContainerController.java:123-157</code>
+                    <code class="finding-loc">pos-exchange-api/src/main/resources/bootstrap-dev.yml:6-10</code>
                 </div>
-                <div class="finding-desc">删除 customerRefId 到 trackingNumber 的转换后，scanParcelToContainer 现在会把前端传入值原样交给 posContainerService。若现网页面/扫码枪仍可能上传 customerRefId，此接口会从“兼容两种码制”退化为“仅支持 trackingNumber”，导致原本可扫描入柜的包裹直接失败。</div>
-                <div class="finding-suggestion">💡 修复建议：若业务仍要求兼容 customerRefId，保留转换逻辑，或在 service 层统一做 `trackingNumber/customerRefId` 归一化解析，避免 controller 间行为不一致。</div>
+                <div class="finding-desc">将 Nacos config `server-addr` 直接硬编码为内网地址 `10.22.37.4:8848`。这会泄露配置中心接入点，且 discovery/config 双地址同时暴露，增加内部服务发现与配置平面的被探测风险。</div>
+                <div class="finding-suggestion">💡 修复建议：统一改为外部化配置，例如 `${NACOS_SERVER_ADDR}`，并在部署平台按环境注入；同时评估是否需要通过网络策略限制仅受信网段访问 Nacos。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/dao/LabelDao.java:525-526</code>
                 </div>
-                <div class="finding-desc">新增的 `findFirstByTrackingNumberOrCustomerRefId` 使用了普通 JPQL 查询并声明返回单个 `Label`，但查询条件是 `trackingNumber = :input OR customerRefId = :input`，且仅按 `id DESC` 排序，没有 `LIMIT/Top/First` 语义。在同一个输入同时命中多条记录（例如换单后 customerRefId 复用、历史数据重复）时，JPA 的单结果查询会抛出 `NonUniqueResultException`，导致调用链直接失败。</div>
-                <div class="finding-suggestion">💡 修复建议：将方法改为 Spring Data 派生查询或显式分页，确保最多返回一条。例如：`Label findFirstByTrackingNumberOrCustomerRefIdOrderByIdDesc(String trackingNumber, String customerRefId);`，或改为 `List&lt;Label&gt;`/`Pageable` 后由调用方取首条。若必须保留 `@Query`，建议传入 `Pageable.ofSize(1)`。</div>
+                <div class="finding-desc">新增方法 `findFirstByTrackingNumberOrCustomerRefId` 使用了 `ORDER BY l.id DESC`，但返回类型是单个 `Label`，且方法名/注解都没有限制结果集为 1。若同一个输入同时命中多条记录（例如换单后历史记录并存，或 customerRefId 非唯一），JPA 在执行 `getSingleResult` 时会抛出 `NonUniqueResultException`，导致查询直接失败。</div>
+                <div class="finding-suggestion">💡 修复建议：将查询显式限制为只取一条，避免多结果异常。可改为派生方法 `Label findFirstByTrackingNumberOrCustomerRefIdOrderByIdDesc(String trackingNumber, String customerRefId);`，或改为接收 `Pageable` 后取 `PageRequest.of(0,1)` 的首条结果。若必须保留自定义 `@Query`，建议返回 `List&lt;Label&gt;`/`Optional&lt;Label&gt;` 并在调用方自行取第一条。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/dto/dispatch/DispatchV2SubmitDto.java:18-37</code>
+                    <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/dto/dispatch/DispatchV2EditDto.java:63-65</code>
                 </div>
-                <div class="finding-desc">本次变更移除了 `driverName` 的 `@NotBlank` 必填校验，使该字段可为空提交。对于承运/派车提交流程，这会放宽原有输入约束；若下游鉴权、审计、BOL 生成或风控逻辑依赖司机姓名存在，则可能出现“请求通过校验但身份/审计信息缺失”的安全退化，形成不可追责或绕过基于字段存在性的业务校验。</div>
-                <div class="finding-suggestion">💡 修复建议：若业务确实允许为空，应同步在所有消费方显式处理空值，并补充服务层校验，避免将“缺失司机信息”的请求当作正常已实名派车处理；若不允许为空，恢复 `@NotBlank(message = &quot;driverName cannot be blank&quot;)`。</div>
+                <div class="finding-desc">编辑 DTO 新增 `dispatchType` 字段，但同样仅做长度限制，未约束为注释声明的 `pickup/dropoff` 枚举值。编辑接口通常影响已存在 dispatch 的状态或类型，若允许任意字符串写入，可能导致后续按类型分流、审计或权限控制的逻辑被污染。</div>
+                <div class="finding-suggestion">💡 修复建议：为编辑 DTO 与提交 DTO 统一增加枚举白名单校验，并在持久化前做服务层二次校验，拒绝未知类型。</div>
             </div>
-            <p class="more-note">... 还有 23 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 25 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
