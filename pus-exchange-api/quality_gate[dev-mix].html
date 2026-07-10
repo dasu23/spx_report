@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pus-exchange-api &nbsp;|&nbsp; 2026-07-10 19:03:40</div>
+      <div class="meta">pus-exchange-api &nbsp;|&nbsp; 2026-07-10 21:12:48</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:0</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:2 &nbsp; 主要:16</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -82,10 +82,132 @@
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube quality gate status: ERROR</li></ul>
+            <ul><li>SonarQube quality gate status: ERROR</li>
+<li>AI Review: 2 Critical finding(s)</li>
+<li>AI Review: 16 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
+        <div class="findings-section">
+            <h3>AI 代码审查发现</h3>
+            
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/so/PickupSo.java:104-121</code>
+                </div>
+                <div class="finding-desc">**原因：** 新增的 `toSpec()` 将外部传入的 `orgId/orgIds` 直接拼入查询条件，用于决定可见的 Pickup 数据范围，但该数据层逻辑本身没有任何“当前登录主体是否允许查询这些 orgId”的约束或校验。只要上层接口把请求参数透传到该 SO，调用方即可通过构造任意 `orgId/orgIds` 扩大查询范围，且新增的 `exists(PickupStaging)` 分支还会把 `pickup.pickupAccountId` 不匹配、但 staging 中命中的订单一并返回，进一步放大跨租户可见面。
+
+```java
+if (!effectiveOrgIds.isEmpty()) {
+    spec = spec.and((root, query, cb) -&gt; {
+        Subquery&lt;Long&gt; sub = query.subquery(Long.class);
+        Root&lt;PickupStaging&gt; stagingRoot = sub.from(PickupStaging.class);
+        sub.select(cb.literal(1L)).where(
+                cb.equal(stagingRoot.get(&quot;pickupOrderNo&quot;), root.get(&quot;bookingCode&quot;)),
+                stagingRoot.get(&quot;pickupAccountId&quot;).in(effectiveOrgIds));
+        return cb.or(root.get(&quot;pickupAccountId&quot;).in(effectiveOrgIds), cb.exists(sub));
+    });
+}
+```
+
+**影响：** 若对应查询入口未在 Service/Controller 层基于当前用户身份重写或收敛 `orgId/orgIds`，攻击者可枚举或指定其他组织 ID，读取不属于自己的 Pickup 订单数据，属于高风险的数据越权读取；并且 staging 反查路径会让“主单 org 不匹配”的历史/合并单也被带出。</div>
+                <div class="finding-suggestion">💡 修复建议：不要信任请求侧传入的 `orgId/orgIds` 作为最终数据范围。应在进入 `PickupSo` 前由服务层根据当前登录主体可访问的组织集合进行交集收敛，或完全忽略前端传值、仅使用服务端鉴权上下文注入的数据范围。示例：
+```java
+List&lt;Long&gt; allowedOrgIds = authContext.getAllowedOrgIds();
+List&lt;Long&gt; requestedOrgIds = merge(orgId, orgIds);
+List&lt;Long&gt; effectiveOrgIds = requestedOrgIds.isEmpty()
+        ? allowedOrgIds
+        : requestedOrgIds.stream().filter(allowedOrgIds::contains).distinct().toList();
+if (effectiveOrgIds.isEmpty()) {
+    throw new AccessDeniedException(&quot;org scope denied&quot;);
+}
+```
+同时为 staging 反查增加与当前主体一致的数据范围约束，并在对应 HTTP/Facade 入口补充显式鉴权注解或 `AuthUtil.requireRole()`。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pus-facade/pus-facade-web/src/main/java/io/speedx/pus/facade/web/WebZipcodeConfigFacade.java:44-47</code>
+                </div>
+                <div class="finding-desc">**原因：** 新增了可批量修改 Zipcode 配置 Facility 的 POST 入口，但在本次 diff 可见代码中，该入口仅声明了 `@PostMapping` 与参数校验，未见 `@PreAuthorize`、`AuthUtil.requireRole()` 或任何角色/数据范围约束信息。按照审查基线，POST/PUT/DELETE 修改类接口缺失显式角色校验应视为高危。
+
+```java
+@ApiOperation(&quot;批量修改 Zipcode 配置的 Facility&quot;)
+@PostMapping(&quot;/web/zipcodeConfig/batchUpdateFacility&quot;)
+ResponseObject&lt;Void&gt; batchUpdateFacility(@Valid @RequestBody ZipcodeConfigBatchUpdateFacilityForm form);
+```
+
+**影响：** 若控制器实现未在其他层补充鉴权，任意已登录主体甚至误放行主体都可能调用该接口批量修改 Zipcode 与 Facility 绑定关系，造成配置被越权篡改，进一步影响路由/揽收归属等业务数据。由于该接口是批量更新，单次调用的破坏面更大。</div>
+                <div class="finding-suggestion">💡 修复建议：为该 POST 入口补充显式权限控制，并在实现层增加资源范围校验。至少应在 Controller/Facade 对应实现上增加 `@PreAuthorize(...)` 或在方法入口调用统一鉴权工具；同时对每个待修改项校验调用方是否有权操作对应 `facilityCode`/配置范围。
+
+```java
+@PreAuthorize(&quot;hasAuthority(&#x27;zipcodeConfig:batchUpdateFacility&#x27;)&quot;)
+@PostMapping(&quot;/web/zipcodeConfig/batchUpdateFacility&quot;)
+public ResponseObject&lt;Void&gt; batchUpdateFacility(@Valid @RequestBody ZipcodeConfigBatchUpdateFacilityForm form) {
+    authUtil.requireRole(&quot;zipcodeConfig:batchUpdateFacility&quot;);
+    zipcodeConfigService.batchUpdateFacility(form, currentUserFacilityScope());
+    return ResponseObject.success();
+}
+```</div>
+            </div>
+            
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">.gitignore:28</code>
+                </div>
+                <div class="finding-desc">将忽略规则从精确文件 `scripts/.env` 改为目录 `scripts/.env.superpowers/` 后，原本用于本地敏感配置的 `.env` 文件不再被 Git 忽略。该变更会显著增加开发者误提交凭证、Token、数据库密码等敏感信息的风险，属于凭证泄露面的扩大。</div>
+                <div class="finding-suggestion">💡 修复建议：恢复对 `scripts/.env` 的忽略，若新增目录也需忽略，应同时保留原规则，例如：
+```gitignore
+scripts/.env
+scripts/.env.superpowers/
+```
+并检查仓库中是否已有被跟踪的 `.env` 文件，必要时移除历史提交中的敏感内容。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">docs/migrations/SPX-PI-7277-alter-tables.sql:22-25</code>
+                </div>
+                <div class="finding-desc">这里将 `pus_pickup.pickup_contact_name` 和 `pickup_phone` 扩容到 512，但同一文件注释已明确“执行后同步调大代码常量 PickupCreateServiceImpl.LIMITATION_ORDER_CONTACT / LIMITATION_ORDER_PHONE”。当前分片未看到对应代码常量同步修改，若先执行该 SQL，应用层仍可能按旧长度截断或校验失败，导致数据库容量提升后实际写入仍被旧逻辑限制，形成代码与库结构不一致。</div>
+                <div class="finding-suggestion">💡 修复建议：在同一变更中同步修改 `PickupCreateServiceImpl` 中相关长度常量及其截断/校验逻辑，并补充单测覆盖 168/128 以上、512 以内的联系人与电话拼接场景；若暂不改代码，应不要提交该 DDL，避免库先于代码升级。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/properties/OrderResolveGrayProperties.java:39-41</code>
+                </div>
+                <div class="finding-desc">`grayFacilities` 为空时直接返回 `true`，把“未配置/配置丢失”解释为“全量开启”。该类又标注了 `@RefreshScope`，一旦 Nacos 配置加载失败、被误删或热更新短暂返回空集合，灰度保护会被自动绕过，导致原本仅限白名单 facility 的功能瞬时对全部 PUDO facility 生效。这属于典型 fail-open 配置策略，容易把灰度/隔离开关退化为全量放开。</div>
+                <div class="finding-suggestion">💡 修复建议：将默认策略改为 fail-close：`grayFacilities` 为空或未配置时返回 `false`，仅显式命中白名单时开启；若确需支持“全量开启”，应增加独立布尔开关如 `enabledAllFacilities` 并要求显式配置。示例：```java
+if (!PickupModeEnum.PUDO.equals(pickupMode)) {
+    return false;
+}
+if (CollUtil.isEmpty(grayFacilities)) {
+    return false;
+}
+return grayFacilities.contains(facilityCode);
+```</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/impl/PickupBatchServiceImpl.java:1234-1250</code>
+                </div>
+                <div class="finding-desc">在遍历 `beansRouteInfoDtos` 的循环内，对每个 pickup 都新增执行 `pickupStagingRepository.findByPickupOrderNo(...)`，随后又对每个 org 分组执行 `pickupStagingParcelRepository.findByBookingCodeInAndStatus(...)`。这会把原先单次按 bookingCode 查 parcel 的逻辑放大为典型 N+1 查询模式；当一个批次包含大量 pickup / org 时，路由后发送 shipment 消息阶段会产生大量数据库访问，容易被大批量请求触发为资源耗尽型拒绝服务。</div>
+                <div class="finding-suggestion">💡 修复建议：将 staging 与 parcel 查询改为批量预取：先一次性按本批次所有 `pickupOrderNo` 查询 staging，再按所有 staging bookingCodes 一次性查询 parcel，并在内存中按 `pickupOrderNo/orgId` 分组组装消息，避免循环内查库。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/impl/PickupServiceImpl.java:394-511</code>
+                </div>
+                <div class="finding-desc">新增逻辑对 `PUDO` 请求在完成日期合法性/节假日校验后直接 `return`，跳过了后续基于当前时间的最早可预约日期限制校验。这样调用方可以在当天较晚时间继续创建本应被截止规则拒绝的 PUDO pickup，请求约束被放宽，可能被滥用制造异常调度或绕过运营时间控制。</div>
+                <div class="finding-suggestion">💡 修复建议：不要对 PUDO 直接提前返回；如确有业务豁免，应显式保留截止时间/最早预约日期校验，或仅豁免营业时间窗口校验而非整段日期时效校验。</div>
+            </div>
+            <p class="more-note">... 还有 11 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+        </div>
+        
 
   <div class="footer">
     由质量门禁引擎生成 &nbsp;|&nbsp; SpeedX CI/CD
