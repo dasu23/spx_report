@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">cps-api &nbsp;|&nbsp; 2026-07-10 10:43:58</div>
+      <div class="meta">cps-api &nbsp;|&nbsp; 2026-07-10 18:43:34</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -62,7 +62,7 @@
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#ff9800">43.1%</div>
+            <div class="metric-value" style="color:#ff9800">43.4%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:7 &nbsp; 主要:28</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:11 &nbsp; 主要:22</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,8 +83,8 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 7 Critical finding(s)</li>
-<li>AI Review: 28 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 11 Critical finding(s)</li>
+<li>AI Review: 22 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,43 +94,25 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">cps-domain/src/main/java/com/speedx/cps/domain/service/UserService.java:278-293</code>
+                    <code class="finding-loc">cps-facade/src/main/java/com/speedx/cps/facade/model/resp/UserInfoResp.java:42-46</code>
                 </div>
-                <div class="finding-desc">**原因：** `updateAccountSelective(ModifyUserReq req)` 新实现直接按 `req.getId()` 读取并更新账户实体，但变更代码中没有任何当前登录用户与目标账户归属关系校验，也没有角色/数据范围校验。只要上层请求可控传入任意 `id`，调用方就可能修改非本人/非本租户账户的名称、联系人、地址、电话、邮箱等资料。
-
-```java
-CpsAccount account = accountRepository.findById(req.getId()).orElse(null);
-if (account == null) {
-    return 0;
-}
-...
-account.setPortalOrgName(req.getAccountName());
-...
-account.setContactEmail(req.getPickupEmail());
-accountRepository.save(account);
-```
-
-**影响：** 这是典型的对象级越权（IDOR）。攻击者若能枚举或猜测账户 ID，可篡改其他账户的联系信息，导致租户数据被非法修改，进一步影响通知投递、业务联系链路，甚至为后续账户接管创造条件。由于该方法还会同步刷新当前 Shiro Principal，越权修改后界面侧可能立即表现为“修改成功”，增加问题隐蔽性。</div>
-                <div class="finding-suggestion">💡 修复建议：在保存前增加资源归属与角色校验：仅允许账户本人或具备明确管理权限的角色修改该账户；同时校验 `req.getId()` 必须属于当前登录用户可管理的数据范围。示例：
-```java
-LoginUserBo current = LoginUserUtil.getCurrentUser();
-if (current == null) {
-    throw new BizException(&quot;Unauthenticated&quot;);
-}
-Long currentAccountId = current.getAccountDto().getPortalAccountId();
-boolean isAdmin = /* 显式角色判断 */;
-if (!isAdmin &amp;&amp; !Objects.equals(currentAccountId, req.getId())) {
-    throw new BizException(&quot;No permission to modify this account&quot;);
-}
-```
-若存在多租户/组织维度，还应补充按 `pickupAccountId`/租户标识的数据范围校验。</div>
+                <div class="finding-desc">`UserInfoResp` 新增了 `mimicAdminUsername`、`mimicAdminId`、`mimicAdminEmail` 等模拟登录管理员标识信息，并将其纳入对外响应模型。该变更会把管理员身份信息直接暴露给前端/调用方；其中邮箱属于明确的个人敏感信息，管理员 ID/用户名也会扩大内部账号枚举面。由于本分片 diff 未展示任何按角色、场景或脱敏控制，这属于新增敏感数据暴露面。</div>
+                <div class="finding-suggestion">💡 修复建议：仅在确有审计必要且经过权限校验的专用接口返回模拟管理员信息；默认用户信息接口不要返回管理员邮箱/用户名。若必须返回，至少对邮箱做脱敏处理，并改为仅返回审计标记字段（如 `isMimic`、`mimicAdminId` 的受限版本）。</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">shippers-portal/src/main/java/com/speedx/shippers/service/ShipperAdminService.java:200-271</code>
+                </div>
+                <div class="finding-desc">新增的联系人字段迁移/清空逻辑使用调用方传入的 `startId/endId` 直接对多个核心表执行批量 `UPDATE`，且没有事务包裹、没有 dry-run/确认机制、没有范围上限校验。尤其 `clearCpsUsers/clearCpsAccounts/clearShipperAccountProfiles` 会将明文联系人字段直接置空，一旦参数传入过大范围或被误调用，将造成不可逆的大规模数据破坏。</div>
+                <div class="finding-suggestion">💡 修复建议：对 `startId/endId` 增加严格校验（非空、`startId &lt;= endId`、单次最大范围限制）；将迁移与清空拆分为受控运维任务；对清空操作增加显式确认参数和审计；使用 `@Transactional(rollbackFor = Exception.class)` 保证单批次失败可回滚。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
                     <code class="finding-loc">shippers-portal/src/main/java/com/speedx/shippers/service/ShipperAdminService.java:171-198</code>
                 </div>
-                <div class="finding-desc">**原因：** 新增的 `migrateContactFieldsEncryption(List&lt;TableMigrationItem&gt; items)` 直接接受调用方传入的表名、ID 范围和操作类型（迁移/clear），并执行批量加密或清空联系人字段，但在该方法内看不到任何角色校验、管理员校验或二次确认机制。该方法对应 HTTP 入口 `ShipperAdminController.encryptContactFields()`，且本分片未展示控制器侧存在 `@PreAuthorize` / `AuthUtil.requireRole()` 等保护，因此当前变更引入了一个可批量处理敏感联系人数据的高危管理能力，却缺少可见的访问控制。
+                <div class="finding-desc">**原因：** 新增的 `migrateContactFieldsEncryption(List&lt;TableMigrationItem&gt; items)` 是一个可批量处理 `cpsUser`、`cpsAccount`、`shipperAccountProfile` 三类表数据的高危管理操作，但在该变更代码中未见任何角色校验、管理员校验或二次确认逻辑。方法可根据调用参数执行批量加密或清空明文字段，属于典型的敏感后台运维能力。
 
 ```java
 public EncryptionMigrationResp migrateContactFieldsEncryption(List&lt;TableMigrationItem&gt; items) {
@@ -145,53 +127,69 @@ public EncryptionMigrationResp migrateContactFieldsEncryption(List&lt;TableMigra
                         : migrateCpsUsers(item.getStartId(), item.getEndId());
 ```
 
-**影响：** 一旦该入口被普通登录用户、低权限运营账号或被盗用会话调用，攻击者可对指定 ID 范围内的 `cps_user`、`cps_account`、`shipper_account_profile` 联系人信息执行批量覆盖/清空，造成大规模敏感数据破坏与业务不可用；同时还能借助返回结果探测数据分布范围。</div>
-                <div class="finding-suggestion">💡 修复建议：为 `encryptContactFields` 对应入口增加强制管理员权限校验，并在 Service 层再次做防御式校验；同时限制可操作的表名与 ID 范围，增加审计与二次确认。示例：
-```java
-@PreAuthorize(&quot;hasRole(&#x27;ADMIN&#x27;)&quot;)
-public EncryptionMigrationResp migrateContactFieldsEncryption(List&lt;TableMigrationItem&gt; items) {
-    LoginUserBo user = LoginUserUtil.getRequiredUser();
-    if (!user.isAdmin()) {
-        throw new BizException(403, &quot;forbidden&quot;);
-    }
-    // 校验 items 非空、范围上限、禁止 clear 直接执行或要求 confirm token
-}
-```
-并建议将 `clear` 能力拆分为单独的受限运维接口。</div>
+**影响：** 一旦对应 HTTP 入口被普通已登录用户误暴露或鉴权配置不严，攻击者可直接触发批量改写/清空联系人姓名、电话、邮箱、地址等敏感数据，造成大规模数据破坏与业务中断，属于高危越权写入。
+
+---
+
+新增的联系人字段加密迁移入口会对 cps_user/cps_account/shipper_account_profile 执行批量加密或清空明文字段，但该 Service 方法内部没有任何 PORTAL_ADMIN 权限校验。根据现有规则，`/shippers/admin/*` 应由 PORTAL_ADMIN 独占，而当前项目的 Shiro 仅做认证不做授权，实际权限控制依赖应用代码；如果 Controller 层遗漏校验，普通已登录用户即可触发批量数据迁移/清空。</div>
+                <div class="finding-suggestion">💡 修复建议：为该方法对应的 Controller/Facade 入口增加强制管理员权限校验，例如 `@PreAuthorize(&quot;hasRole(&#x27;ADMIN&#x27;)&quot;)` 或统一的 `AuthUtil.requireRole(...)`；同时增加操作审计、二次确认和变更范围上限校验，禁止普通用户调用此类批处理接口。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">cps-facade-impl/src/main/java/com/speedx/cps/facade/impl/web/CommonFileController.java:38-58</code>
+                    <code class="finding-loc">cps-domain/src/main/java/com/speedx/cps/domain/service/UserService.java:278-294</code>
                 </div>
-                <div class="finding-desc">**原因：** 当前下载接口新增了登录校验，但仅校验“已登录”，没有把 `fileUrl` 与当前登录用户做归属绑定，也没有按用户/租户范围限制可下载的 blob 路径。代码只做了前缀判断：
+                <div class="finding-desc">**原因：** `updateAccountSelective(ModifyUserReq req)` 直接使用请求中的 `req.getId()` 查询并更新 `CpsAccount`，新增代码中未见任何基于当前登录用户的资源归属校验，也未校验该账户是否属于 `LoginUserUtil.getCurrentUser()` 对应的 `portalAccountId`/可管理范围。只要调用方能传入任意账户 ID，就可能修改其他账户的联系人、地址、电话、邮箱等资料。
 
 ```java
-LoginUserUtil.getRequiredUser();
-if(fileUrl == null || !fileUrl.startsWith(&quot;cps&quot;)) {
-    throw new BizException(&quot;File url is invalid&quot;);
+CpsAccount account = accountRepository.findById(req.getId()).orElse(null);
+if (account == null) {
+    return 0;
 }
+...
+accountRepository.save(account);
 ```
 
-这意味着任意已认证用户只要知道或猜到其他用户文件的 `cps/...` 路径，就可以调用该接口换取带 SAS 的可访问下载链接。
-
-**影响：** 会导致私有 Blob 文件的越权读取，扩大到同系统任意登录用户之间的数据泄露；若路径可枚举，还可能批量获取他人上传的敏感文件。</div>
-                <div class="finding-suggestion">💡 修复建议：在生成 SAS URL 前增加资源归属校验：将 blob 路径与上传者 `userId`、租户标识或业务对象归属进行绑定校验，仅允许访问当前用户有权限的文件；同时建议将私有文件统一存储在按用户/租户隔离的前缀下，例如 `cps/private/{userId}/...`，并校验 `fileUrl` 必须匹配当前用户前缀。
+**影响：** 若上层 HTTP/Facade 未做严格拦截，攻击者可通过篡改 `id` 实现跨租户/跨账户资料修改，属于高风险越权写入，可能导致敏感联系信息被恶意篡改、业务通知被劫持或后续账户接管风险扩大。</div>
+                <div class="finding-suggestion">💡 修复建议：在保存前增加基于当前登录态的数据归属校验，确保仅允许修改当前用户所属账户，或仅允许具备明确管理权限的角色操作指定账户。例如先取当前用户的 `portalAccountId`，并校验 `req.getId().equals(currentUser.getPortalAccountId())`；如存在管理员场景，需显式校验角色后再放行。
 
 ```java
-LoginUserBo user = LoginUserUtil.getRequiredUser();
-String expectedPrefix = &quot;cps/private/&quot; + user.getUserId() + &quot;/&quot;;
-if (fileUrl == null || !fileUrl.startsWith(expectedPrefix)) {
-    throw new BizException(&quot;No permission to access this file&quot;);
+LoginUserBo currentUser = LoginUserUtil.getCurrentUser();
+if (currentUser == null || currentUser.getAccountDto() == null) {
+    throw new BizException(&quot;Unauthorized&quot;);
 }
-```</div>
+Long currentPortalAccountId = currentUser.getAccountDto().getPortalAccountId();
+if (!req.getId().equals(currentPortalAccountId)) {
+    throw new BizException(&quot;Forbidden&quot;);
+}
+```
+同时建议在 Facade/Controller 入口补充 `@PreAuthorize` 或统一鉴权拦截，避免仅依赖服务层调用约定。</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">cps-facade/src/main/java/com/speedx/cps/facade/MimicFacade.java:15-20</code>
+                    <code class="finding-loc">cps-facade-impl/src/main/java/com/speedx/cps/facade/impl/MimicFacadeImpl.java:49-57</code>
                 </div>
-                <div class="finding-desc">**原因：** 新增了高敏感的身份模拟入口，但在本次 diff 可见代码中仅声明了 `@PostMapping(&quot;/admin/mimic/start&quot;)`，未见任何 `@PreAuthorize`、`AuthUtil.requireRole()` 或等价角色校验标记。该接口语义是“为 client account 启动 mimic session”，属于典型的管理员代入/模拟登录能力，若仅依赖外围默认认证而无显式角色约束，普通已登录用户可能调用该入口切换到其他账户身份。
+                <div class="finding-desc">**原因：** `startMimic` 仅校验调用者 `userType == PORTAL_ADMIN`，随后直接按 `targetEmail` 查询并对任意命中的激活用户签发 mimic token，未增加目标用户类型/租户范围/是否允许被模拟的约束。
+
+```java
+String targetEmail = request.getTargetEmail();
+
+// Look up target client
+CpsUser targetUser = userService.findByUsernameOrEmailOrPhone(targetEmail);
+if (targetUser == null) {
+    return BaseResponse.error(400, &quot;Target user not found: &quot; + targetEmail);
+}
+if (!UserStatusEnum.ACTIVE.name().equals(targetUser.getUserStatus())) {
+    return BaseResponse.error(400, &quot;Target user account is not active&quot;);
+}
+```
+
+**影响：** 只要是 `PORTAL_ADMIN`，即可对任意激活账号发起模拟登录；若 `findByUsernameOrEmailOrPhone` 可命中管理员、内部账号或其他非预期主体，将导致高风险越权登录与横向访问扩大，而不是仅限“client”范围。
+
+---
+
+**原因：** 新增了高敏感的身份模拟入口，但在本次 diff 可见代码中仅声明了 `@PostMapping`，未见 `@PreAuthorize`、`AuthUtil.requireRole()` 或其他显式角色校验。该接口语义是“为 client account 启动 mimic session”，属于典型的管理员代入/切换身份能力，一旦仅依赖外围默认认证而缺少强制角色约束，任何已登录低权限用户都可能直接调用。
 
 ```java
 @ApiOperation(value = &quot;Start mimic session for a client account&quot;)
@@ -199,98 +197,64 @@ if (fileUrl == null || !fileUrl.startsWith(expectedPrefix)) {
 BaseResponse&lt;String&gt; startMimic(@Valid @RequestBody MimicStartRequest request);
 ```
 
-**影响：** 一旦实现层未补充严格鉴权，攻击者可通过该入口发起越权身份模拟，直接获得其他客户账号的数据访问能力，风险为高危越权访问/账户接管。</div>
-                <div class="finding-suggestion">💡 修复建议：为该入口增加显式管理员权限校验，并在实现层二次校验被模拟账号是否允许被当前管理员代入。例如：
-```java
-@PreAuthorize(&quot;hasRole(&#x27;ADMIN&#x27;)&quot;)
-@PostMapping(&quot;/admin/mimic/start&quot;)
-BaseResponse&lt;String&gt; startMimic(@Valid @RequestBody MimicStartRequest request);
-```
-同时在 `MimicFacadeImpl.startMimic(...)` 中校验当前用户角色、目标账号状态、租户边界，并记录审计日志。</div>
-            </div>
-            <div class="finding-card finding-critical">
-                <div class="finding-header">
-                    <span class="finding-badge">严重</span>
-                    <code class="finding-loc">shippers-portal/src/main/java/com/speedx/shippers/facade/FuelCoefficientPortalFacade.java:17-31</code>
-                </div>
-                <div class="finding-desc">**原因：** 新增了一组燃油附加费/折扣/阈值查询入口，但在当前 diff 可见的 Facade 定义中未体现任何角色校验或数据范围过滤约束。此类 grid 查询通常承载客户价格、折扣历史、阈值策略等敏感商业数据；若控制器/服务未按当前登录主体过滤 account/tenant 范围，调用方可能直接查询到非本人或全量客户数据。
-
-```java
-@PostMapping(&quot;/grid&quot;)
-@PostMapping(&quot;/discount/grid&quot;)
-@PostMapping(&quot;/source-fuel-fee/grid&quot;)
-@PostMapping(&quot;/threshold/grid&quot;)
-```
-
-**影响：** 会导致燃油系数、折扣历史、源燃油费和阈值配置被越权读取，泄露客户定价策略与商业敏感信息；若底层支持自由筛选条件，还可能被用于批量枚举其他租户数据。
+**影响：** 若实现层未补充严格鉴权，攻击者可通过该入口伪装为其他客户账号，造成高风险越权访问、跨租户数据读取/操作，甚至借由被模拟身份继续访问下游资源。
 
 ---
 
-**原因：** 新增控制器暴露了 4 个燃油系数/折扣/附加费查询入口，但在新增实现中未见任何鉴权注解、角色校验或数据范围过滤逻辑，方法体均直接把 `GridRequest` 透传给 service。由于本分片未展示 Facade 上的映射与权限声明，无法证明这些入口受到了等价保护；从当前新增代码看，HTTP 入口层缺少显式访问控制。
-
+新增了 `/admin/mimic/start` 和 `/admin/mimic/stop` 两个 admin 端点，但在接口定义上看不到任何权限约束信息。根据现有规则，admin 类端点需要在应用代码中显式做权限控制，不能依赖 Shiro 角色自动授权；否则普通已认证用户可能也能访问该能力。</div>
+                <div class="finding-suggestion">💡 修复建议：在签发 mimic token 前增加明确的目标主体授权校验：至少校验目标用户类型必须属于允许被模拟的客户角色，并校验租户/组织范围；同时将允许被模拟的角色做成白名单。示例：
 ```java
-public BaseResponse&lt;GridResponse&lt;FuelCoefficientGridResponse&gt;&gt; queryGrid(GridRequest request) {
-    return fuelCoefficientPortalService.queryGrid(request);
+if (!UserTypeEnum.CLIENT.name().equals(targetUser.getUserType())) {
+    return BaseResponse.error(403, &quot;Target user type is not allowed for mimic&quot;);
 }
-
-public BaseResponse&lt;GridResponse&lt;FuelDiscountGridResponse&gt;&gt; queryDiscount(GridRequest request) {
-    return fuelCoefficientPortalService.queryDiscount(request);
-}
-
-public BaseResponse&lt;GridResponse&lt;FuelSurchargePortalResponse&gt;&gt; querySourceFuelFee(GridRequest request) {
-    return fuelCoefficientPortalService.querySourceFuelFee(request);
-}
-
-public BaseResponse&lt;GridResponse&lt;BaseSurchargeGridResponse&gt;&gt; queryThreshold(GridRequest request) {
-    return fuelCoefficientPortalService.queryThreshold(request);
+if (!Objects.equals(targetUser.getPickupAccountId(), currentUser.getAccountDto().getPickupAccountId())) {
+    return BaseResponse.error(403, &quot;Target user is out of admin scope&quot;);
 }
 ```
-
-**影响：** 若 Facade 映射未在别处强制鉴权，攻击者或低权限用户可直接查询全量燃油定价/折扣配置，造成业务敏感配置泄露；若 service 层也未按租户/账号范围过滤，还会进一步扩大跨租户数据可见范围。</div>
-                <div class="finding-suggestion">💡 修复建议：在对应控制器/服务实现中为所有查询入口增加显式鉴权，并强制把当前登录用户的租户/账户标识注入查询条件，禁止前端自带 accountId 覆盖服务端范围。若仅特定后台角色可见，应使用 `@PreAuthorize`/`AuthUtil.requireRole(...)` 明确限制。</div>
+如业务允许跨租户模拟，也应引入显式授权配置而非仅凭 `PORTAL_ADMIN`。</div>
             </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
+                    <code class="finding-loc">shippers-portal/src/main/java/com/speedx/shippers/service/ShipperAdminService.java:278-307</code>
+                </div>
+                <div class="finding-desc">`clearCpsUsers/clearCpsAccounts/clearShipperAccountProfiles` 在捕获 `Exception` 后仅记录日志并返回 0。该返回值会被上层当作正常迁移结果写入响应，调用方无法区分“本次范围内本来就没有数据”与“执行 SQL 失败”，容易误判为清理成功，属于典型的异常吞没。</div>
+                <div class="finding-suggestion">💡 修复建议：不要在这里吞掉异常并返回默认值，至少应抛出业务异常让整个迁移请求失败，例如：`throw new BizException(500, &quot;Failed to clear cps_user&quot;)`；如果确需部分成功，返回结构中应显式区分 `successCount`、`failedCount` 和失败原因，而不是用 0 伪装成功。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
                     <code class="finding-loc">cps-domain/src/main/java/com/speedx/cps/domain/service/UserService.java:275-311</code>
                 </div>
-                <div class="finding-desc">`updateAccountSelective` 从原来的单条定制更新改为 `findById` 后直接 `save(account)`，会把当前实体对象的全部字段一并持久化。若该实体是基于旧快照读取，且并发期间其他流程已更新了同一账户的未修改字段（如状态、邀请码、其他扩展字段），这里会发生整行覆盖，造成非本次请求字段被回写为旧值。</div>
-                <div class="finding-suggestion">💡 修复建议：保留字段级更新语义，优先继续使用 repository 的 selective update；若必须改为 JPA 保存，建议增加 `@Version` 乐观锁字段，或在更新前后仅修改白名单字段并通过定制 SQL/DTO 映射执行局部更新，避免并发覆盖。</div>
+                <div class="finding-desc">`updateAccountSelective` 从原来的 repository 定向更新改为“查出实体后 save，再更新 Shiro Principal”，但当前新增实现没有事务包裹。若 `accountRepository.save(account)` 成功后，后续 `subject.runAs(principals)` 或 DTO 赋值抛异常，会出现账户资料已落库、方法整体失败、登录态未同步的部分成功问题。</div>
+                <div class="finding-suggestion">💡 修复建议：为 `updateAccountSelective` 增加 `@Transactional(rollbackOn = Exception.class)`，并将会话刷新逻辑放在数据库更新成功后的受控分支中；若会话刷新失败，至少捕获并记录后降级处理，避免影响主业务提交。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">cps-facade-impl/src/main/java/com/speedx/cps/facade/impl/MimicFacadeImpl.java:112-119</code>
+                    <code class="finding-loc">cps-facade-impl/src/main/java/com/speedx/cps/facade/impl/MimicFacadeImpl.java:113-119</code>
                 </div>
-                <div class="finding-desc">stopMimic() 先成功撤销当前 mimic token，再生成并写入新的 admin token；如果第二步 storeAccessToken 失败，接口会返回 500，但管理员原有会话已经被销毁，导致用户被卡在“mimic 已结束但无法恢复 admin 会话”的部分失败状态。这里是典型的多步操作缺少补偿/回滚。</div>
-                <div class="finding-suggestion">💡 修复建议：将“生成新 admin token + 持久化成功”与“撤销旧 mimic token”调整为可恢复流程，例如：1）先生成并成功写入新 admin token；2）再撤销 mimic token；或在撤销后写入新 token 失败时，至少补偿性重建一个可用的 mimic/admin token 并返回明确恢复指引。若底层 Redis 支持，建议把状态切换封装为单个原子事务/Lua 脚本。</div>
+                <div class="finding-desc">停止 mimic 会先撤销当前 mimic token，再生成并写入新的 admin token；如果第二步 `storeAccessToken` 失败，接口会返回 500，但当前 mimic token 已经失效，原 admin 会话也未恢复，导致用户被意外登出。这是典型的多步操作部分失败且无补偿。</div>
+                <div class="finding-suggestion">💡 修复建议：将“生成新 admin token + 写入 Redis + 撤销旧 mimic token”设计为可补偿流程，至少保证失败时不会丢失当前可用会话。例如先成功写入新 admin token，再撤销 mimic token；或在撤销后写入失败时补发可重试标记/补偿逻辑。伪代码：`store newAdminToken` 成功后再 `revoke mimicToken`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">cps-facade-impl/src/main/java/com/speedx/cps/facade/impl/MimicFacadeImpl.java:79-121</code>
+                    <code class="finding-loc">cps-facade-impl/src/main/java/com/speedx/cps/facade/impl/MimicFacadeImpl.java:79-122</code>
                 </div>
-                <div class="finding-desc">停止模拟后接口直接返回新的管理员访问令牌 `newAdminToken`。这会把高权限管理员 token 暴露给调用方及其上下游日志/监控链路；一旦 mimic 会话在不受信任终端中使用，调用 stop 接口即可把管理员原始权限令牌带回该终端，扩大凭证泄露影响面。</div>
-                <div class="finding-suggestion">💡 修复建议：停止模拟时不要在响应体返回新的管理员 token；应由服务端受控地恢复原管理员会话，例如写入 HttpOnly/Secure Cookie，或要求管理员重新完成一次认证/换票流程。</div>
+                <div class="finding-desc">`stopMimic` 在撤销当前 mimic token 后，直接生成并返回新的管理员 access token。该设计使接口同时承担“结束模拟”和“重新签发管理员凭证”两种高敏感动作，且新管理员 token 以明文响应体返回，存在与 `/admin/mimic/start` 相同的凭证泄露风险；一旦响应被日志、代理或前端缓存记录，将直接恢复管理员会话给攻击者。</div>
+                <div class="finding-suggestion">💡 修复建议：不要在停止模拟接口中直接把新的管理员 token 作为普通字符串返回。建议改为受控的重新认证/刷新流程，或通过安全 Cookie 下发，并确保响应脱敏与禁止缓存；同时为该接口增加一次性 nonce/会话绑定，避免被重放后重复领取管理员 token。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">cps-facade-impl/src/main/java/com/speedx/cps/facade/impl/UserFacadeImpl.java:289-291</code>
+                    <code class="finding-loc">cps-facade-impl/src/main/java/com/speedx/cps/facade/impl/UserFacadeImpl.java:331</code>
                 </div>
-                <div class="finding-desc">新增权限校验失败时直接抛出 `RuntimeException`，并把请求中的 `req.getId()` 拼接进异常消息。若全局异常处理未统一映射为 403，接口可能返回 500，既破坏鉴权语义，也会把目标账户标识暴露给调用方，形成可枚举的错误回显。</div>
-                <div class="finding-suggestion">💡 修复建议：改为返回明确的 403/401 业务错误，不要在异常消息中拼接外部输入。例如抛出统一的 `BizException`/`AccessDeniedException` 并由全局异常处理映射为 403。</div>
+                <div class="finding-desc">`accountList` 不再使用请求中的 `req.getId()`，而是改为传入 `currentUser.getAccountDto().getUerId()`。从同文件其他变更看，账户相关接口普遍使用的是 `portalAccountId` 或 `pickupAccountId`，这里改成用户 ID 很可能与 `userService.getAccountList(...)` 的账户维度参数不一致，导致列表为空、查错范围或返回错误账户数据。</div>
+                <div class="finding-suggestion">💡 修复建议：确认 `userService.getAccountList` 第一个参数的语义。如果它表示 portal account id，应改为 `currentUser.getAccountDto().getPortalAccountId()`；如果表示 pickup account id，则传对应字段并同步调整方法命名，避免混用 userId/accountId。</div>
             </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">cps-facade-impl/src/main/java/com/speedx/cps/facade/impl/UserFacadeImpl.java:383</code>
-                </div>
-                <div class="finding-desc">createInviteCode() 将入参 `accountId` 强制覆盖为当前用户自己的 `portalAccountId`，这与同文件 getInviteCode()/findAccountByAccountId() 使用的 accountId 语义不一致。若调用方传入的是当前账号的 userId 或希望为指定子账号生成邀请码，接口会静默忽略参数并对另一个账号生成邀请码，容易造成错误账号数据被修改。</div>
-                <div class="finding-suggestion">💡 修复建议：明确该接口契约：如果只允许为当前登录账号生成邀请码，应删除 accountId 入参并在接口文档中声明；如果需要校验传入账号，则先校验 `accountId.equals(currentUser.getAccountDto().getPortalAccountId())`，不一致时返回 403，而不是静默覆盖。</div>
-            </div>
-            <p class="more-note">... 还有 25 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 23 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
