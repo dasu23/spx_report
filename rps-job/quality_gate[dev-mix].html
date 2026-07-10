@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">rps-job &nbsp;|&nbsp; 2026-07-06 11:27:13</div>
+      <div class="meta">rps-job &nbsp;|&nbsp; 2026-07-10 17:33:48</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -56,13 +56,13 @@
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#4caf50">39.0%</div>
+      <div class="metric-value" style="color:#4caf50">39.3%</div>
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#4caf50">62.2%</div>
+            <div class="metric-value" style="color:#4caf50">59.3%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:3 &nbsp; 主要:16</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:13</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -83,113 +83,55 @@
         <div class="violations">
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube analysis timed out after 1 minutes</li>
-<li>AI Review: 3 Critical finding(s)</li>
-<li>AI Review: 16 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 13 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
         <div class="findings-section">
             <h3>AI 代码审查发现</h3>
             
-            <div class="finding-card finding-critical">
-                <div class="finding-header">
-                    <span class="finding-badge">严重</span>
-                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/module/billing/CainiaoUspsBillingZoneModule.java:16-22</code>
-                </div>
-                <div class="finding-desc">`lookupBillingZone(...)` 在新增实现中无条件将账单分区设置为 `0`：`context.getCreateLabelValue().setZone(0);`。账单分区通常直接参与运费/计费规则选择，固定为默认值会绕过基于目的地/产品/分拣码的真实分区计算，导致所有该渠道请求落入同一计费分区，属于资金计算错误风险。若下游按 zone 选择费率，攻击者或异常请求可借此获得错误低价计费或触发账单对账偏差。</div>
-                <div class="finding-suggestion">💡 修复建议：恢复基于 `productMatrix`、`context` 或分拣结果的真实 billing zone 计算逻辑；若 Cainiao USPS 业务确实不存在 zone，至少应显式校验该产品的费率配置允许 `zone=0`，否则抛出业务异常而不是静默写死默认值。例如：先根据 sort code / destination zip 查询 zone，查询失败时 `throw new IllegalStateException(&quot;billing zone not resolved&quot;)`。</div>
-            </div>
-            <div class="finding-card finding-critical">
-                <div class="finding-header">
-                    <span class="finding-badge">严重</span>
-                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/module/rate/CainiaoUspsRateModule.java:20-40</code>
-                </div>
-                <div class="finding-desc">新增的费率模块在创建面单时无条件将 `postage_base` 和 `postage_amount` 置为 `BigDecimal.ZERO`，并清空 `rate_version`/`rate_id`。这会绕过正常费率查询与定价绑定，导致该渠道面单可能以 0 运费进入后续流程，属于资金计算安全风险。若该模块被用于真实计费链路，攻击者或异常请求可借此获得免费/低价出单。</div>
-                <div class="finding-suggestion">💡 修复建议：不要以固定 `0` 作为默认费率返回。应显式调用受信任的费率计算/查询逻辑；若该渠道当前不支持计费，直接抛出业务异常并阻断出单，而不是返回 0 金额。例如：当无法获取有效 `rate_id` 或 `rate_version` 时抛出 `IllegalStateException`/业务异常，并在上层终止创建流程。</div>
-            </div>
-            <div class="finding-card finding-critical">
-                <div class="finding-header">
-                    <span class="finding-badge">严重</span>
-                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/OmsCreateLabelCmd.java:322-326</code>
-                </div>
-                <div class="finding-desc">**原因：** 新增逻辑允许客户端在创建面单时直接通过 `createLabelForm.getDspCode()` 覆盖系统原有的渠道路由决策，且该分支在当前变更中未见任何基于账号、租户或角色的白名单校验。这样会绕过后续基于 `CustomerAccount` 配置的 `CHANNEL_ROUTING_STRATEGY` 选择逻辑。
-
-```java
-if (StrUtil.isNotBlank(createLabelForm.getDspCode())) {
-    String dspCode = createLabelForm.getDspCode();
-    context.setDspCode(dspCode);
-    return dspCode;
-}
-```
-
-**影响：** 调用 `/label/create-label`（以及同一服务方法对应的其他创建入口）时，攻击者若可构造请求体，即可指定任意 `dspCode`，可能把本应受租户/账号策略约束的面单路由到未授权 DSP/承运渠道，造成跨租户资源使用、错误计费、策略绕过，属于高风险越权/访问控制缺陷。</div>
-                <div class="finding-suggestion">💡 修复建议：不要信任客户端传入的 `dspCode` 作为最终路由结果。应仅允许服务端依据 `CustomerAccount`、产品、配置策略计算 DSP；若业务必须支持外部指定，则需增加显式授权校验（如账号级白名单、可用 DSP 列表校验），并在校验失败时拒绝请求。
-
-可参考：
-```java
-String requestedDsp = createLabelForm.getDspCode();
-if (StrUtil.isNotBlank(requestedDsp)) {
-    if (!authorizedDspService.isAllowed(context.getCustomerAccount().getId(), requestedDsp)) {
-        throw new RRException(&quot;dspCode is not allowed for current account&quot;, ResponseCode.PARAMETER_ERROR);
-    }
-    context.setDspCode(requestedDsp);
-    return requestedDsp;
-}
-```
-同时补充审计日志与告警，记录账号与被请求的 DSP 映射。</div>
-            </div>
             
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/OmsCreateLabelCmd.java:300-303</code>
+                    <code class="finding-loc">rps-api/src/main/java/io/speedx/rps/api/job/SyncVintedPointsJob.java:90-95</code>
                 </div>
-                <div class="finding-desc">新增 `initProductContext` 中直接解引用 `courierExt.getProductCode()`，但未校验 `courierExtService.findByCourierCode(...)` 返回值是否为 `null`。当传入不存在或未映射的 `courierCode` 时，这里会触发空指针异常，导致接口返回 500，而不是受控的参数错误。该问题可被恶意请求稳定触发，形成低成本拒绝服务面。</div>
-                <div class="finding-suggestion">💡 修复建议：在读取 `productCode` 前先判空，并返回受控业务异常，避免 NPE 暴露内部实现与造成异常风暴。
-
-```java
-CourierExt courierExt = courierExtService.findByCourierCode(createLabelForm.getCourierCode());
-if (courierExt == null) {
-    throw new RRException(MessageFormat.format(
-        &quot;No courier mapping found for courierCode {0}&quot;, createLabelForm.getCourierCode()),
-        ResponseCode.PARAMETER_ERROR);
-}
-String productCode = courierExt.getProductCode();
-```</div>
+                <div class="finding-desc">这里把下游同步从 Kafka 切换为 POS API 后，失败语义发生了变化：前面的 `batchSyncPoints` 和 `refreshCache` 已经提交成功，但 `posApi.syncPudoLocations(internalDtos)` 一旦抛错，任务会整体失败且没有任何补偿/降级路径，导致数据库与缓存已更新、下游却未收到同步，形成部分成功的数据不一致。原先 Kafka 路径至少与新路径是不同的交付机制，现在按开关二选一后，这个部分失败窗口被直接暴露出来。</div>
+                <div class="finding-suggestion">💡 修复建议：为第 4 步增加明确的失败处理策略，例如：1）捕获 POS API 异常后落回 Kafka 重试通道；或 2）记录待补偿任务并由独立重试任务补发；或 3）将“数据库更新/缓存刷新/下游通知”纳入可观测的状态机。至少应在 `posApi.syncPudoLocations` 失败时持久化失败批次，避免静默丢失下游同步。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/OmsCreateLabelCmd.java:323-327</code>
+                    <code class="finding-loc">rps-job/src/main/java/io/speedx/rps/job/handler/SyncVintedPointsJob.java:81-90</code>
                 </div>
-                <div class="finding-desc">新增逻辑允许请求中的 `dspCode` 直接覆盖系统路由结果，并立即写入 context 返回。这样会绕过后续基于客户配置 `CHANNEL_ROUTING_STRATEGY` 的渠道选择逻辑，导致标签创建按调用方传入的 DSP 计费/分单，而不是按账户配置路由，存在错误路由和计费不一致风险。</div>
-                <div class="finding-suggestion">💡 修复建议：不要无条件信任 `createLabelForm.getDspCode()`。若该字段仅用于内部场景，应增加显式白名单/开关校验；若面向外部接口，应继续走 `CHANNEL_ROUTING_STRATEGY`，或至少校验传入值与可路由结果一致后再接受。示例：仅在内部客户配置开启 `allow_manual_dsp_override` 时才使用传入值，否则忽略并按原策略解析。</div>
+                <div class="finding-desc">新增代码在构造 `internalDtos` 时，对 `saved` 中的每个元素都再次遍历整个 `pointDtos` 列表进行 `filter(...).findFirst()` 匹配，形成 O(n*m) 的嵌套流式查找。该任务是批量同步外部网点数据的定时作业，若上游返回大量 points，单次执行时间会显著增长，可能导致作业阻塞、超时，进而造成同步链路可用性下降，属于安全相关的可用性风险。</div>
+                <div class="finding-suggestion">💡 修复建议：先将 `pointDtos` 按 `pointCode` 预构建为 `Map&lt;String, VintedPointDto&gt;`，再在遍历 `saved` 时 O(1) 查找对应对象，避免批量任务被大数据量拖垮。例如：`Map&lt;String, VintedPointDto&gt; pointMap = pointDtos.stream().collect(Collectors.toMap(VintedPointDto::getPointCode, Function.identity(), (a,b) -&gt; a));`，随后使用 `VintedPointDto t = pointMap.get(i.getPointCode());` 填充字段。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/builder/CalculateRateRequestBuilder.java:504-511</code>
+                    <code class="finding-loc">rps-job/src/main/java/io/speedx/rps/job/handler/SyncVintedPointsJob.java:91-96</code>
                 </div>
-                <div class="finding-desc">这里新增了 `pickupId` 参数，但其值直接取自 `request.getOrgId()`。从语义上看，customerId 与 pickupId 是两个不同维度的筛选条件；将 pickupId 绑定为 orgId 会把覆盖附加费查询错误地收窄到“pickupId=orgId”的记录，导致原本应命中的 EDAS/DAS 配置查不到，最终漏算 CoverageSurcharge。该变更也与费率规则中“附加费独立查询并累加”的约束不一致。</div>
-                <div class="finding-suggestion">💡 修复建议：确认 `CoverageSurchargeDataSource.findValid(...)` 新签名中的 `pickupId` 应来自真实提货点/POE/翻译结果，而不是 orgId。若当前场景没有 pickupId，应显式传 `null` 或提供兼容重载，避免把 orgId 误当 pickupId：例如 `Long pickupId = resolvePickupId(request);`，无法解析时传 `null`。同时补充对 EDAS/DAS 在 pickupId 为空、存在、与 orgId 不同三种场景的单测。</div>
+                <div class="finding-desc">这里把下游同步从 Kafka 异步投递切换为直接调用 POS API，但失败处理仍沿用整个任务统一 try/catch 的方式：一旦 `posApi.syncPudoLocations(internalDtos)` 抛异常，本次任务前面的数据库同步和缓存刷新已经完成，后续也没有补偿、重试标记或降级到 Kafka 的兜底逻辑，会造成“本地数据已更新、下游未同步”的部分成功状态。</div>
+                <div class="finding-suggestion">💡 修复建议：将第 4 步与前 3 步解耦，至少为 POS API 分支增加明确的补偿/兜底策略，例如：捕获 POS API 异常后回退到 `pushToKafka(internalDtos)`，或记录待重试任务并保持幂等；如果业务要求强一致，则应把“数据库更新 + 下游通知”设计为可恢复的事务外盒(outbox)流程。示例：`try { posApi.syncPudoLocations(internalDtos); } catch (Exception ex) { log.error(&quot;POS sync failed, fallback to kafka&quot;, ex); pushToKafka(internalDtos); }`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/module/FunctionModuleFactory.java:341-344</code>
+                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/api/PosApi.java:454-462</code>
                 </div>
-                <div class="finding-desc">`getCheckReturnModule` 新增了 `MSK` 分支并直接返回 `spxForwardLegCheckReturnModule`，这会把 Maersk DSP 的 return 校验逻辑强制复用 SPX forward-leg 规则。按当前方法其余分支的设计，非 SPX DSP 原本统一走 `nonSpxCheckReturnModule`；这里单独把 `MSK` 改到 SPX 模块，容易导致 Maersk 走错校验规则，出现 return 可用性判断错误或标签创建前置校验异常。</div>
-                <div class="finding-suggestion">💡 修复建议：确认 Maersk 是否真的需要复用 SPX forward-leg 校验。如果只是普通非 SPX 行为，应删除该分支并继续走 `nonSpxCheckReturnModule`；如果确有专属规则，建议新增 `maerskCheckReturnModule` 并显式实现/测试其业务约束，避免复用与 DSP 强绑定的 SPX 模块。示例：`if (DspCode.MSK.name().equalsIgnoreCase(dspCode)) { return maerskCheckReturnModule; }`。</div>
+                <div class="finding-desc">新增的 `syncPudoLocations` 将 `locations` 原样序列化后发送到外部 POS 接口，但未对目标地址协议/主机做任何安全约束，也未对返回结果进行校验或失败处理。若 `posApiConfig.getHost()` 或 `getPudoLocationSync()` 可被错误配置/污染，可能把包含站点位置信息的数据推送到非预期外部地址；同时调用失败时当前实现静默吞掉结果，容易造成同步状态失真，影响后续依赖该数据的业务安全判断。</div>
+                <div class="finding-suggestion">💡 修复建议：对外部请求增加最小安全校验：1）限制 `host` 仅允许受信任域名且强制 HTTPS；2）校验 `resStr` 的业务成功标记，失败时记录审计日志并抛出异常/返回明确失败结果；3）为该方法补充调用方可感知的错误处理，避免静默失败。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/oms/module/label/CainiaoUspsLabelModule.java:28-34</code>
+                    <code class="finding-loc">rps-service/src/main/java/io/speedx/rps/service/cmd/helper/CreateDrawLabelFormHelper.java:299-300</code>
                 </div>
-                <div class="finding-desc">这里新增了典型的“先查后写”逻辑：先通过 `labelDao.findFirstByTrackingNumber(trackingNumber)` 判断是否存在，再继续生成标签结果，但该检查与后续持久化动作之间没有任何锁、事务隔离或数据库唯一约束保证。在并发请求同时使用相同 trackingNumber 时，多个线程可能同时通过存在性检查，最终重复创建标签，导致标签唯一性约束被绕过。</div>
-                <div class="finding-suggestion">💡 修复建议：将 trackingNumber 的唯一性校验下沉到数据库层，增加唯一索引，并在保存标签时捕获唯一键冲突异常作为最终防线；若业务必须在服务层控制，需将“校验+写入”放入同一事务并结合合适的隔离级别/悲观锁。例如：为 tracking_number 建唯一索引，并在插入失败时转换为业务异常。</div>
+                <div class="finding-desc">`isMAERSK()` 现在只根据 `CustomizedLabelTemplateEnum` 判断，删除了基于 `SysDictCodeEnum.GENERIC_LABEL_MAERSK` 的组织级兜底配置。这样会导致原先依赖字典配置启用 MAERSK 标签逻辑的组织，在模板枚举未显式命中时直接返回 `false`，出现标签渲染/分支逻辑回退，属于行为收缩且缺少兼容迁移。</div>
+                <div class="finding-suggestion">💡 修复建议：如果这是有意下线组织级开关，需同步清理所有依赖配置并补充迁移说明；否则应保留配置兜底，例如先判断模板枚举，未命中时再按组织配置判断：`if (MAERSK.equals(tmpl) || MAERSK_SPX_V5.equals(tmpl)) return true; return maerskOrgIds.contains(createLabelValue.getUser().getOrgId());`。同时建议为“模板命中”和“仅字典配置命中”两条路径分别补测试。</div>
             </div>
-            <p class="more-note">... 还有 11 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 8 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
