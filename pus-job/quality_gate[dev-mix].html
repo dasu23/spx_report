@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pus-job &nbsp;|&nbsp; 2026-07-10 21:21:55</div>
+      <div class="meta">pus-job &nbsp;|&nbsp; 2026-07-13 18:39:02</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -56,13 +56,13 @@
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#4caf50">10.3%</div>
+      <div class="metric-value" style="color:#4caf50">10.6%</div>
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#f44336">33.2%</div>
+            <div class="metric-value" style="color:#f44336">31.0%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:2 &nbsp; 主要:17</div>
+      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:0</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -82,127 +82,10 @@
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube quality gate status: ERROR</li>
-<li>AI Review: 2 Critical finding(s)</li>
-<li>AI Review: 17 Major finding(s) &gt;= threshold 3</li></ul>
+            <ul><li>SonarQube quality gate status: ERROR</li></ul>
         </div>
         
   
-        <div class="findings-section">
-            <h3>AI 代码审查发现</h3>
-            
-            <div class="finding-card finding-critical">
-                <div class="finding-header">
-                    <span class="finding-badge">严重</span>
-                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/so/PickupSo.java:104-121</code>
-                </div>
-                <div class="finding-desc">**原因：** 新增的 `toSpec()` 将前端传入的 `orgId/orgIds` 直接并入查询条件，用 `pickup.pickupAccountId IN (...) OR EXISTS (staging.pickupAccountId IN (...))` 扩大了可见数据范围，但在该变更片段内看不到任何与当前登录主体绑定的数据范围校验或白名单约束。只要上层接口把请求参数透传到 `PickupSo`，调用方即可通过构造任意 `orgId/orgIds` 查询其他租户/客户的 pickup 数据。
-
-```java
-if (!effectiveOrgIds.isEmpty()) {
-    spec = spec.and((root, query, cb) -&gt; {
-        Subquery&lt;Long&gt; sub = query.subquery(Long.class);
-        Root&lt;PickupStaging&gt; stagingRoot = sub.from(PickupStaging.class);
-        sub.select(cb.literal(1L)).where(
-                cb.equal(stagingRoot.get(&quot;pickupOrderNo&quot;), root.get(&quot;bookingCode&quot;)),
-                stagingRoot.get(&quot;pickupAccountId&quot;).in(effectiveOrgIds));
-        return cb.or(root.get(&quot;pickupAccountId&quot;).in(effectiveOrgIds), cb.exists(sub));
-    });
-}
-```
-
-**影响：** 若对应 HTTP 查询入口未额外按当前用户可访问的 org 范围做交集过滤，攻击者可通过传入其他 `orgId` 枚举或批量读取不属于自己的 pickup 订单，形成跨租户数据越权读取；且 `EXISTS` 反查 staging 进一步覆盖了 `pickupAccountId=0` 的合并单，扩大了越权面。</div>
-                <div class="finding-suggestion">💡 修复建议：在进入 `PickupSo` 前，基于当前登录用户/角色计算其允许访问的 org 范围，并与请求中的 `orgId/orgIds` 做交集；若请求参数超出授权范围应直接拒绝。不要信任前端传入的 org 条件作为最终数据范围。示例：
-```java
-Set&lt;Long&gt; allowedOrgIds = authContext.getAllowedOrgIds();
-List&lt;Long&gt; requested = merge(orgId, orgIds);
-List&lt;Long&gt; effective = requested.isEmpty()
-        ? new ArrayList&lt;&gt;(allowedOrgIds)
-        : requested.stream().filter(allowedOrgIds::contains).distinct().toList();
-if (!requested.isEmpty() &amp;&amp; effective.isEmpty()) {
-    throw new AccessDeniedException(&quot;orgId out of scope&quot;);
-}
-```
-并为对应 Facade/Controller 增加显式鉴权注解或 `AuthUtil.requireRole(...)`。</div>
-            </div>
-            <div class="finding-card finding-critical">
-                <div class="finding-header">
-                    <span class="finding-badge">严重</span>
-                    <code class="finding-loc">pus-facade/pus-facade-web/src/main/java/io/speedx/pus/facade/web/WebZipcodeConfigFacade.java:44-47</code>
-                </div>
-                <div class="finding-desc">**原因：** 新增了可直接修改 Zipcode 配置 Facility 的 POST 入口，但在本次 diff 可见代码中，该 HTTP 入口仅声明了 `@PostMapping` 与参数校验，未见 `@PreAuthorize`、`AuthUtil.requireRole()` 或任何角色/数据范围限制信息。按照审查基线，POST/PUT/DELETE 接口缺失显式角色校验应视为高危。
-
-```java
-@ApiOperation(&quot;批量修改 Zipcode 配置的 Facility&quot;)
-@PostMapping(&quot;/web/zipcodeConfig/batchUpdateFacility&quot;)
-ResponseObject&lt;Void&gt; batchUpdateFacility(@Valid @RequestBody ZipcodeConfigBatchUpdateFacilityForm form);
-```
-
-**影响：** 若控制器/实现层未补充鉴权，任意已登录主体甚至误放行主体都可能调用该接口批量修改 zipcode 与 facility 的映射关系，造成配置被未授权篡改，进一步影响订单路由、覆盖范围判断或跨租户/跨站点配置污染。</div>
-                <div class="finding-suggestion">💡 修复建议：为该入口补充显式权限控制，并在实现层再次校验调用方可操作的 facilityCode/配置归属范围。例如在 Controller/Facade 实现方法上增加 `@PreAuthorize(...)`，或在入口第一行调用统一鉴权方法；同时对 `form` 中每条待修改记录校验其归属范围后再执行批量更新。
-
-```java
-@PreAuthorize(&quot;hasAuthority(&#x27;zipcodeConfig:batchUpdateFacility&#x27;)&quot;)
-@PostMapping(&quot;/web/zipcodeConfig/batchUpdateFacility&quot;)
-public ResponseObject&lt;Void&gt; batchUpdateFacility(@Valid @RequestBody ZipcodeConfigBatchUpdateFacilityForm form) {
-    authUtil.requireRole(&quot;zipcodeConfig:batchUpdateFacility&quot;);
-    zipcodePermissionChecker.checkFacilityScope(form.getItems());
-    ...
-}
-```</div>
-            </div>
-            
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">docs/migrations/SPX-PI-7277-alter-tables.sql:22-25</code>
-                </div>
-                <div class="finding-desc">这里将 `pus_pickup.pickup_contact_name` 和 `pickup_phone` 扩容到 512，但同一 diff 上方注释明确写了“长度待与 DMS 确认字段上限后再执行；执行后同步调大代码常量”。当前脚本已经直接提交到迁移文件中，一旦执行，若下游 DMS 仍按旧长度或更小长度接收，可能导致推送失败、字段截断或接口契约不一致。</div>
-                <div class="finding-suggestion">💡 修复建议：在确认 DMS 字段上限前，不要把这段 DDL 放入可执行迁移脚本。可选修复：1）先移除/注释掉 22-25 行，待联调确认后再单独提交；或 2）同步在代码中显式限制输出长度并补充与 DMS 的字段长度对齐说明，再提交正式迁移。</div>
-            </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/properties/OrderResolveGrayProperties.java:39-41</code>
-                </div>
-                <div class="finding-desc">灰度开关在 `grayFacilities` 为空或未配置时默认返回 `true`，会把“按白名单灰度开放”退化为“全量开启”。该行为依赖外部 Nacos 先行正确配置，一旦配置缺失、热更新失败或被误清空，新功能会在所有 facility 生效，属于高风险的 fail-open 配置策略。对涉及订单关联/处理链路的功能，这种默认放开会扩大功能暴露面，增加误处理或未充分验证逻辑被全量触发的安全风险。</div>
-                <div class="finding-suggestion">💡 修复建议：将默认策略改为 fail-close：`grayFacilities` 为空或未配置时返回 `false`，仅在显式命中白名单时开启；如确需支持全量开关，应增加独立布尔配置（如 `enabledAllFacilities`）并默认关闭。建议示例：```java
-if (!PickupModeEnum.PUDO.equals(pickupMode)) {
-    return false;
-}
-if (CollUtil.isEmpty(grayFacilities) || facilityCode == null) {
-    return false;
-}
-return grayFacilities.contains(facilityCode);
-```</div>
-            </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/impl/PickupBatchServiceImpl.java:1234-1248</code>
-                </div>
-                <div class="finding-desc">在遍历 `beansRouteInfoDtos` 的每个 pickup 时，新增代码对每个订单分别执行 `pickupStagingRepository.findByPickupOrderNo(...)`，随后对每个 org 分组再次执行 `pickupStagingParcelRepository.findByBookingCodeInAndStatus(...)`。这是典型的循环内查库模式，批量路由/建批场景下会形成 N+1 查询，攻击者可通过提交大量 stops/booking 触发数据库放大访问，造成可用性下降。</div>
-                <div class="finding-suggestion">💡 修复建议：将 staging 与 parcel 查询改为批量预取：先一次性按全部 `pickupOrderNo` 查询 staging，再按全部 bookingCodes 查询 parcel，并在内存中按 `pickupOrderNo/orgId` 分组组装消息，避免循环内 repository 调用。</div>
-            </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/impl/PickupServiceImpl.java:394-397</code>
-                </div>
-                <div class="finding-desc">新增逻辑对 `PUDO` 直接 `return`，跳过了后续基于当前时间/营业日的取件日期约束校验，仅保留前面的周末/节假日检查。这样会放宽 PUDO 请求的时间边界，允许提交不符合原有 lead time/当天截单规则的 pickup 日期，可能被滥用创建异常取件请求，影响调度与下游处理。</div>
-                <div class="finding-suggestion">💡 修复建议：不要对 `PUDO` 直接整体跳过日期窗口校验；如业务确需豁免，应仅豁免明确的规则项，并保留最小提前量、不可回溯日期等基础校验。建议将 PUDO 特例拆分为显式条件判断并补充注释/配置开关。</div>
-            </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/service/impl/PickupServiceImpl.java:501-509</code>
-                </div>
-                <div class="finding-desc">`validateMinimumParcelQuantity` 的最小包裹数校验被整段注释掉，导致创建 pickup 时不再校验 `airParcelQty + gndParcelQty` 是否达到最小要求。这样可提交 0 件或低于业务下限的请求，属于输入约束失效，容易被恶意构造为空单/垃圾单，占用调度、消息和存储资源，形成业务层 DoS 面。</div>
-                <div class="finding-suggestion">💡 修复建议：恢复最小包裹数校验；若 OMS 配置可能为空，可按注释中的思路使用安全默认值 `1`，但仍需对 `total &lt; minQty` 抛出业务异常，禁止创建空单。</div>
-            </div>
-            <p class="more-note">... 还有 12 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
-        </div>
-        
 
   <div class="footer">
     由质量门禁引擎生成 &nbsp;|&nbsp; SpeedX CI/CD
