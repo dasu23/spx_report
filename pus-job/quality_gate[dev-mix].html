@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pus-job &nbsp;|&nbsp; 2026-07-13 18:39:02</div>
+      <div class="meta">pus-job &nbsp;|&nbsp; 2026-07-15 18:48:22</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -56,13 +56,13 @@
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#4caf50">10.6%</div>
+      <div class="metric-value" style="color:#4caf50">12.0%</div>
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#f44336">31.0%</div>
+            <div class="metric-value" style="color:#f44336">31.4%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:0</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:1 &nbsp; 主要:10</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -82,10 +82,77 @@
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube quality gate status: ERROR</li></ul>
+            <ul><li>SonarQube quality gate status: ERROR</li>
+<li>AI Review: 1 Critical finding(s)</li>
+<li>AI Review: 10 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
+        <div class="findings-section">
+            <h3>AI 代码审查发现</h3>
+            
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/so/PickupSo.java:112-119</code>
+                </div>
+                <div class="finding-desc">**原因：** 新增的 `orgId/orgIds` 过滤逻辑直接采用调用方传入的组织 ID 列表构造查询条件，并通过 `pickup.pickupAccountId IN (...) OR EXISTS(staging.pickupAccountId IN (...))` 扩大了命中范围，但在该变更内看不到任何与当前登录主体、数据权限范围或租户归属绑定的校验。只要上层请求可控地传入任意 `orgId/orgIds`，就可能把查询范围切换到其他组织名下的 pickup / staging 关联订单。
+
+```java
+                return cb.or(root.get(&quot;pickupAccountId&quot;).in(effectiveOrgIds), cb.exists(sub));
+```
+
+**影响：** 若该 SO 被 Web/Facade 查询入口复用，攻击者可通过枚举或指定其他组织 ID，越权读取本不属于自己的提货单数据；且 `EXISTS` 反查 staging 后，连 `pickup.pickupAccountId` 不匹配的合单订单也会被带出，造成跨租户数据可见范围扩大。</div>
+                <div class="finding-suggestion">💡 修复建议：不要直接信任前端传入的 `orgId/orgIds` 作为最终数据范围。应在进入 `toSpec()` 前或构造条件时，将其与当前登录主体允许访问的组织集合求交集；若当前主体无跨组织权限，则强制使用会话中的单一 `orgId`。例如：先从鉴权上下文获取 `allowedOrgIds`，再仅保留 `effectiveOrgIds` 中属于 `allowedOrgIds` 的值；为空时直接拒绝查询。</div>
+            </div>
+            
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">.gitignore:28</code>
+                </div>
+                <div class="finding-desc">将原本忽略的敏感环境文件 `scripts/.env` 改成仅忽略目录 `scripts/.env.superpowers/`，会导致 `scripts/.env` 不再被 Git 忽略，后续极易把本地凭证、Token、数据库连接等敏感配置误提交到仓库，形成凭证泄露风险。</div>
+                <div class="finding-suggestion">💡 修复建议：恢复对实际环境文件的忽略规则，例如同时保留 `scripts/.env`，如确需忽略目录可额外新增目录规则而不是替换文件规则：
+```gitignore
+scripts/.env
+scripts/.env.superpowers/
+```</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/properties/OrderResolveGrayProperties.java:39-41</code>
+                </div>
+                <div class="finding-desc">该灰度开关在白名单未配置或被动态清空时默认返回 true，会把“灰度发布”退化为“全量开启”。这是一个高风险的 fail-open 配置策略：一旦 Nacos 首次未下发、配置加载失败后为空、或运维误删列表，新功能会在所有 facility 生效，扩大未充分验证逻辑的暴露面。</div>
+                <div class="finding-suggestion">💡 修复建议：将默认策略改为 fail-close：未配置或空列表时返回 false，并要求显式开启。示例：`if (CollUtil.isEmpty(grayFacilities)) { return false; }`。如确需支持全量开启，应增加独立布尔开关（如 `enabledAllFacilities`）并默认 false，避免用“空白名单=全量”表达。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/properties/SoldToChildProperties.java:26-29</code>
+                </div>
+                <div class="finding-desc">`orgIds` 通过 `@RefreshScope` 支持热更新，但 `isSoldToAccount` 直接对可变 `List` 调用 `contains`。在配置刷新过程中，调用方可能观察到瞬时不一致状态（旧值/新值切换窗口），导致账号身份判定在请求间抖动；该判定又直接影响“是否按 sold-to parent 账号处理并改走标签解析路由”，属于安全敏感的路由决策。</div>
+                <div class="finding-suggestion">💡 修复建议：将配置绑定结果收敛为不可变快照并优先使用 `Set&lt;Long&gt;`，避免刷新期间共享可变集合带来的判定不稳定。示例：在 setter 中执行 `this.orgIds = Collections.unmodifiableSet(new HashSet&lt;&gt;(orgIds));`，查询时使用 `Set.contains`。同时为配置刷新增加版本化/原子替换测试。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/utils/BookingCodeUtils.java:26-30</code>
+                </div>
+                <div class="finding-desc">对非标准或异常 bookingCode 直接回退为 `orderBookingCode + &quot;-&quot; + orgId`，会把内部 orgId 明文拼入派生编码。若该编码后续被返回前端、写入日志、透传第三方或作为可枚举标识使用，会扩大租户标识暴露面，并且异常输入路径与标准路径生成规则不一致，容易形成可探测的异常编码侧信道。</div>
+                <div class="finding-suggestion">💡 修复建议：不要在异常兜底路径中拼接真实 orgId。建议对非法 bookingCode 直接抛出受检业务异常，或返回不含敏感租户标识的固定失败结果。例如：`throw new IllegalArgumentException(&quot;invalid bookingCode format&quot;)`; 若必须兜底，可仅返回原值并记录受控审计日志（避免对外暴露 orgId）。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-facade-impl/pus-facade-impl-exchange/src/main/java/io/speedx/pus/facade/impl/exchange/consume/PickupOrderResolveConsumer.java:34-36</code>
+                </div>
+                <div class="finding-desc">消费者在判空失败分支直接把原始 Kafka 消息完整写入 warn 日志。该消息体包含业务上下文与 bookingCode 列表；一旦消息中携带可识别订单号/运单关联信息，日志系统将形成可检索的批量业务数据副本，扩大内部泄露面，且后续难以按最小化原则治理。</div>
+                <div class="finding-suggestion">💡 修复建议：不要记录完整原始消息体，改为仅记录必要的非敏感摘要字段，例如 topic、facilityCode、pickupDate、bookingCodes 数量、消息哈希/traceId。示例：`log.warn(&quot;[PickupOrderResolve] consumed invalid message, facility={}, pickupDate={}, size={}&quot;, msg == null ? null : msg.getFacilityCode(), msg == null ? null : msg.getPickupDate(), msg == null || msg.getBookingCodes() == null ? 0 : msg.getBookingCodes().size());`；若解析失败前无法拿到结构化字段，建议仅记录固定文案和消息长度/摘要。</div>
+            </div>
+            <p class="more-note">... 还有 5 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+        </div>
+        
 
   <div class="footer">
     由质量门禁引擎生成 &nbsp;|&nbsp; SpeedX CI/CD
