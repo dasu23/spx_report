@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pus-web-api &nbsp;|&nbsp; 2026-07-15 18:40:41</div>
+      <div class="meta">pus-web-api &nbsp;|&nbsp; 2026-07-16 14:40:44</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -56,13 +56,13 @@
   <div class="metrics">
     <div class="metric-card">
       <div class="metric-label">整体覆盖率</div>
-      <div class="metric-value" style="color:#4caf50">12.0%</div>
+      <div class="metric-value" style="color:#4caf50">11.3%</div>
       <div class="metric-threshold">阈值: 1%</div>
     </div>
     
         <div class="metric-card">
             <div class="metric-label">增量覆盖率</div>
-            <div class="metric-value" style="color:#f44336">20.2%</div>
+            <div class="metric-value" style="color:#f44336">21.6%</div>
             <div class="metric-threshold">阈值: 50%</div>
         </div>
         
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#4caf50;font-size:22px;padding-top:6px">严重:0 &nbsp; 主要:0</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:2 &nbsp; 主要:4</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -82,10 +82,100 @@
   
         <div class="violations">
             <h3>⚠ 违规项</h3>
-            <ul><li>SonarQube quality gate status: ERROR</li></ul>
+            <ul><li>SonarQube quality gate status: ERROR</li>
+<li>AI Review: 2 Critical finding(s)</li>
+<li>AI Review: 4 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
+        <div class="findings-section">
+            <h3>AI 代码审查发现</h3>
+            
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pus-integration/src/main/java/io/speedx/pus/integration/kafka/PusKafkaProducer.java:74-174</code>
+                </div>
+                <div class="finding-desc">新增 `sendShipmentAppend` 在 info 日志中完整打印 `CreateShipmentMsg` 的 JSON 内容。Shipment 事件通常包含 pickupOrderNo、包裹/运单等明细，完整序列化到日志会导致订单与包裹数据明文落盘，属于敏感业务数据泄露风险；一旦日志平台、排障导出或第三方运维可访问日志，即可批量获取订单/包裹信息。</div>
+                <div class="finding-suggestion">💡 修复建议：禁止在 info/error 日志中输出完整消息体，改为仅记录最小必要字段（如 pickupOrderNo、parcelCount、eventType），必要时对运单号做脱敏。示例：`log.info(&quot;[PusKafkaProducer] sendShipmentAppend, topic={}, key={}, headers={}, parcelCount={}&quot;, pusShipmentEventTopic, msg.getPickupOrderNo(), headers, msg.getParcels()==null?0:msg.getParcels().size());`</div>
+            </div>
+            <div class="finding-card finding-critical">
+                <div class="finding-header">
+                    <span class="finding-badge">严重</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/so/PickupSo.java:109-117</code>
+                </div>
+                <div class="finding-desc">**原因：** 新增的 `toSpec()` 将前端传入的 `orgId/orgIds` 直接拼入数据范围过滤条件，且过滤逻辑被放宽为 `pickup.pickupAccountId IN (...) OR EXISTS(staging.pickupAccountId IN (...))`。从本 diff 看不到任何对调用方可查询组织集合的服务端约束、当前用户归属校验或白名单收敛；一旦上层接口把该 SO 暴露给外部调用者，调用者只需构造任意 `orgId/orgIds` 即可扩大查询范围。
+
+```java
+if (!effectiveOrgIds.isEmpty()) {
+    spec = spec.and((root, query, cb) -&gt; {
+        Subquery&lt;Long&gt; sub = query.subquery(Long.class);
+        Root&lt;PickupStaging&gt; stagingRoot = sub.from(PickupStaging.class);
+        sub.select(cb.literal(1L)).where(
+                cb.equal(stagingRoot.get(&quot;pickupOrderNo&quot;), root.get(&quot;bookingCode&quot;)),
+                stagingRoot.get(&quot;pickupAccountId&quot;).in(effectiveOrgIds));
+        return cb.or(root.get(&quot;pickupAccountId&quot;).in(effectiveOrgIds), cb.exists(sub));
+    });
+}
+```
+
+**影响：** 若 `WebPickupServiceImpl.queryBySo()`、`export()`、`genDataPoolForAll()` 等查询链路复用该 SO，低权限用户可通过传入其他租户的 `orgId/orgIds` 读取不属于自己的 pickup 订单，且对合单场景还可借助 staging 反查命中更多订单，形成跨租户数据越权读取。</div>
+                <div class="finding-suggestion">💡 修复建议：不要信任 SO 中的 `orgId/orgIds` 作为最终数据范围。应在 Service/Facade 层基于当前登录主体的可见组织集合与请求参数求交集，空交集直接拒绝；同时将最终允许的 org 集合作为服务端派生参数注入查询，而不是直接使用前端原值。例如：
+```java
+Set&lt;Long&gt; allowedOrgIds = authContext.getAllowedOrgIds();
+Set&lt;Long&gt; requested = merge(orgId, orgIds);
+Set&lt;Long&gt; effective = requested.isEmpty() ? allowedOrgIds : intersection(requested, allowedOrgIds);
+if (effective.isEmpty()) {
+    throw new AccessDeniedException(&quot;org out of scope&quot;);
+}
+so.setEffectiveOrgIds(new ArrayList&lt;&gt;(effective));
+```
+并补充对 `orgId/orgIds` 的审计与拒绝策略。</div>
+            </div>
+            
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/properties/OrderResolveGrayProperties.java:39-41</code>
+                </div>
+                <div class="finding-desc">该灰度开关在配置缺失或空列表时默认返回 true，会把“灰度白名单”退化为“全量开启”。这属于高风险默认值：一旦 Nacos 配置未及时下发、被误删或热更新失败回空，原本应受控开放的即时关联能力会被所有 PUDO facility 自动启用，形成未预期的功能暴露面扩大。</div>
+                <div class="finding-suggestion">💡 修复建议：将默认行为改为 fail-closed：未配置或空列表时返回 false，并通过启动校验/配置校验显式阻止缺失配置上线。例如：`if (CollUtil.isEmpty(grayFacilities)) { return false; }`；同时增加 `@PostConstruct` 或配置校验器，在生产环境未配置白名单时直接告警或拒绝启动。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/utils/BookingCodeUtils.java:30-32</code>
+                </div>
+                <div class="finding-desc">对 `orgId` 未做长度与取值范围约束，直接用 `leftPad` 拼接到固定格式 bookingCode 中；当 `orgId` 为负数或超过 6 位时，会生成包含 `-` 或超长 org 段的新编码，破坏编码规范并可能导致后续基于 bookingCode 的路由、查询或租户归属判断失效。该类编码常被下游系统当作可信标识使用，格式污染会带来错误关联或跨组织数据混淆风险。</div>
+                <div class="finding-suggestion">💡 修复建议：在拼接前显式校验 `orgId` 必须为 `0 &lt;= orgId &lt;= 999999`，不满足时抛出业务异常而不是继续生成编码。例如：`if (orgId &lt; 0 || orgId &gt; 999999) { throw new IllegalArgumentException(&quot;orgId out of range&quot;); }`。同时建议补充对生成结果总长度和 org 段仅包含数字的断言。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">pus-facade-impl/pus-facade-impl-job/src/main/java/io/speedx/pus/facade/impl/job/PickupFailureEventRepushJob.java:320-324</code>
+                </div>
+                <div class="finding-desc">`pickupMode` 的默认值实现与同文件注释声明不一致：注释说明默认值为 `&quot;Standard&quot;`，而实际字段默认值为 `&quot;STANDARD&quot;`。如果下游查询/枚举匹配是大小写敏感的，这会导致默认过滤条件失效，作业可能错误地查不到应补推的数据，或与历史调用方传参语义不兼容。该问题属于新增参数后的契约不一致，可能直接影响补推范围。</div>
+                <div class="finding-suggestion">💡 修复建议：统一 `pickupMode` 的大小写契约，并在入参解析处做显式标准化。例如统一使用枚举值并在 `parseParams` 后执行 `params.setPickupMode(StringUtils.upperCase(StringUtils.trimToNull(params.getPickupMode())))`，同时把注释、默认值、下游查询条件保持一致；若对外文档约定为 `Standard`，则应在进入 service 前转换为内部枚举值。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">docs/feature/gang/SPX-PI-7353-pickup-orders-api-for-days.md:35-101</code>
+                </div>
+                <div class="finding-desc">原因：第二个 DAYS 内部接口同样声明“认证方式：无（内部接口，依赖网络层隔离）”。该接口按 pickupOrderCodes 批量返回包裹明细，缺少调用方身份校验与数据范围约束，属于典型的内部接口裸奔设计。
+
+影响：任意可达方可枚举或构造 pickupOrderCodes 批量拉取 parcel 明细，扩大敏感运营数据暴露面，且比订单列表接口更容易形成批量数据抓取。
+
+证据：
+```text
++| 接口路径 | `POST /innerApi/pickup/parcel/queryForDays` |
++| 认证方式 | 无（内部接口，依赖网络层隔离） |
+```</div>
+                <div class="finding-suggestion">💡 修复建议：为该接口补充服务间鉴权与最小数据范围控制，例如校验调用方是否为 DAYS、校验 facilityCode 与调用方授权范围匹配，并对 pickupOrderCodes 数量设置上限与审计日志。</div>
+            </div>
+            
+        </div>
+        
 
   <div class="footer">
     由质量门禁引擎生成 &nbsp;|&nbsp; SpeedX CI/CD
