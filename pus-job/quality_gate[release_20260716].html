@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pus-job &nbsp;|&nbsp; 2026-07-16 14:37:43</div>
+      <div class="meta">pus-job &nbsp;|&nbsp; 2026-07-16 14:55:20</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -73,7 +73,7 @@
     </div>
     <div class="metric-card">
       <div class="metric-label">AI 代码审查</div>
-      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:2 &nbsp; 主要:6</div>
+      <div class="metric-value" style="color:#f44336;font-size:22px;padding-top:6px">严重:2 &nbsp; 主要:10</div>
       <div class="metric-threshold">已抑制: 0</div>
       
     </div>
@@ -84,7 +84,7 @@
             <h3>⚠ 违规项</h3>
             <ul><li>SonarQube quality gate status: ERROR</li>
 <li>AI Review: 2 Critical finding(s)</li>
-<li>AI Review: 6 Major finding(s) &gt;= threshold 3</li></ul>
+<li>AI Review: 10 Major finding(s) &gt;= threshold 3</li></ul>
         </div>
         
   
@@ -94,26 +94,34 @@
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">pus-integration/src/main/java/io/speedx/pus/integration/kafka/PusKafkaProducer.java:71-111</code>
+                    <code class="finding-loc">pus-integration/src/main/java/io/speedx/pus/integration/kafka/PusKafkaProducer.java:69-139</code>
                 </div>
-                <div class="finding-desc">新增的 Shipment 增量追加消息在 info 日志中直接序列化并打印完整消息体。该消息体用于向 POS 同步包裹追加，按注释与方法签名可推断包含 pickupOrderNo 及包裹明细等业务数据；将 `JSONUtil.toJsonStr(msg)` 写入日志会造成敏感业务数据明文落盘，属于高风险数据泄露面。</div>
-                <div class="finding-suggestion">💡 修复建议：禁止在 info/debug/warn 中打印完整业务消息体，改为仅记录必要标识字段（如 pickupOrderNo、parcelCount、eventType）。如需排障，增加受控脱敏日志方法，对 trackingNumber、手机号、地址等字段做掩码后再输出。</div>
+                <div class="finding-desc">新增的 Shipment APPEND 发送日志直接序列化并输出完整消息体。`CreateShipmentMsg` 作为 shipment/parcel 同步载体，通常包含 pickupOrderNo、orgId、包裹/运单等业务数据；将完整对象写入 info 日志存在敏感业务数据泄露风险，一旦日志平台、排障人员或下游采集系统访问控制不足，会造成批量数据暴露。</div>
+                <div class="finding-suggestion">💡 修复建议：禁止在 info 日志中输出完整业务消息体，改为仅记录必要主键并对敏感字段脱敏；如需排障，使用受控 debug 日志并显式裁剪字段。例如：`log.info(&quot;[PusKafkaProducer] sendShipmentAppend, topic={}, key={}, headers={}&quot;, pusShipmentEventTopic, msg.getPickupOrderNo(), headers);`</div>
             </div>
             <div class="finding-card finding-critical">
                 <div class="finding-header">
                     <span class="finding-badge">严重</span>
-                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/so/PickupSo.java:112-119</code>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/so/PickupSo.java:111-120</code>
                 </div>
-                <div class="finding-desc">**原因：** 新增的 `orgId/orgIds` 过滤逻辑直接使用调用方传入的组织 ID 列表拼接数据范围条件，并通过 `pickup.pickupAccountId IN (...) OR EXISTS(staging.pickupAccountId IN (...))` 扩大命中范围；在本 diff 中看不到任何将 `effectiveOrgIds` 与当前登录主体可见组织集合做交集、或校验调用方是否有权查询这些 orgId 的逻辑。这样一来，只要上层请求对象可控，调用方即可通过构造任意 `orgId/orgIds` 查询其他组织的 pickup 数据。
+                <div class="finding-desc">原因：新增查询条件将调用方传入的 `orgId/orgIds` 直接并入查询谓词，并通过 `pickup.pickupAccountId IN (...) OR EXISTS(staging.pickupAccountId IN (...))` 扩大命中范围，但在该变更内看不到任何与当前登录主体、租户数据范围或可见组织集合的绑定/校验。只要上层请求可控地传入任意 orgId，就可能把查询范围切换到其他组织，尤其 `EXISTS` 子查询还允许通过 staging 反查到 `pickup.pickupAccountId` 本身不属于该 org 的订单。
 
+影响：这会把原本应受租户/组织边界限制的提货单查询变成“按请求参数指定组织”的数据访问，存在跨组织越权读取风险；若该 SO 被 Web/导出/分页接口复用，攻击者可通过构造 `orgId/orgIds` 查看其他客户的 pickup 数据。
+
+证据：
 ```java
-                return cb.or(root.get(&quot;pickupAccountId&quot;).in(effectiveOrgIds), cb.exists(sub));
-```
-
-**影响：** 这是典型的租户/组织维度数据越权读取风险。尤其这里还通过 staging 反查合并单，把原本 `pickupAccountId=0` 的订单也纳入结果，攻击者只需猜测或枚举其他 orgId，即可能读取不属于自己的 pickup/合并单数据，造成跨组织数据泄露。
-
-**证据：** `pus-domain/src/main/java/io/speedx/pus/domain/so/PickupSo.java:112-119`</div>
-                <div class="finding-suggestion">💡 修复建议：不要直接信任请求中的 `orgId/orgIds` 作为最终数据范围。应在进入 `toSpec()` 前或构造条件时，将其与当前登录主体的授权组织集合做交集；若请求包含未授权 orgId，应拒绝请求或忽略未授权值。例如：先从鉴权上下文获取 `authorizedOrgIds`，再执行 `effectiveOrgIds.retainAll(authorizedOrgIds)`；若结果为空且请求原本指定了 orgId，则返回无权限错误。对于 staging 反查分支也必须复用同一授权集合，避免通过 `EXISTS` 绕过主表的数据范围控制。</div>
+if (!effectiveOrgIds.isEmpty()) {
+    spec = spec.and((root, query, cb) -&gt; {
+        Subquery&lt;Long&gt; sub = query.subquery(Long.class);
+        Root&lt;PickupStaging&gt; stagingRoot = sub.from(PickupStaging.class);
+        sub.select(cb.literal(1L)).where(
+                cb.equal(stagingRoot.get(&quot;pickupOrderNo&quot;), root.get(&quot;bookingCode&quot;)),
+                stagingRoot.get(&quot;pickupAccountId&quot;).in(effectiveOrgIds));
+        return cb.or(root.get(&quot;pickupAccountId&quot;).in(effectiveOrgIds), cb.exists(sub));
+    });
+}
+```</div>
+                <div class="finding-suggestion">💡 修复建议：不要信任前端直接传入的 `orgId/orgIds` 作为最终数据范围。应在 Service/Facade 层基于当前登录主体计算允许访问的组织集合，并与请求参数取交集；若当前角色不允许跨组织查询，则忽略请求中的 orgId，仅使用会话中的组织范围。示例：先得到 `allowedOrgIds`，再执行 `effectiveOrgIds.retainAll(allowedOrgIds)`；若交集为空则返回空结果或拒绝请求。对于 staging 反查分支，也必须使用同一份授权后的组织集合。</div>
             </div>
             
             <div class="finding-card finding-major">
@@ -121,42 +129,47 @@
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">.gitignore:28</code>
                 </div>
-                <div class="finding-desc">将原本忽略的敏感环境文件路径从 `scripts/.env` 改为目录 `scripts/.env.superpowers/`，会导致 `scripts/.env` 不再被 Git 忽略。若仓库或开发流程仍使用 `scripts/.env` 存放本地凭据、Token 或连接串，后续极易被误提交，形成敏感信息泄露风险。</div>
-                <div class="finding-suggestion">💡 修复建议：保留对原敏感文件的忽略规则，并在需要时额外忽略新目录，例如同时保留：`scripts/.env` 和 `scripts/.env.superpowers/`。若已存在历史提交，请同步检查是否已有 `.env` 类文件被纳入版本控制。</div>
+                <div class="finding-desc">`.gitignore` 将原本忽略的 `scripts/.env` 改为仅忽略目录 `scripts/.env.superpowers/`，会导致常见的环境变量文件 `scripts/.env` 不再被 Git 忽略。若开发者本地存在包含数据库口令、Token、API Key 的 `.env` 文件，后续极易被误提交，形成凭证泄露风险。</div>
+                <div class="finding-suggestion">💡 修复建议：恢复对具体环境文件的忽略规则，例如同时保留 `scripts/.env`，并按需额外忽略目录：
+```gitignore
+scripts/.env
+scripts/.env.superpowers/
+```
+如项目下还有其他 `.env*` 变体，也应统一补充忽略策略。</div>
+            </div>
+            <div class="finding-card finding-major">
+                <div class="finding-header">
+                    <span class="finding-badge">主要</span>
+                    <code class="finding-loc">docs/migrations/SPX-PI-7277-alter-tables.sql:26-29</code>
+                </div>
+                <div class="finding-desc">本次迁移将 `pickup_contact_name` 和 `pickup_phone` 扩容到 512，并在注释中明确用于拼接多客户联系人与电话；但同一 diff 中仅以注释形式提示“待与 DMS 确认字段上限后再执行”。这意味着当前设计允许把更长的联系人/电话串写入数据库，而下游 DMS 字段上限尚未确认，存在将未受控的 PII 批量拼接后继续外发的风险：轻则请求失败导致业务异常，重则在日志/重试链路中暴露更多联系人姓名和电话。</div>
+                <div class="finding-suggestion">💡 修复建议：在正式执行该迁移前，先落实并代码化下游字段上限约束，而不是仅保留注释说明。建议：1）确认 DMS 接口字段最大长度；2）在应用层对 `pickup_contact_name`/`pickup_phone` 做严格长度校验与脱敏日志；3）若超限，按明确规则截断并记录审计，不得直接透传完整拼接值。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/properties/OrderResolveGrayProperties.java:39-41</code>
                 </div>
-                <div class="finding-desc">该灰度开关在配置缺失或空列表时默认返回 true，等价于“全量开启”。这是一个高风险的 fail-open 配置策略：一旦 Nacos 配置未下发、被误删、热更新异常或首次部署遗漏，原本应受控的即时关联能力会直接对全部 PUDO facility 生效，扩大功能暴露面。对涉及订单解析/关联链路的能力，这类默认放开会放大误处理、越范围处理或未充分验证新逻辑的安全影响。</div>
-                <div class="finding-suggestion">💡 修复建议：将默认策略改为 fail-close：未配置或空列表时返回 false，仅在显式命中白名单时开启。示例：`if (CollUtil.isEmpty(grayFacilities)) { return false; }`。如确需支持“全量开启”，应增加独立布尔开关（如 `enabledAllFacilities`）并要求显式配置。</div>
+                <div class="finding-desc">该灰度开关在 `grayFacilities` 为空或未配置时直接返回 `true`，把“缺省未配置”解释为“全量开启”。这是一个高风险 fail-open 配置语义：一旦 Nacos 配置缺失、读取失败后回落为空、或首次部署遗漏白名单，功能会在所有 facility 上自动放开，扩大新逻辑暴露面。对灰度/开关类配置而言，这种默认放开更容易导致未充分验证的流程被提前启用。</div>
+                <div class="finding-suggestion">💡 修复建议：将默认语义改为 fail-close：未配置或空列表时返回 `false`，仅在显式配置白名单后开启；若确需支持“全量开启”，应增加独立布尔开关如 `enabledAllFacilities` 并要求显式配置。示例：`if (CollUtil.isEmpty(grayFacilities)) { return false; }`。同时补充启动校验或配置告警，避免配置缺失静默放量。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/utils/BookingCodeUtils.java:27-30</code>
+                    <code class="finding-loc">pus-domain/src/main/java/io/speedx/pus/domain/utils/BookingCodeUtils.java:31-32</code>
                 </div>
-                <div class="finding-desc">对非标准/异常 bookingCode 直接回退为 `orderBookingCode + &quot;-&quot; + orgId`，会把调用方传入的原始字符串原样拼入新编码。若该编码后续被用于日志、消息、数据库唯一键、下游接口标识或按固定格式解析，攻击者可借由构造异常 bookingCode 注入分隔符/超长内容，造成标识污染、格式绕过或跨系统解析异常，属于不安全的失败回退策略。</div>
-                <div class="finding-suggestion">💡 修复建议：不要在异常格式下直接拼接原始输入生成新业务标识。应改为显式拒绝非法 bookingCode（抛出受检业务异常），或先按白名单格式校验后再处理，例如仅允许 `[A-Z0-9]+` 且长度满足规范；若必须兜底，也应生成受控的内部错误码/随机码，而不是回显原始输入。</div>
+                <div class="finding-desc">对 `orgId` 未做长度/取值范围校验，直接 `leftPad` 到 6 位会在 `orgId &gt; 999999` 或负数时生成非标准 bookingCode：超长 orgId 不会被截断，负数会被拼入 `-` 号。这会破坏 bookingCode 格式约束，若该编码后续作为跨系统唯一标识、查询键或路由键使用，可能导致错误关联、绕过格式校验或写入异常数据。</div>
+                <div class="finding-suggestion">💡 修复建议：在拼接前显式校验 `orgId` 取值范围，仅允许 `0 &lt;= orgId &lt;= 999999`；超出范围时抛出业务异常而不是继续生成编码。例如：`if (orgId &lt; 0 || orgId &gt; 999999) { throw new IllegalArgumentException(&quot;orgId out of range&quot;); }`。同时补充单测覆盖负数、7位 orgId、边界值 0/999999。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-facade/pus-facade-web/src/main/java/io/speedx/pus/facade/web/model/req/WebZipcodeConfigSo.java:19-20</code>
+                    <code class="finding-loc">pus-facade-impl/pus-facade-impl-exchange/src/main/java/io/speedx/pus/facade/impl/exchange/consume/PickupOrderResolveConsumer.java:33-45</code>
                 </div>
-                <div class="finding-desc">新增批量查询参数仅限制了集合元素个数，未限制每个 zipCode 元素的长度/字符集，也未保留原先单值字段上的格式约束。若后续服务层/仓储层直接将该列表用于数据库 IN 查询、日志记录或下游调用，攻击者可提交超长或异常格式字符串，放大查询负载并增加异常输入穿透到持久层的风险。</div>
-                <div class="finding-suggestion">💡 修复建议：对列表元素增加逐项校验，至少限制非空、长度和允许字符集，例如：`private List&lt;@NotBlank @Size(max = 16) @Pattern(regexp = &quot;^[A-Za-z0-9-]+$&quot;) String&gt; zipCodes;`。同时在映射到 domain so 前做去重与空白裁剪。</div>
+                <div class="finding-desc">Kafka 消息体直接反序列化且未对非法 JSON 做单独处理；当 `message` 不是合法 JSON 时，`JSONUtil.toBean(...)` 抛出的运行时异常会发生在当前 `try/catch` 之外，导致消费线程按容器错误策略反复重试同一条毒消息，形成可被恶意构造消息触发的拒绝服务风险。当前 catch 仅覆盖业务处理 `resolvePickupOrderForStaging`，未覆盖解析阶段。</div>
+                <div class="finding-suggestion">💡 修复建议：将 JSON 解析放入 `try/catch` 内，并对反序列化失败的消息进行丢弃/转死信队列处理，避免 poison message 无限重试。例如：`try { PickupResolveMsg msg = JSONUtil.toBean(message, PickupResolveMsg.class); ... } catch (Exception e) { log.error(&quot;invalid kafka message&quot;, e); return; }`。如项目支持，优先配置 ErrorHandler/DLT。</div>
             </div>
-            <div class="finding-card finding-major">
-                <div class="finding-header">
-                    <span class="finding-badge">主要</span>
-                    <code class="finding-loc">pus-facade/pus-facade-web/src/main/java/io/speedx/pus/facade/web/model/req/ZipcodeConfigFacilityUpdateItem.java:16-17</code>
-                </div>
-                <div class="finding-desc">批量更新项中的 `facilityCode` 仅做了非空校验，未限制长度和字符集。该字段通常会参与设施归属更新、数据库查询或审计日志，允许任意长/异常字符输入会带来输入污染和资源消耗风险，尤其在批量接口中可被一次性放大 500 倍。</div>
-                <div class="finding-suggestion">💡 修复建议：为 `facilityCode` 增加严格格式约束，例如 `@Size(max = 32)` 与 `@Pattern(regexp = &quot;^[A-Za-z0-9_-]+$&quot;)`；如设施编码有固定业务格式，应按白名单精确约束。</div>
-            </div>
-            <p class="more-note">... 还有 1 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
+            <p class="more-note">... 还有 5 条未展示，请查看 Jenkins 构建日志获取完整列表</p>
         </div>
         
 
