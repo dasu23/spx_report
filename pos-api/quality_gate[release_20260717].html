@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-api &nbsp;|&nbsp; 2026-07-17 11:59:44</div>
+      <div class="meta">pos-api &nbsp;|&nbsp; 2026-07-17 13:15:22</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -94,42 +94,42 @@
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">backend-common-service/src/main/java/com/miq/backendcommonservice/mq/AbstractKafkaConsumerTemplate.java:214-216</code>
+                    <code class="finding-loc">backend-common-service/src/main/java/com/miq/backendcommonservice/mq/AbstractKafkaConsumerTemplate.java:214-273</code>
                 </div>
-                <div class="finding-desc">DLT 发送失败时当前实现仍会继续提交原消息 offset，导致原始消息既未被成功处理，也未被可靠转存到 DLT，却已从消费位点上永久跳过。这会造成消息静默丢失，攻击者或异常输入可通过触发持续处理失败并叠加 DLT 不可用场景，放大为审计缺失/业务数据丢失风险。</div>
-                <div class="finding-suggestion">💡 修复建议：仅在 DLT 发送成功后再提交 offset；若 DLT 发送失败，应抛出异常或返回失败状态，让消息保持未提交以便后续重试。例如让 sendToDlt 返回 boolean，并在失败时中断 commit：`if (!sendToDlt(...)) { throw new IllegalStateException(&quot;DLT publish failed&quot;); } commit(consumer, record);`</div>
+                <div class="finding-desc">DLT 反序列化失败日志会原样打印整条消息体 `record.value()`。Kafka 消息通常承载业务明细、单号、地址、手机号等敏感字段；当消息格式异常时，这些原始内容会被写入 error 日志，形成持久化敏感数据泄露面，且异常消息往往更容易被攻击者构造触发。</div>
+                <div class="finding-suggestion">💡 修复建议：不要在日志中直接输出完整 `record.value()`；改为记录 topic/partition/offset/key，并对消息体做脱敏、截断或仅输出摘要（如 hash）。例如：`log.error(&quot;... key={} valueSha256={}&quot;, record.key(), DigestUtils.sha256Hex(record.value()), e);`。同时补充日志审计测试，验证异常路径不会落完整原文。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
-                    <code class="finding-loc">backend-common-service/src/main/java/com/miq/backendcommonservice/mq/KafkaMessagePublisher.java:64</code>
+                    <code class="finding-loc">backend-common-service/src/main/java/com/miq/backendcommonservice/mq/KafkaMessagePublisher.java:63</code>
                 </div>
-                <div class="finding-desc">发送接口会把完整业务负载序列化后直接写入 info 日志。若该 HTTP 入口或内部调用承载运单、收货、容器等业务数据，日志将长期保存完整消息体，形成敏感业务数据泄露面；一旦 payload 中混入凭证、手机号、地址等字段，也会被明文落盘。</div>
-                <div class="finding-suggestion">💡 修复建议：避免记录完整 payload，改为仅记录 topic、key、消息摘要/长度或经过脱敏后的字段。例如：`log.info(&quot;[KafkaMessagePublisher] send topic={} key={} payloadSize={}&quot;, topic, key, value == null ? 0 : value.length());`；如必须排障，增加受控 debug 开关并对敏感字段脱敏。</div>
+                <div class="finding-desc">该发送入口对应的底层实现会在 info 日志中打印完整 `payload`。结合已给出的 HTTP 入口 `/admin/tms/kafka/send`，一旦调用方提交包含运单、地址、凭证或其他业务敏感字段的消息，请求内容将被完整写入应用日志，造成敏感数据泄露，并可能被日志平台二次扩散。</div>
+                <div class="finding-suggestion">💡 修复建议：移除完整 payload 日志，改为记录 topic、key、消息类型、长度、摘要或业务主键等最小必要信息；若必须排障，增加受控 debug 开关并对敏感字段脱敏。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/dao/ReceivingBatchDao.java:91-92</code>
                 </div>
-                <div class="finding-desc">`incrementReceptacleQty` 直接对 `receptacle_qty` 做加法更新，但新增代码未对 `increment` 的取值范围做任何约束。若上游传入负数或异常大值，会导致计数被恶意回退、写入负库存/负件数，或触发整型边界问题，属于可被输入驱动的数据完整性风险。</div>
-                <div class="finding-suggestion">💡 修复建议：在服务层和 DAO 调用前同时校验 `increment &gt; 0` 且设置合理上限；必要时在 SQL 中增加保护条件，例如 `... SET receptacle_qty = receptacle_qty + :increment WHERE batch_code = :batchCode AND :increment &gt; 0`，并对更新结果做断言。</div>
+                <div class="finding-desc">`incrementReceptacleQty` 直接将外部传入的 `increment` 累加到库存/计数字段，当前变更未在 DAO 层体现任何非负约束或上下界保护。若上游参数可被异常消息、重复消费补偿逻辑或恶意调用传入负数，将把 `receptacle_qty` 向下修改，造成计数被回退甚至变成负值，属于可被利用的数据完整性风险。</div>
+                <div class="finding-suggestion">💡 修复建议：对 `increment` 增加显式约束，至少拒绝负数；更稳妥的是在 SQL 中附加保护条件，例如仅允许 `:increment &gt; 0`，并在服务层对重复消费/补偿场景使用单独的受控减量接口而不是复用同一累加接口。示例：新增专用方法 `WHERE :increment &gt; 0`，或在调用前 `Assert.isTrue(increment &gt; 0, &quot;increment must be positive&quot;)`。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/dao/TmsUnloadContainerDao.java:24-29</code>
                 </div>
-                <div class="finding-desc">该原子去重逻辑依赖 MySQL 方言特有的 `INSERT IGNORE` 以及数据库侧唯一约束，但本次变更仅在注释中声明前提，代码层没有任何校验或失败保护。一旦生产库未同步建立 `(bol_no, facility_code, container_num)` 唯一约束，或后续切换数据库方言/测试环境不支持 `INSERT IGNORE`，该方法会静默退化为普通插入，导致重复卸货记录被接受并放大后续计数更新。</div>
-                <div class="finding-suggestion">💡 修复建议：将唯一约束作为显式数据库迁移脚本随版本一并发布，并在应用启动或集成测试中校验约束存在；同时避免仅依赖 `INSERT IGNORE` 的静默语义，可改为捕获唯一键冲突并记录审计日志，或使用与当前数据库方言明确绑定的 UPSERT 方案。</div>
+                <div class="finding-desc">该原子去重实现依赖 MySQL 方言特有的 `INSERT IGNORE`，但当前代码仅在注释中说明“前提是 DB 侧已经补上该唯一约束”，变更本身没有任何代码级校验或失败兜底。一旦生产库遗漏 `(bol_no, facility_code, container_num)` 唯一约束，`INSERT IGNORE` 会退化为普通插入，重复消息/并发消费下仍会重复落库并触发后续计数累加，造成幂等失效和业务数据污染。</div>
+                <div class="finding-suggestion">💡 修复建议：不要仅靠注释约束前置条件。应同时提供数据库迁移脚本显式创建唯一索引，并在启动检查或集成测试中校验该索引存在；若无法保证索引已部署，建议改为可观测的 upsert 方案并在返回值异常时告警，避免静默重复写入。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/entity/Shipment.java:149-150</code>
                 </div>
-                <div class="finding-desc">新增 `driver_phone` 字段将司机手机号作为明文持久化到 `Shipment` 实体，但当前变更未体现任何脱敏、加密或访问隔离措施。手机号属于个人敏感信息，若后续被通用查询接口、日志序列化或管理后台直接返回，将扩大敏感数据暴露面。</div>
-                <div class="finding-suggestion">💡 修复建议：对手机号字段采用最小化存储与访问控制：1）确认业务是否必须落库；2）如必须存储，优先使用字段级加密/脱敏方案（如 JPA AttributeConverter 加密）；3）对返回 DTO 默认脱敏，仅在受控场景解密；4）补充审计，限制仅特定角色可访问该字段。</div>
+                <div class="finding-desc">新增 `driver_phone` 字段将司机手机号作为明文持久化到 `Shipment` 实体，但当前变更未体现任何脱敏、加密或访问分级控制。手机号属于个人敏感信息，若后续被通用查询接口、日志序列化或备份导出直接带出，会扩大隐私泄露面。</div>
+                <div class="finding-suggestion">💡 修复建议：对手机号字段采用最小化存储与访问控制：1）如业务仅需联系能力，优先存储脱敏值；2）如必须存原值，落库前使用应用层加密/数据库透明加密；3）对返回该实体的接口增加 DTO 隔离，默认不回传 `driverPhone`；4）补充审计，限制仅特定角色可读取完整手机号。</div>
             </div>
             
         </div>
