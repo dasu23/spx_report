@@ -45,7 +45,7 @@
   <div class="header">
     <div>
       <h1>质量门禁报告</h1>
-      <div class="meta">pos-admin-api &nbsp;|&nbsp; 2026-07-17 12:42:12</div>
+      <div class="meta">pos-admin-api &nbsp;|&nbsp; 2026-07-17 13:22:39</div>
     </div>
     <div class="badge-row">
       <span class="mode-badge">警告模式</span>
@@ -96,24 +96,24 @@
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/dao/ReceivingBatchDao.java:91-92</code>
                 </div>
-                <div class="finding-desc">`incrementReceptacleQty` 直接对 `receptacle_qty` 做加法更新，但新增方法未对 `increment` 的取值做任何约束。若上游传入负数或异常大值，会把计数回退为负数或造成整数边界异常，属于可被错误消息/恶意输入触发的数据完整性与并发计数风险；在并发消费场景下，这类原子自增接口一旦缺少非负校验，错误会被快速放大。</div>
-                <div class="finding-suggestion">💡 修复建议：将参数类型改为 `long`/`BigInteger` 并在服务层与 SQL 层双重限制 `increment &gt;= 0`；同时增加 where 条件保护，例如：`UPDATE ... SET receptacle_qty = receptacle_qty + :increment WHERE batch_code = :batchCode AND :increment &gt;= 0`，并对更新结果为 0 的情况显式报错。</div>
+                <div class="finding-desc">`incrementReceptacleQty` 直接对 `receptacle_qty` 做加法更新，但未对 `increment` 的取值做任何约束。若上游传入负数或异常大值，该原子更新会把计数回退为负数或造成异常膨胀，属于可被错误消息/重放消息放大的状态篡改风险；由于这里是原地累加，问题一旦发生难以从 DAO 层阻断。</div>
+                <div class="finding-suggestion">💡 修复建议：在调用链入口和 DAO 更新前同时增加约束：仅允许 `increment &gt; 0`，并对单次增量设置业务上限；SQL 层可增加保护条件，例如 `UPDATE ... SET receptacle_qty = receptacle_qty + :increment WHERE batch_code = :batchCode AND :increment &gt; 0`，服务层对非法值直接拒绝并记录审计日志。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/dao/TmsUnloadContainerDao.java:24-29</code>
                 </div>
-                <div class="finding-desc">这里使用 `INSERT IGNORE` 吞掉唯一键冲突，把重复写入直接转成返回 0。该写法虽然避免异常，但也会把其他约束冲突/脏数据问题一并静默忽略，调用方若仅据返回值继续后续业务，可能把真实写库失败误判为“已幂等处理”，导致卸货容器记录与后续批次/计数状态不一致。</div>
-                <div class="finding-suggestion">💡 修复建议：避免使用过于宽泛的 `INSERT IGNORE`；改为仅针对目标唯一键冲突做显式处理，例如使用标准插入并捕获 `DuplicateKeyException`，其余 SQL 异常继续抛出回滚。若必须保留原生 SQL，至少在服务层区分“重复数据”与“其他失败”两类结果。</div>
+                <div class="finding-desc">这里使用 `INSERT IGNORE` 吞掉唯一键冲突，把重复写入静默转换为返回 0。该写法依赖数据库已存在 `(bol_no, facility_code, container_num)` 唯一约束，但本次变更仅在注释中声明前提，代码本身没有任何校验或失败兜底；一旦生产库遗漏该约束，语句会退化为普通插入，导致重复容器记录被写入，进而破坏后续卸货计数/幂等语义。</div>
+                <div class="finding-suggestion">💡 修复建议：不要仅靠注释约束前提。应在同次变更中补充数据库 migration 明确创建唯一索引，并在启动校验或集成测试中验证索引存在；若无法保证 DDL 同步，改为显式捕获唯一键异常并在缺少约束时快速失败，而不是 `INSERT IGNORE` 静默成功。</div>
             </div>
             <div class="finding-card finding-major">
                 <div class="finding-header">
                     <span class="finding-badge">主要</span>
                     <code class="finding-loc">pos-service/src/main/java/com/miq/posservice/entity/Shipment.java:149-150</code>
                 </div>
-                <div class="finding-desc">新增 `driver_phone` 字段用于持久化司机手机号，但当前实体层未体现任何脱敏、加密或访问约束标识。手机号属于个人敏感信息，若后续沿用通用实体序列化、审计日志或列表查询返回该实体，容易形成明文存储/明文外泄风险。</div>
-                <div class="finding-suggestion">💡 修复建议：对司机手机号按敏感数据处理：至少在落库前进行加密或脱敏存储，并确保对外 DTO 不直接暴露该字段；同时补充日志规范，禁止打印该字段明文。例如引入 AttributeConverter 对 `driverPhone` 做透明加解密，或改为仅存后四位+单独密文列。</div>
+                <div class="finding-desc">新增 `driver_phone` 字段将司机手机号作为明文持久化到 `Shipment` 实体，但当前变更中未体现任何脱敏、加密或访问分级控制。手机号属于个人敏感信息，一旦后续被通用查询、导出、日志或序列化链路直接带出，会扩大隐私泄露面。</div>
+                <div class="finding-suggestion">💡 修复建议：对手机号字段采用最小暴露原则：1）落库前使用字段级加密/脱敏方案；2）对外 DTO 默认不返回完整手机号，仅在确有业务必要且鉴权通过时返回脱敏值；3）补充审计，限制该字段在日志、导出、消息体中的传播。</div>
             </div>
             
         </div>
