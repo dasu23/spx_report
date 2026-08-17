@@ -1,0 +1,1239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>上线测试报告 · 26/08/17 - Beans 刷新优化</title>
+<meta property="og:title" content="上线测试报告 · 26/08/17 - Beans 刷新优化">
+<meta property="og:description" content="POS · 项目 · 2026-08-17">
+<meta property="og:type" content="website">
+<style>
+:root{
+  --ink:#0F172A; --muted:#64748B; --faint:#94A3B8; --border:#E2E8F0; --surface:#F8FAFC;
+  --accent:#4F46E5; --accent-soft:#EEF2FF;
+  --green:#16A34A; --green-soft:#F0FDF4;
+  --amber:#D97706; --amber-soft:#FFFBEB;
+  /* --warn 是 --amber 的别名:风险行(.rr-scope-gap)与盲区预警(.rr-blind-spot-list)
+     引用 var(--warn) 而定义缺失,真实报告里警示底色整段失效(2026-08-17 修复)。
+     值直接引用 amber,调色只改一处不会两处漂移 */
+  --warn:var(--amber); --warn-soft:var(--amber-soft);
+  --red:#DC2626; --red-soft:#FEF2F2;
+  --mono:ui-monospace,'SF Mono',Menlo,monospace;
+  --radius:14px; --shadow:0 1px 2px rgba(15,23,42,.04),0 8px 24px rgba(15,23,42,.05);
+}
+*,*::before,*::after{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:#fff;color:var(--ink);font-family:'Inter',-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei UI',sans-serif;font-size:15px;line-height:1.7;-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+code{background:var(--surface);border:1px solid var(--border);padding:1px 6px;border-radius:5px;font-size:12.5px;font-family:ui-monospace,'SF Mono',Menlo,monospace;color:#334155}
+
+.rr-shell{max-width:860px;margin:0 auto;padding:0 24px 80px}
+
+/* ── Topbar (jump nav) ── */
+.rr-topbar{position:sticky;top:0;z-index:50;background:rgba(255,255,255,.9);backdrop-filter:blur(10px);border-bottom:1px solid var(--border)}
+.rr-topbar-inner{max-width:860px;margin:0 auto;padding:0 24px;height:52px;display:flex;align-items:center;gap:18px;overflow-x:auto}
+.rr-topbar a{font-size:12.5px;font-weight:600;color:var(--muted);white-space:nowrap;padding:6px 2px;border-bottom:2px solid transparent;transition:all .15s}
+.rr-topbar a:hover{color:var(--accent);text-decoration:none}
+.rr-topbar a.rr-brand{color:var(--ink);font-weight:800;margin-right:4px}
+
+/* ── Header ── */
+.rr-header{padding:40px 0 24px}
+.rr-eyebrow{font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.rr-eyebrow::before{content:'';width:18px;height:2px;background:var(--accent);border-radius:2px;display:inline-block}
+h1{font-size:26px;font-weight:800;letter-spacing:-.01em;margin:0 0 18px;line-height:1.35}
+
+.rr-meta{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+@media(max-width:640px){.rr-meta{grid-template-columns:repeat(2,1fr)}}
+.rr-meta-cell{background:#fff;padding:14px 16px}
+.rr-meta-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);margin-bottom:4px}
+.rr-meta-value{font-size:14px;font-weight:600;color:var(--ink)}
+.rr-meta-link{margin-top:14px;font-size:12.5px;color:var(--muted);word-break:break-all}
+/* ── 上线判读(报告顶部决策视图,综合实测信号的测试充分性判读) ── */
+.rr-verdict{margin-top:24px;border-radius:var(--radius);padding:18px 22px;border:1.5px solid var(--border)}
+.rr-merge-alert{margin-top:24px;border-radius:var(--radius);padding:16px 20px;background:#FEF2F2;border:1.5px solid #FCA5A5}
+.rr-merge-head{font-size:15.5px;font-weight:800;color:#991B1B;margin-bottom:10px}
+.rr-merge-body{display:flex;flex-direction:column;gap:6px}
+.rr-merge-row{display:flex;flex-wrap:wrap;gap:8px;align-items:baseline;font-size:13px;padding:6px 8px;background:#fff;border-radius:6px}
+.rr-merge-kind{font-weight:700;color:#991B1B;background:#FEE2E2;padding:2px 8px;border-radius:10px;font-size:12px}
+.rr-merge-branch{font-family:var(--mono,monospace);font-weight:600;color:var(--ink);word-break:break-all}
+.rr-merge-repo{color:var(--muted);font-size:12px}
+.rr-merge-ahead{color:#B91C1C;font-weight:600;margin-left:auto;font-size:12px}
+.rr-merge-note{color:var(--muted);font-size:11.5px;margin:10px 0 0}
+.rr-merge-ok{margin-top:24px;border-radius:var(--radius);padding:10px 20px;background:var(--green-soft);border:1.5px solid #86EFAC;color:#166534;font-size:14px;font-weight:600}
+.rr-merge-skip{margin-top:24px;border-radius:var(--radius);padding:10px 20px;background:#F8FAFC;border:1px solid #CBD5E1;color:#475569;font-size:13px}
+.rr-verdict-warn{background:var(--amber-soft);border-color:#FCD34D}
+.rr-verdict-ok{background:var(--green-soft);border-color:#86EFAC}
+.rr-verdict-headline{display:flex;align-items:center;gap:10px;font-size:16px;font-weight:700;color:var(--ink)}
+.rr-verdict-icon{font-size:18px}
+.rr-verdict-warn .rr-verdict-headline{color:#92400E}
+.rr-verdict-ok .rr-verdict-headline{color:#166534}
+.rr-verdict-gaps{list-style:none;padding:0;margin:12px 0 0;display:flex;flex-direction:column;gap:6px}
+.rr-verdict-gaps li{position:relative;padding-left:18px;font-size:13.5px;color:var(--ink);line-height:1.6}
+.rr-verdict-gaps li::before{content:'•';position:absolute;left:0;color:var(--amber)}
+.rr-verdict-gap-text{display:block;color:var(--ink)}
+.rr-verdict-advice{display:block;font-size:12px;color:var(--muted);margin-top:2px}
+
+/* ── Section ── */
+.rr-section{margin-top:44px;scroll-margin-top:70px}
+.rr-section-head{display:flex;align-items:center;gap:12px;margin-bottom:16px}
+.rr-num{width:26px;height:26px;border-radius:50%;background:var(--ink);color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.rr-section-title{font-size:16px;font-weight:700;color:var(--ink)}
+.rr-card{background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:22px 24px;box-shadow:var(--shadow)}
+
+/* ── Requirement list ── */
+.rr-requirement-list{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:2px}
+.rr-requirement-list li{padding:11px 4px;border-bottom:1px solid var(--surface);font-size:14px}
+.rr-requirement-list li:last-child{border-bottom:none}
+.rr-requirement-list a{color:var(--ink);font-weight:600}
+.rr-requirement-list a:hover{color:var(--accent)}
+/* 读取失败降级行没有链接,用弱化色平文本呈现,跟正常需求行区分 */
+.rr-requirement-nolink{color:var(--muted);font-weight:600}
+.rr-requirement-badges{margin-left:8px;display:inline-flex;gap:5px;vertical-align:middle}
+
+.rr-empty{color:var(--faint);font-style:italic;margin:0}
+.rr-summary{color:var(--muted);margin:0 0 14px;font-size:14px}
+
+/* ── Table ── */
+.rr-table-scroll{overflow-x:auto;margin:0 -2px}
+.rr-table{border-collapse:collapse;width:100%;min-width:520px;font-size:13.5px}
+.rr-table th{background:var(--surface);color:var(--muted);font-weight:700;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;text-align:left;padding:10px 14px;border-bottom:1px solid var(--border)}
+.rr-table td{padding:12px 14px;border-bottom:1px solid var(--surface);vertical-align:top}
+.rr-table tr:last-child td{border-bottom:none}
+.rr-table tr:hover td{background:var(--surface)}
+.rr-table tr.rr-scope-gap td{background:var(--warn-soft);color:var(--warn)}
+.rr-last-minute-list{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:8px}
+/* ── 未修复关键 bug 告警块(第3章决策位,测试经理一眼看到还有几条关键的没修) ── */
+.rr-bug-unfixed{color:var(--red);font-weight:700}
+.rr-bug-alert{background:var(--red-soft);border:1px solid #FCA5A5;border-radius:10px;padding:14px 16px;margin:14px 0}
+.rr-bug-alert-title{font-size:14px;font-weight:700;color:var(--red);margin-bottom:8px}
+.rr-bug-alert-list{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:6px}
+.rr-bug-alert-list li{font-size:13px;color:var(--ink);line-height:1.6}
+.rr-bug-alert-list li a{font-weight:600}
+/* AI 对未修复bug的独立风险判断(仅参考,不是结论) */
+.rr-bug-ai-risk{margin-top:4px;font-size:12px;color:var(--muted)}
+.rr-last-minute-list li{font-size:13px;color:var(--muted);padding:8px 10px;border-radius:8px;background:var(--surface)}
+.rr-last-minute-list li.rr-risk-high{background:var(--red-soft);color:var(--red);font-weight:600}
+.rr-blind-spot-list{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:8px}
+.rr-blind-spot-list li{font-size:13px;color:var(--warn);padding:8px 10px;border-radius:8px;background:var(--warn-soft)}
+
+.rr-badge{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;padding:3px 10px;border-radius:20px;white-space:nowrap}
+.rr-badge::before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor}
+.rr-badge-green{background:var(--green-soft);color:var(--green)}
+.rr-badge-amber{background:var(--amber-soft);color:var(--amber)}
+.rr-badge-red{background:var(--red-soft);color:var(--red)}
+.rr-badge-gray{background:var(--surface);color:var(--muted)}
+.rr-badge-accent{background:var(--accent-soft);color:var(--accent)}
+
+.rr-requirement-remark{margin:4px 0 0;font-size:12px;color:var(--muted)}
+
+/* ── Judgement ── */
+.rr-judgement .rr-card{background:var(--surface)}
+.rr-judgement-recap{font-size:13px;color:var(--muted);background:#fff;border:1px dashed var(--border);border-radius:8px;padding:10px 12px;margin:0 0 8px;line-height:1.6}
+.rr-judgement-recap-list{list-style:none;margin:0 0 14px;padding:0;display:flex;flex-direction:column;gap:4px}
+.rr-judgement-recap-list li{position:relative;padding-left:16px;font-size:13px;color:var(--ink);line-height:1.6;background:#fff;border:1px dashed var(--border);border-radius:8px;padding:8px 10px 8px 22px}
+.rr-judgement-recap-list li::before{content:'▸';position:absolute;left:8px;color:var(--accent)}
+.rr-field{margin-bottom:16px}
+.rr-field:last-child{margin-bottom:0}
+.rr-field label{display:block;font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:6px}
+.rr-judgement select,.rr-judgement textarea{width:100%;border:1.5px solid var(--border);border-radius:9px;padding:9px 12px;font-size:14px;font-family:inherit;background:#fff;color:var(--ink);outline:none;transition:all .15s;resize:vertical}
+.rr-judgement select:focus,.rr-judgement textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+
+/* ── Footer ── */
+.rr-footer{margin-top:56px;padding-top:20px;border-top:1px solid var(--border);color:var(--faint);font-size:12px}
+
+/* ── Testcase coverage(用例数是主信息,命中细节是小字) ── */
+.rr-testcase-count{font-size:28px;font-weight:800;color:var(--ink);margin:0 0 6px;line-height:1.2}
+.rr-testcase-unit{font-size:14px;font-weight:600;color:var(--muted);margin-left:8px}
+.rr-testcase-detail{font-size:12.5px;color:var(--muted);margin:0}
+.rr-subhead{font-size:14px;font-weight:700;color:var(--ink);margin:0 0 12px}
+/* 代码改动画像 AI 解读(规模/区域/风险,决策语言) */
+.rr-codechange-ai{list-style:none;padding:0;margin:0 0 10px;display:flex;flex-direction:column;gap:6px}
+.rr-codechange-ai li{position:relative;padding-left:16px;font-size:13.5px;color:var(--ink);line-height:1.6}
+.rr-codechange-ai li::before{content:'▸';position:absolute;left:0;color:var(--accent)}
+.rr-card+.rr-card{margin-top:16px}
+.rr-testcase-devnote-title{font-size:12.5px;font-weight:700;color:var(--amber);margin:10px 0 4px;padding-top:10px;border-top:1px solid var(--border)}
+.rr-testcase-devnote{font-size:12.5px;color:var(--amber);margin:0}
+.rr-testcase-devnote a{color:var(--amber);text-decoration:underline}
+.rr-testcase-atrisk-title{font-size:12.5px;font-weight:700;color:var(--red);margin:10px 0 4px;padding-top:10px;border-top:1px solid var(--border)}
+.rr-testcase-atrisk{font-size:12.5px;color:var(--red);margin:0}
+.rr-testcase-atrisk a{color:var(--red);text-decoration:underline}
+
+/* ── Impact summary card(任务 127,主视觉) + 完整清单附录 ── */
+.rr-impact-summary-card{background:var(--accent-soft);border-color:transparent}
+/* 影响面定性说明:推测参考非决策依据,提醒读者别拿推测当结论 */
+.rr-impact-qualifier{font-size:12.5px;color:var(--muted);background:var(--surface);border-left:3px solid var(--amber);padding:10px 14px;border-radius:0 8px 8px 0;margin:0 0 14px;line-height:1.7}
+.rr-impact-qualifier b{color:var(--amber);font-weight:600}
+.rr-impact-summary-headline{font-size:15px;font-weight:600;color:var(--ink);margin:0 0 10px}
+.rr-impact-summary-bullets{list-style:none;padding:0;margin:0 0 10px;display:flex;flex-direction:column;gap:8px}
+.rr-impact-summary-bullets li{position:relative;padding-left:18px;font-size:14px;line-height:1.6;color:var(--ink)}
+.rr-impact-summary-bullets li::before{content:'•';position:absolute;left:0;color:var(--accent)}
+/* 影响面线索分行:主行(【标签】业务点)突出,子行(影响/建议/依据)弱化 */
+.rr-impact-bullet-line,.rr-impact-bullet-main,.rr-impact-bullet-sub{display:block}
+.rr-impact-bullet-main{font-weight:600;color:var(--ink)}
+.rr-impact-bullet-sub{font-size:12.5px;color:var(--muted);margin-top:2px}
+.rr-impact-summary-overflow{font-size:13px;color:var(--muted);margin:0 0 10px}
+.rr-impact-summary-disclaimer{font-size:12px;color:var(--muted);margin:0;padding-top:10px;border-top:1px solid rgba(79,70,229,.15)}
+
+.rr-impact-appendix{margin-top:14px}
+.rr-impact-appendix>summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--muted);padding:8px 2px;list-style:none;user-select:none}
+.rr-impact-appendix>summary::-webkit-details-marker{display:none}
+.rr-impact-appendix>summary::before{content:'▸ ';color:var(--faint)}
+.rr-impact-appendix[open]>summary::before{content:'▾ '}
+.rr-impact-appendix>summary:hover{color:var(--accent)}
+.rr-impact-appendix .rr-card{margin-top:10px}
+
+/* ── Impact scan (rendered) ── */
+.rr-impact-note{background:var(--accent-soft);color:#4338CA;border-radius:9px;padding:10px 14px;font-size:13px;line-height:1.6;margin-bottom:18px}
+.rr-impact-note code{background:rgba(255,255,255,.6);border-color:transparent}
+.rr-impact-meta{color:var(--faint);font-size:12px;margin-bottom:20px}
+
+.rr-impact-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:24px}
+@media(max-width:640px){.rr-impact-summary{grid-template-columns:repeat(2,1fr)}}
+.rr-impact-stat{background:#fff;padding:14px 16px;text-align:center}
+.rr-impact-stat-num{font-size:20px;font-weight:800;color:var(--ink)}
+.rr-impact-stat-gap{font-size:11px;color:var(--amber);font-weight:700;margin-top:2px}
+.rr-impact-stat-label{font-size:11.5px;color:var(--muted);margin-top:4px}
+
+.rr-impact-group{border:1px solid var(--border);border-radius:12px;margin-bottom:14px;overflow:hidden}
+.rr-impact-group-head{display:flex;align-items:center;gap:10px;padding:14px 18px;cursor:pointer;background:var(--surface);user-select:none}
+.rr-impact-group-head:hover{background:#F1F5F9}
+.rr-impact-group-title{font-size:14px;font-weight:700;color:var(--ink);flex:1}
+.rr-impact-group-source{font-size:11.5px;color:var(--faint)}
+.rr-impact-group-toggle{font-size:12px;color:var(--faint);transition:transform .2s}
+.rr-impact-group.collapsed .rr-impact-group-toggle{transform:rotate(-90deg)}
+.rr-impact-group.collapsed .rr-impact-group-body{display:none}
+.rr-impact-group-body{padding:6px 18px 14px}
+
+.rr-impact-item{display:flex;align-items:flex-start;gap:10px;padding:9px 2px;border-bottom:1px solid var(--surface);font-size:13.5px}
+.rr-impact-item:last-child{border-bottom:none}
+.rr-impact-item input[type=checkbox]{margin-top:3px;width:15px;height:15px;accent-color:var(--accent);cursor:pointer;flex-shrink:0}
+.rr-impact-item.checked .rr-impact-item-text{color:var(--faint);text-decoration:line-through}
+.rr-impact-item-text{flex:1;line-height:1.6}
+.rr-impact-item-tag{display:inline-block;margin-left:6px;font-size:10.5px;font-weight:700;color:var(--faint);background:var(--surface);border:1px solid var(--border);padding:1px 7px;border-radius:8px;white-space:nowrap}
+.rr-impact-item-conf-high .rr-impact-item-tag{color:var(--green);background:var(--green-soft);border-color:transparent}
+.rr-impact-item-conf-low .rr-impact-item-tag{color:var(--amber);background:var(--amber-soft);border-color:transparent}
+
+.rr-impact-toolbar{display:flex;justify-content:flex-end;margin-bottom:14px}
+.rr-impact-toggle-btn{font-size:12px;font-weight:600;color:var(--muted);background:#fff;border:1.5px solid var(--border);border-radius:20px;padding:5px 14px;cursor:pointer;transition:all .15s}
+.rr-impact-toggle-btn:hover{border-color:var(--accent);color:var(--accent)}
+
+/* ── 关键验证 checklist(第5章,灵感来自邮编拓展 Expansion Runbook) ── */
+.rr-verify-list{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:8px}
+.rr-verify-item{display:flex;align-items:flex-start;gap:10px;font-size:13.5px;color:var(--ink);padding:9px 10px;border-radius:8px;background:var(--surface)}
+.rr-verify-item input[type=checkbox]{margin-top:3px;width:15px;height:15px;accent-color:var(--accent);cursor:pointer;flex-shrink:0}
+/* 纯 CSS 勾选反馈:勾上即划掉,不依赖 JS(报告是静态 HTML,无脚本也能用) */
+.rr-verify-item input[type=checkbox]:checked ~ .rr-verify-text{color:var(--faint);text-decoration:line-through}
+.rr-verify-gap{background:var(--amber-soft)}
+.rr-verify-gap .rr-verify-text{color:var(--amber);font-weight:600}
+/* checklist 截断备注(超过上限的待验项指路第1/3章),弱化提示不是勾选项 */
+.rr-verify-overflow{font-size:12.5px;color:var(--muted);font-style:italic;margin:10px 0 0}
+/* 阶段分布口径免责说明:弱化成脚注,不能跟结论一样醒目 */
+.rr-bug-dist-note{font-size:11.5px;color:var(--faint);margin:8px 0 0}
+
+@media print{
+  .rr-topbar{position:static}
+  .rr-card{box-shadow:none}
+  .rr-impact-group.collapsed .rr-impact-group-body{display:block}
+}
+
+/* ── 自动化回归证据:分行数据卡片(替代一段灰字) ── */
+.rr-auto-rows{display:flex;flex-direction:column;gap:12px}
+.rr-auto-row{border:1px solid var(--border);border-radius:10px;padding:14px 16px;background:var(--surface)}
+.rr-auto-row.rr-auto-na{background:#fff;border-style:dashed;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.rr-auto-sys{font-weight:800;color:var(--ink);font-size:14px}
+.rr-auto-na .rr-auto-sys{font-size:13px}
+.rr-auto-na-text{font-size:12.5px;color:var(--faint)}
+.rr-auto-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.rr-auto-env{font-size:12px;color:var(--muted)}
+.rr-auto-stale{font-size:11px;font-weight:700;color:var(--muted);background:#fff;border:1px solid var(--border);padding:2px 8px;border-radius:20px}
+.rr-auto-stale-late{color:var(--red);background:var(--red-soft);border-color:#FCA5A5}
+.rr-auto-stats{display:flex;flex-wrap:wrap;gap:14px;margin:4px 0 6px}
+.rr-auto-stat{font-size:13px;color:var(--muted)}
+.rr-auto-stat b{font-size:18px;font-weight:800;color:var(--ink);margin-right:3px}
+.rr-auto-stat.rr-auto-num-ok b{color:var(--green)}
+.rr-auto-stat.rr-auto-num-bad b{color:var(--red)}
+.rr-auto-stat.rr-auto-num-warn b{color:var(--amber)}
+.rr-auto-risk{font-size:12.5px;color:var(--red);font-weight:600;margin:4px 0 6px;background:var(--red-soft);border-radius:8px;padding:6px 10px}
+.rr-auto-note{font-size:12px;color:var(--faint);margin:0}
+
+/* ── MR CodeReview 严重度徽标(critical 红 / major 橙 / minor·info 灰) ── */
+.rr-sev-row{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 14px}
+.rr-sev-badge{display:inline-flex;align-items:center;gap:4px;font-size:12.5px;font-weight:700;padding:3px 10px;border-radius:20px}
+.rr-sev-critical{background:var(--red-soft);color:var(--red)}
+.rr-sev-major{background:var(--amber-soft);color:var(--amber)}
+.rr-sev-minor,.rr-sev-info{background:var(--surface);color:var(--muted)}
+.rr-last-minute-list .rr-sev-badge{font-size:11.5px;padding:2px 8px}
+
+/* ── 顶部判读:每条缺口挂状态徽标(红=已确认/强信号,橙=待确认) ── */
+.rr-verdict-level{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;margin-right:8px;vertical-align:1px}
+.rr-verdict-level-red{background:var(--red-soft);color:var(--red)}
+.rr-verdict-level-amber{background:var(--amber-soft);color:var(--amber)}
+
+/* ── 用例覆盖:命中比徽标 + 需求→用例关联明细表 ── */
+.rr-tc-headline{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+.rr-ratio{font-size:13px;font-weight:700;padding:3px 10px;border-radius:20px}
+.rr-ratio-ok{background:var(--green-soft);color:var(--green)}
+.rr-ratio-warn{background:var(--amber-soft);color:var(--amber)}
+.rr-ratio-bad{background:var(--red-soft);color:var(--red)}
+.rr-tc-links{margin:12px 0 4px;overflow-x:auto}
+.rr-tc-table{border-collapse:collapse;width:100%;min-width:480px;font-size:12.5px}
+.rr-tc-table th{background:var(--surface);color:var(--muted);font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.04em;text-align:left;padding:8px 10px;border-bottom:1px solid var(--border)}
+.rr-tc-table td{padding:9px 10px;border-bottom:1px solid var(--surface);vertical-align:top}
+.rr-tc-table tr:last-child td{border-bottom:none}
+/* 跨发布趋势表当前行高亮(amber-soft 软底,跟判读框同色系,示意"本行=本次发布") */
+.rr-trend-current td{background:var(--amber-soft);font-weight:600}
+.rr-tc-pi{font-weight:700;color:var(--ink);white-space:nowrap}
+.rr-tc-tag{display:inline-block;margin-left:6px;font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:8px}
+.rr-tc-tag-ok{background:var(--green-soft);color:var(--green)}
+.rr-tc-tag-miss{background:var(--red-soft);color:var(--red)}
+.rr-tc-files{color:var(--muted);word-break:break-all}
+.rr-tc-ids{color:var(--ink);word-break:break-all}
+.rr-tc-count{display:block;font-size:11px;color:var(--faint);margin-top:2px}
+.rr-tc-none{color:var(--amber);font-style:italic}
+.rr-tc-miss{color:var(--red)}
+</style>
+</head>
+<body>
+
+<div class="rr-topbar">
+  <div class="rr-topbar-inner">
+    <a class="rr-brand" href="#top">📋 上线测试报告</a>
+    <a href="#sec-1">改动范围</a>
+    <a href="#sec-2">用例覆盖</a>
+    <a href="#sec-3">未闭环问题</a>
+    <a href="#sec-4">影响面参考</a>
+    <a href="#sec-5">综合判断</a>
+  </div>
+</div>
+
+<div class="rr-shell" id="top">
+
+<div class="rr-header">
+  <div class="rr-eyebrow">Release Report</div>
+  <h1>26/08/17 - Beans 刷新优化</h1>
+  <div class="rr-meta">
+    <div class="rr-meta-cell"><div class="rr-meta-label">项目组</div><div class="rr-meta-value">POS</div></div>
+    <div class="rr-meta-cell"><div class="rr-meta-label">类型</div><div class="rr-meta-value">项目</div></div>
+    <div class="rr-meta-cell"><div class="rr-meta-label">发布时间</div><div class="rr-meta-value">2026-08-17</div></div>
+    <div class="rr-meta-cell"><div class="rr-meta-label">是否上线</div><div class="rr-meta-value">未上线</div></div>
+  </div>
+  <div class="rr-meta-link">发布页：<a href="https://app.notion.com/p/26-08-17-Beans-3bcaacac7fec80488b42ec9ee2572971" target="_blank">在 Notion 中打开原文</a></div>
+</div>
+
+<div class="rr-merge-alert"><div class="rr-merge-head">⚠ 分支漏合校验:发现 5 条疑似未合入 release 的开发分支,请发布前逐条核对</div><div class="rr-merge-body"><div class="rr-merge-row"><span class="rr-merge-kind">已登记未合入</span><span class="rr-merge-branch">【pos-web】dev_SPX-PI-7158_profile-beans-tips</span><span class="rr-merge-repo">frontend/pos-web → release/20260817</span><span class="rr-merge-ahead">领先 10 个提交未合入</span></div><div class="rr-merge-row"><span class="rr-merge-kind">未登记·疑似遗漏</span><span class="rr-merge-branch">dm/conflict/260810</span><span class="rr-merge-repo">backend/logistics-backend → release/20260817</span><span class="rr-merge-ahead">领先 830 个提交未合入</span></div><div class="rr-merge-row"><span class="rr-merge-kind">未登记·疑似遗漏</span><span class="rr-merge-branch">tmp/merge-7863-into-dev-mix</span><span class="rr-merge-repo">backend/logistics-backend → release/20260817</span><span class="rr-merge-ahead">领先 767 个提交未合入</span></div><div class="rr-merge-row"><span class="rr-merge-kind">未登记·疑似遗漏</span><span class="rr-merge-branch">feature/xiulei/SPX-PI-7863-dms-driver-name-operator-truncation</span><span class="rr-merge-repo">backend/logistics-backend → release/20260817</span><span class="rr-merge-ahead">领先 1 个提交未合入</span></div><div class="rr-merge-row"><span class="rr-merge-kind">未登记·疑似遗漏</span><span class="rr-merge-branch">tmp/merge-7726-into-dev-mix</span><span class="rr-merge-repo">backend/logistics-backend → release/20260817</span><span class="rr-merge-ahead">领先 688 个提交未合入</span></div></div><p class="rr-merge-note">说明:本校验对「服务版本」表的开发分支逐条用 GitLab compare 检查是否已合入对应 release 分支,并从需求 MR 反查未登记的分支;分支在该仓不存在或 compare 不可达时会跳过(不告警也不代表已合入),最终以人工核对为准。</p></div>
+
+<div class="rr-verdict rr-verdict-warn"><div class="rr-verdict-headline"><span class="rr-verdict-icon">⚠</span>测试充分性:存在 5 项待确认缺口</div><ul class="rr-verdict-gaps"><li><span class='rr-verdict-level rr-verdict-level-red'>🔴 已确认/强信号</span><span class='rr-verdict-gap-text'>1 个关键/阻塞 bug 未修复</span><span class='rr-verdict-advice'>建议：上线前确认已修复,或评估带病上线的影响</span></li><li><span class='rr-verdict-level rr-verdict-level-red'>🔴 已确认/强信号</span><span class='rr-verdict-gap-text'>MR CodeReview 在 4 个 MR 里发现 20 个 critical、41 个 major 问题——一次性扫描快照,不确定后续是否已处理</span><span class='rr-verdict-advice'>建议：核对详细报告确认这些发现是否已处理,过期链接联系开发要 history/*.json 存档</span></li><li><span class='rr-verdict-level rr-verdict-level-red'>🔴 已确认/强信号</span><span class='rr-verdict-gap-text'>1 个改动系统不在申报的项目组范围内——影响面扫描没扫到它们,跨团队改动未被测试覆盖确认</span><span class='rr-verdict-advice'>建议：逐个确认这些系统是否已同步给对应项目组并补测试覆盖(清单见第1章「测试盲区预警」)</span></li><li><span class='rr-verdict-level rr-verdict-level-amber'>🟠 待确认</span><span class='rr-verdict-gap-text'>3 个需求既未标注开发自测、也未匹配到 QA 用例</span><span class='rr-verdict-advice'>建议：上线前逐个确认这些需求是否已测、或补测</span></li><li><span class='rr-verdict-level rr-verdict-level-amber'>🟠 待确认</span><span class='rr-verdict-gap-text'>自动化回归有未通过项——需分辨 flaky 还是本次改动引入</span><span class='rr-verdict-advice'>建议：排查未通过项:已知 flaky 可忽略,本次改动引入的需修复</span></li></ul></div>
+
+<div class="rr-section" id="sec-1">
+  <div class="rr-section-head"><span class="rr-num">1</span><span class="rr-section-title">改动范围与证据对齐</span></div>
+  <div class="rr-card">
+    <h4 class="rr-subhead">涉及需求</h4>
+    <p class="rr-summary">需求侧画像：共 4 个需求，优先级 Critical 2/Low 1/Med 1，需求方风险自评 Green 4。</p><ul class="rr-requirement-list"><li><a href="https://app.notion.com/p/Beans-FixRoute-profileId-374aacac7fec80f9a91fd5e873b0fba2" target="_blank">SPX-PI-7158 Beans FixRoute 更新 profileId后刷新优化</a><span class="rr-requirement-badges"><span class="rr-badge rr-badge-green">Green</span><span class="rr-badge rr-badge-red">Critical</span></span></li><li><a href="https://app.notion.com/p/POS-fastjson-1-2-45-1-2-83-3a5aacac7fec80f6af84ca99f6e69118" target="_blank">SPX-PI-7726 POS→fastjson版本1.2.45升级到1.2.83</a><span class="rr-requirement-badges"><span class="rr-badge rr-badge-green">Green</span><span class="rr-badge rr-badge-gray">Med</span></span></li><li><a href="https://app.notion.com/p/Cainiao-Pickup-51005-Events-Adjustment-3baaacac7fec8003a271d2c32ce17ce3" target="_blank">SPX-PI-8064 Cainiao Pickup 51005 Events Adjustment</a><span class="rr-requirement-badges"><span class="rr-badge rr-badge-green">Green</span><span class="rr-badge rr-badge-red">Critical</span></span></li><li><a href="https://app.notion.com/p/return-314aacac7fec801280d3d180025a8d59" target="_blank">SPX-PI-5982 闭环轨迹return扫描需要给出提示</a><span class="rr-requirement-badges"><span class="rr-badge rr-badge-green">Green</span><span class="rr-badge rr-badge-gray">Low</span></span></li></ul>
+  </div>
+  <div class="rr-card">
+    <h4 class="rr-subhead">代码改动画像</h4>
+    <ul class="rr-codechange-ai"><li>规模：大，但高度聚焦——绝大多数改动集中在 pos 系统的依赖治理（fastjson 版本统一升级）上，属于“看起来量大、实际单一主题”的发布。</li><li>核心区域：三类内容——快递依赖库的统一升级（覆盖 5 个 pos 应用）；路由/邮编分拣规则刷新与未覆盖邮编告警；物流重贴标场景的包裹状态同步与首次扫描推送（涉及菜鸟链路）。</li><li>主要风险：fastjson 是大版本切换（1.x → 2.x）且限定 5 个应用内生效，需确认其他未升级应用与其交互时的数据序列化兼容性；邮编-分拣映射是跨系统的同步数据链路，刷新时序和告警触发是否会造成漏分拣需重点验证。</li></ul><p class="rr-testcase-detail">2 个仓库(logistics-backend、pus)·430 文件·净增 10723 行(+12475/-1752)</p><p class="rr-testcase-devnote">⚠️ 另有 8 个 MR 搜到了需求编号但不确定关系(比如仓库不在已知系统列表里),建议人工核对:</p><ul class="rr-codechange-ai"><li><a href="https://gitlab.speedx.io/backend/logistics-backend/-/merge_requests/5213" target="_blank">feat(pos-api): sync zip-sort-code mapping on profile refresh and alert uncovered zips</a></li><li><a href="https://gitlab.speedx.io/frontend/pos-web/-/merge_requests/2056" target="_blank">feat(route): show update profile result message and zip codes</a></li><li><a href="https://gitlab.speedx.io/backend/logistics-backend/-/merge_requests/5205" target="_blank">feat(pos-api): sync zip-sort-code mapping on profile refresh and alert uncovered zips</a></li><li><a href="https://gitlab.speedx.io/frontend/pos-web/-/merge_requests/2047" target="_blank">feat(route): add no-polygon tip above update profile zip codes</a></li><li><a href="https://gitlab.speedx.io/frontend/pos-web/-/merge_requests/2045" target="_blank">feat(route): show update profile result message and zip codes</a></li><li><a href="https://gitlab.speedx.io/tester/ai-test/-/merge_requests/33" target="_blank">docs(pos): sync Beans FixRoute requirement to v9 and cases to v12</a></li><li><a href="https://gitlab.speedx.io/backend/logistics-backend/-/merge_requests/5102" target="_blank">fix(pos): scope beans route refresh switch by facility and DSP code</a></li><li><a href="https://gitlab.speedx.io/backend/logistics-backend/-/merge_requests/5020" target="_blank">chore(deps): scope fastjson 2.0.47 upgrade to the 5 pos-* apps</a></li></ul>
+  </div>
+  <div class="rr-card">
+    <h4 class="rr-subhead">测试范围 vs 改动范围对齐</h4>
+    <div class="rr-table-scroll"><table class="rr-table"><thead><tr><th>改动系统</th><th>改动文件数</th><th>手工用例数</th><th>自动化覆盖</th><th>备注</th></tr></thead><tbody><tr class=""><td>pos</td><td>320</td><td>98</td><td>有</td><td></td></tr><tr class=""><td>pus</td><td>100</td><td>4</td><td>无</td><td></td></tr><tr class="rr-scope-gap"><td>未知</td><td>10</td><td>—</td><td>—</td><td>diff 未能归属到具体系统(比如文档/配置文件),无法对齐</td></tr></tbody></table></div>
+  </div>
+  <div class="rr-card"><p class="rr-testcase-atrisk-title">测试盲区预警(模块级)</p><ul class="rr-blind-spot-list"><li>pus:改动涉及的系统不在申报的项目组(POS)范围内,影响面扫描没扫到它</li></ul></div>
+  <div class="rr-card">
+    <h4 class="rr-subhead">MR CodeReview 覆盖</h4>
+    <p class="rr-summary">本次发布涉及 20 个 MR,其中 14 个跑过 AI CodeReview,共发现:</p><p class="rr-sev-row"><span class="rr-sev-badge rr-sev-critical">20 critical</span><span class="rr-sev-badge rr-sev-major">41 major</span><span class="rr-sev-badge rr-sev-minor">1 minor</span><span class="rr-sev-badge rr-sev-info">1 info</span></p><p class="rr-testcase-atrisk-title">有 critical/major 发现的 MR</p><ul class="rr-last-minute-list"><li><a href="https://gitlab.speedx.io/backend/logistics-backend/-/merge_requests/5046" target="_blank">fix(pos) Fix container scan log</a> <span class="rr-sev-badge rr-sev-critical">18 critical</span><span class="rr-sev-badge rr-sev-major">14 major</span> · <a href="https://jenkins.speedx.io/job/TEST_MR-review-pos/169/AI_20Code_20Review/" target="_blank">详细报告</a></li><li><a href="https://gitlab.speedx.io/backend/logistics-backend/-/merge_requests/5000" target="_blank">feat(pos-api): sync zip-sort-code mapping on profile refresh and alert uncovered zips</a> <span class="rr-sev-badge rr-sev-critical">0 critical</span><span class="rr-sev-badge rr-sev-major">19 major</span> · <a href="https://jenkins.speedx.io/job/TEST_MR-review-pos/125/AI_20Code_20Review/" target="_blank">详细报告</a></li><li><a href="https://gitlab.speedx.io/backend/logistics-backend/-/merge_requests/4936" target="_blank">chore(deps): scope fastjson 2.0.47 upgrade to the 5 pos-* apps</a> <span class="rr-sev-badge rr-sev-critical">0 critical</span><span class="rr-sev-badge rr-sev-major">5 major</span> · <a href="https://jenkins.speedx.io/job/TEST_MR-review-pos/79/AI_20Code_20Review/" target="_blank">详细报告</a></li><li><a href="https://gitlab.speedx.io/backend/pus/-/merge_requests/443" target="_blank">feat(SPX-PI-8064): implement parcel state inject handler for Cainiao relabel fallback</a> <span class="rr-sev-badge rr-sev-critical">2 critical</span><span class="rr-sev-badge rr-sev-major">3 major</span> · <a href="https://jenkins.speedx.io/job/TEST_MR-review-pus/142/AI_20Code_20Review/" target="_blank">详细报告</a></li></ul><p class="rr-impact-meta">注:这是 MR 合并前的一次性代码扫描快照,不跟踪后续是否已修复——跟「未闭环问题清单」的 bug 状态机是两回事,不能直接当「未修复」看待,建议人工核对详细报告确认处理情况。</p>
+  </div>
+  <div class="rr-card">
+    <h4 class="rr-subhead">自动化回归证据</h4>
+    <div class="rr-auto-rows"><div class="rr-auto-row"><div class="rr-auto-head"><span class="rr-auto-sys">POS</span><span class="rr-auto-env">UAT · 2026-08-17</span><span class="rr-auto-stale">发布当天/之后跑的(最新)</span></div><div class="rr-auto-stats"><span class="rr-auto-stat"><b>283</b> 总</span><span class="rr-auto-stat rr-auto-num-ok"><b>275</b> 通过</span><span class="rr-auto-stat rr-auto-num-bad"><b>2</b> 失败</span><span class="rr-auto-stat rr-auto-num-bad"><b>4</b> 错误</span><span class="rr-auto-stat rr-auto-num-warn"><b>2</b> 跳过</span></div><p class="rr-auto-risk">6 条未通过(失败 2+错误 4),需分辨是已知 flaky 还是本次改动引入。</p><p class="rr-auto-note">系统级最新回归,非本次需求专属,不能作为本次需求已测试的直接证据。</p></div><div class="rr-auto-row rr-auto-na"><span class="rr-auto-sys">PUS</span><span class="rr-auto-na-text">自动化回归数据暂不可达,建议人工核对</span></div></div>
+  </div>
+</div>
+
+<div class="rr-section" id="sec-2">
+  <div class="rr-section-head"><span class="rr-num">2</span><span class="rr-section-title">需求用例覆盖</span></div>
+  <div class="rr-card"><div class="rr-tc-headline"><p class="rr-testcase-count">56<span class="rr-testcase-unit">条用例</span></p><span class="rr-ratio rr-ratio-warn">需求覆盖 1/4</span></div><p class="rr-testcase-detail">来自 1 份用例文档,命中 1/4 个需求编号;另有 3 个未命中,具体编号见下方「建议重点核实」(仅覆盖数,非执行通过率)</p><p class="rr-testcase-detail">其中 <b>3</b> 个按需求标题疑似已覆盖用例(文件名/标题关键词命中,会误报,需核实——见下表「疑似」行)。</p><div class="rr-tc-links"><table class="rr-tc-table"><thead><tr><th>需求</th><th>用例文件</th></tr></thead><tbody><tr><td class='rr-tc-pi'>SPX-PI-7158<span class="rr-tc-tag rr-tc-tag-ok">已关联</span></td><td class='rr-tc-files'>POS/迭代/2026SP13/Beans-FixRoute-ProfileId-Update-Refresh-Optimization.md<span class="rr-tc-count">共 56 条</span></td></tr><tr><td class='rr-tc-pi'>SPX-PI-7726<span class='rr-tc-tag rr-tc-tag-miss'>未匹配用例</span></td><td class="rr-tc-miss">可能是主线回归用例未标注编号,或该需求确实还没补用例<span class="rr-tc-none">按标题疑似已有用例(需核实):</span><span class="rr-tc-files" style="display:block;margin-top:3px">疑似 · RPS/迭代/2026SP16/RPS-fastjson2-x-jackson.md <span class="rr-tc-count">匹配词: fastjson</span></span></td></tr><tr><td class='rr-tc-pi'>SPX-PI-8064<span class='rr-tc-tag rr-tc-tag-miss'>未匹配用例</span></td><td class="rr-tc-miss">可能是主线回归用例未标注编号,或该需求确实还没补用例<span class="rr-tc-none">按标题疑似已有用例(需核实):</span><span class="rr-tc-files" style="display:block;margin-top:3px">疑似 · PUS/迭代/2026SP11/Cainiao-DGD-Pickup-Integration.md <span class="rr-tc-count">匹配词: cainiao, pickup</span></span><span class="rr-tc-files" style="display:block;margin-top:3px">疑似 · POS/迭代/2026SP13/Auto-Append-51005-for-None-pickup-request-from-cainiao-DGD-USPS.md <span class="rr-tc-count">匹配词: cainiao, pickup</span></span><span class="rr-tc-files" style="display:block;margin-top:3px">疑似 · POS/迭代/2026SP10/Hide-the-internal-pickup-failure-events.md <span class="rr-tc-count">匹配词: pickup, events</span></span></td></tr><tr><td class='rr-tc-pi'>SPX-PI-5982<span class='rr-tc-tag rr-tc-tag-miss'>未匹配用例</span></td><td class="rr-tc-miss">可能是主线回归用例未标注编号,或该需求确实还没补用例<span class="rr-tc-none">按标题疑似已有用例(需核实):</span><span class="rr-tc-files" style="display:block;margin-top:3px">疑似 · RPS/迭代/2026SP09/Return-calculated-dimWeight-in-Create-Label-API-response.md <span class="rr-tc-count">匹配词: return</span></span><span class="rr-tc-files" style="display:block;margin-top:3px">疑似 · POS/主线用例-Return.md <span class="rr-tc-count">匹配词: return</span></span><span class="rr-tc-files" style="display:block;margin-top:3px">疑似 · POS/迭代/2026SP10/Combine-Gaylord-Remove-Return-Parcels-Blocked-from-PtC-scan.md <span class="rr-tc-count">匹配词: return</span></span></td></tr></tbody></table></div><p class="rr-testcase-detail">注:这里的 <b>56</b> 条是按需求编号精确匹配到的本次需求专属用例;第 1 章「测试范围 vs 改动范围对齐」里的 pos(98 条)、pus(4 条) 是系统级全量主线用例(不按需求编号关联),两者口径不同、不矛盾。</p><p class="rr-testcase-atrisk-title">建议重点核实</p><p class="rr-testcase-atrisk">🔴 以下需求既未标注开发自测、也没有匹配到 QA 用例(<a href="https://app.notion.com/p/POS-fastjson-1-2-45-1-2-83-3a5aacac7fec80f6af84ca99f6e69118" target="_blank">SPX-PI-7726</a>、<a href="https://app.notion.com/p/Cainiao-Pickup-51005-Events-Adjustment-3baaacac7fec8003a271d2c32ce17ce3" target="_blank">SPX-PI-8064</a>、<a href="https://app.notion.com/p/return-314aacac7fec801280d3d180025a8d59" target="_blank">SPX-PI-5982</a>),建议上线前额外核实。</p></div>
+</div>
+
+<div class="rr-section" id="sec-3">
+  <div class="rr-section-head"><span class="rr-num">3</span><span class="rr-section-title">未闭环问题清单</span></div>
+  <div class="rr-card"><p class="rr-summary">共 11 条 issue，已修复 9 条，<strong class="rr-bug-unfixed">仍有 2 条未修复，其中 1 条为关键/阻塞</strong>。</p><div class="rr-bug-alert"><div class="rr-bug-alert-title">⚠ 仍有 1 条关键/阻塞问题未修复，上线前必须确认</div><ul class="rr-bug-alert-list"><li><a href="https://app.notion.com/p/pos-Beans-3acaacac7fec80f4bd55c454011b34e4" target="_blank">[pos] 未切换新的Beans刷新优化逻辑时，依旧落了新逻辑下的表数据</a> <span class="rr-badge rr-badge-red">关键问题</span> · <span class="rr-badge rr-badge-amber">新建</span><div class="rr-bug-ai-risk">AI 风险判断:<span class="rr-badge rr-badge-amber">中</span> 新旧逻辑切换开关未生效导致写入新表数据，存在数据一致性与兼容性风险，但影响范围仅限未切换优化的场景，标题未说明数据是否被下游消费。</div></li></ul></div><div class="rr-table-scroll"><table class="rr-table"><thead><tr><th>需求</th><th>标题</th><th>状态</th><th>严重程度</th></tr></thead><tbody><tr><td>SPX-PI-7158</td><td><a href="https://app.notion.com/p/pos-a-scan-batch-OK-3bcaacac7fec80519ec2d8c18dff299e" target="_blank">[pos] a scan 扫描后，虽然失败报错，但是 batch 中仍然记录是 OK 的</a></td><td><span class="rr-badge rr-badge-green">已修复</span></td><td><span class="rr-badge rr-badge-red">关键问题</span></td></tr><tr><td>SPX-PI-7158</td><td><a href="https://app.notion.com/p/pos-fix_route-3bcaacac7fec8099aab1cdb58e1bd2e9" target="_blank">[pos] 分拣机获取格口时，在 映射表范围 但是 fix_route 是旧的包裹会落到错误格口</a></td><td><span class="rr-badge rr-badge-green">已修复</span></td><td><span class="rr-badge rr-badge-red">关键问题</span></td></tr><tr><td>SPX-PI-7158</td><td><a href="https://app.notion.com/p/pos-update-profile-polygon-zipcode-There-are-duplicate-polygon-names-3bbaacac7fec80d2ba68c0902dcbba40" target="_blank">[pos] update profile 只要 polygon 下有多个 zipcode 时，则报错 There are duplicate polygon names.</a></td><td><span class="rr-badge rr-badge-green">已修复</span></td><td><span class="rr-badge rr-badge-red">关键问题</span></td></tr><tr><td>SPX-PI-7158</td><td><a href="https://app.notion.com/p/pos-update-profile-sort_code-3bbaacac7fec80509d1de6355e1e8443" target="_blank">[pos] update profile 时 sort_code 字段长度限制存疑</a></td><td><span class="rr-badge rr-badge-green">已修复</span></td><td><span class="rr-badge rr-badge-gray">普通问题</span></td></tr><tr><td>SPX-PI-7158</td><td><a href="https://app.notion.com/p/pos-RPS-lat-lng-pos-label_ext-latitude-longitude-3bbaacac7fec8028afb4cdc9de61dbe5" target="_blank">[pos] RPS 打单同步过来的经纬度是 lat / lng，而 pos 的 label_ext 是 latitude / longitude 导致实际字段未正常写入进去</a></td><td><span class="rr-badge rr-badge-green">已修复</span></td><td><span class="rr-badge rr-badge-red">关键问题</span></td></tr><tr><td>SPX-PI-7158</td><td><a href="https://app.notion.com/p/pos-label-corrected_zip-receipient_zip5-profileid-null-a-scan-3b9aacac7fec807b93b7f96946e86b52" target="_blank">[pos] 极端情况：label 表无 corrected_zip 字段，receipient_zip5 也不在映射表中，profileid为 null，做 a scan 时报错空指针</a></td><td><span class="rr-badge rr-badge-amber">新建</span></td><td><span class="rr-badge rr-badge-gray">普通问题</span></td></tr><tr><td>SPX-PI-7158</td><td><a href="https://app.notion.com/p/pos-updateProfile-pos_route_account-profile_id-profile_id_update_time-3b9aacac7fec805bb9beef265929c12e" target="_blank">[pos] updateProfile 在业务真正成功之前，就把 pos_route_account 的 profile_id / profile_id_update_time 提交了</a></td><td><span class="rr-badge rr-badge-green">已修复</span></td><td><span class="rr-badge rr-badge-red">关键问题</span></td></tr><tr><td>SPX-PI-7158</td><td><a href="https://app.notion.com/p/pos-Beans-polygon-3b9aacac7fec8002bffaea2216635613" target="_blank">[pos] 使用的 Beans 接口返回的数据与实际 polygon 不一致</a></td><td><span class="rr-badge rr-badge-green">已修复</span></td><td><span class="rr-badge rr-badge-red">关键问题</span></td></tr><tr><td>SPX-PI-7158</td><td><a href="https://app.notion.com/p/pos-Beans-3b9aacac7fec80d6a336c8c1fbf01daf" target="_blank">[pos] Beans刷新优化需考虑，当某仓库经历开启-关闭-修改多次-开启的操作后，新表数据库中数据会同时存在最老版本和最新版本的数据</a></td><td><span class="rr-badge rr-badge-green">已修复</span></td><td><span class="rr-badge rr-badge-gray">普通问题</span></td></tr><tr><td>SPX-PI-7158</td><td><a href="https://app.notion.com/p/pos-corrected_zip-label_ext-label-3b9aacac7fec80f7969cef4c2d4a8777" target="_blank">[pos] corrected_zip 从 label_ext 切到 label 表后，有些场景未考虑到</a></td><td><span class="rr-badge rr-badge-green">已修复</span></td><td><span class="rr-badge rr-badge-red">关键问题</span></td></tr><tr><td>SPX-PI-7158</td><td><a href="https://app.notion.com/p/pos-Beans-3acaacac7fec80f4bd55c454011b34e4" target="_blank">[pos] 未切换新的Beans刷新优化逻辑时，依旧落了新逻辑下的表数据</a></td><td><span class="rr-badge rr-badge-amber">新建</span></td><td><span class="rr-badge rr-badge-red">关键问题</span></td></tr></tbody></table></div></div>
+  <div class="rr-card">
+    <h4 class="rr-subhead">bug 过程分布</h4>
+    <p class="rr-summary">共 11 条,按严重程度:关键问题 8 条、普通问题 3 条。</p><p class="rr-summary">按阶段(粗粒度):测试期发现 11 条、发布后发现 0 条。</p><p class="rr-bug-dist-note">阶段分布基于 issue 创建时间,近似发现时间,非精确值。</p>
+  </div>
+  
+  <div class="rr-card">
+    <h4 class="rr-subhead">关键验证 checklist</h4>
+    <p class="rr-summary">以下待验证项来自本次发布的未修复 bug 与测试缺口，上线验证后请逐项勾选确认。（其中「核对需求是否已补测」与第1章「建议重点核实」是同一批需求，非新增问题）</p><div class="rr-verify-list"><label class="rr-verify-item rr-verify-gap"><input type="checkbox"><span class="rr-verify-text">核对 bug 是否已修复：[pos] 极端情况：label 表无 corrected_zip 字段，receipient_zip5 也不在映射表中，profileid为 null，做 a scan 时报错空指针</span></label><label class="rr-verify-item rr-verify-gap"><input type="checkbox"><span class="rr-verify-text">核对 bug 是否已修复：[pos] 未切换新的Beans刷新优化逻辑时，依旧落了新逻辑下的表数据</span></label><label class="rr-verify-item rr-verify-gap"><input type="checkbox"><span class="rr-verify-text">核对需求是否已补测：POS→fastjson版本1.2.45升级到1.2.83</span></label><label class="rr-verify-item rr-verify-gap"><input type="checkbox"><span class="rr-verify-text">核对需求是否已补测：Cainiao Pickup 51005 Events Adjustment</span></label><label class="rr-verify-item rr-verify-gap"><input type="checkbox"><span class="rr-verify-text">核对需求是否已补测：闭环轨迹return扫描需要给出提示</span></label></div>
+  </div>
+</div>
+
+<div class="rr-section" id="sec-4">
+  <div class="rr-section-head"><span class="rr-num">4</span><span class="rr-section-title">影响面推测（仅供 QA 用例设计参考）</span></div>
+  <p class="rr-impact-qualifier">基于代码改动匹配知识库得出的<b>推测性</b>线索，<b>不作为上线风险判断依据</b>——风险判断请看顶部「上线判读」与「未闭环问题清单」。这里仅供 QA 设计用例时参考排查方向。</p>
+  <details class="rr-impact-appendix" open>
+    <summary>查看 AI 整理的影响线索摘要</summary>
+    <div class="rr-card">
+      <p class="rr-impact-summary-headline">AI 整理的影响线索(推测参考,非决策依据):</p><ul class="rr-impact-summary-bullets"><li><span class="rr-impact-bullet-main">【数据一致性】POS 与揽收系统双向同步：POS 侧容器/包裹扫描及自提点数据变更后，核对两边记录是否一致（不能只验证 POS 写入成功，还要到对端系统确认能读到同样结果），并覆盖合并操作与提货时间窗口重叠的联合场景</span><span class="rr-impact-bullet-sub">影响上线：关键，单向验证过但双向不一致会造成两端轨迹/库存对不上的历史事故重演</span><span class="rr-impact-bullet-sub">建议：补测</span><span class="rr-impact-bullet-sub">依据：PosContainerParcelScanHistoryImplService、PosContainerService</span></li><li><span class="rr-impact-bullet-main">【业务规则】自提点事件调整的对外影响：Cainiao Pickup 事件调整涉及自提点扩展信息下发，确认自提点的营业状态/地址等扩展字段变更后能正常同步且消费方收到的事件内容完整</span><span class="rr-impact-bullet-sub">影响上线：关键，自提点信息不同步会直接导致用户到店取件失败</span><span class="rr-impact-bullet-sub">建议：回归流程</span><span class="rr-impact-bullet-sub">依据：PickupLocationExtServiceImpl</span></li><li><span class="rr-impact-bullet-main">【事件链路】闭环轨迹 return 扫描提示链路：容器包裹扫描历史与容器操作日志服务是事件消费的两端，确认 return 扫描产生提示时，扫描历史记录和操作日志同时落库、提示内容能随事件推到下一环</span><span class="rr-impact-bullet-sub">影响上线：</span></li></ul><p class="rr-impact-summary-disclaimer">以下是 AI 基于代码改动匹配知识库的【推测性】影响线索,仅供参考、非上线决策依据;上线判断请以「发现的 bug」「测试充分性证据」等实测信号为准。</p>
+    </div>
+  </details>
+  <details class="rr-impact-appendix">
+    <summary>查看规则匹配原始候选（含通用词误命中噪音，仅供参考）</summary>
+    <div class="rr-card" id="rr-impact-card">
+      <pre class="rr-impact-raw" style="display:none">## 附录：影响面扫描（Impact Surface Scan）
+
+&gt; 生成自 `scripts/impact_scan.py` | 2026-08-17T16:08:50 | 系统 `pos` | 功能 `mapping`, `init`, `shutdown`, `scheduleNext`, `runAndScheduleNext`, `refresh`, `getByFacilityCodeAndZipCode`, `buildKey`, `updateProfile`, `beansFixRouteJob`, `toPredicate`, `refreshRouteNew`, `checkPolygon`, `saveUncoveredZipPushLog`, `persistZipSortCodeMappings`, `process`, `processBatch`, `updateProfileIdRefreshByZipCode`, `resetCorrectedZipCode`, `labelFixRouteProcess`, `getZipSortCodeMappingByZipCode`, `useNewFixRouteNameLogic`, `updateZipSortCodeMapping`, `getLabelFacilityCode`, `getZipSortCodeMappingByFacilityCode`, `getZipSortCodeMapping`, `findPosDspMappingByDspCode`, `updateLabelZone`, `sendBeansItems`, `sendFixRouteRefresh`, `sendUncoveredZipFixRoute`, `buildDto`, `fixRouteSet`, `batchDelete`, `findLabelFixRoute`, `buildParcelInfos`, `scanParcelToContainerOfflineReplay`, `saveInboundParcel`, `retryPtc`, `offlineEncodingReplayRetryJob`, `getParam`, `getCurrentAuditor`, `handleClosebox`, `handleDispatch`, `handleReScan`, `resolveShipmentInfo`, `buildShipmentInfo`, `buildAddress`, `extractRouteCode`, `getOfflineSyncToken`, `receiveAndReplay`, `receiveAndReplayPtc`, `backupRawMessage`, `ping`, `getTopic`, `handleOfflineSync`, `validate`, `generateMsgId`, `buildMsg`, `isPlaceholder`, `repushDmsIfAlreadySent`, `sendPtcEvent`, `fillContainerDate`, `createOperationLog`, `sendReScanEvent`, `offlineDataParcelEncodingScan`, `encodingReplayFailedProcess`, `saveEncodingException`, `buildRecord`, `executeReplay`, `saveExceptionRecord`, `resolveOfflineException`, `retryFailed`, `pushDmsForLocalFrContainers`, `isFrByContainerNum`, `checkAndCreateEvent`, `fistScanPushOms`, `getCurOperator`, `getScanDate`, `isOfflineReplay`, `singleDestinationMessage`, `stubSingleDestinationSuccess`, `sync`, `existsActive`, `listen_ValidMessage_ShouldUpdateLabelStatus_Delivered`, `listen_ValidMessage_ShouldUpdateLabelStatus_Undelivered`, `getConfigsForFacility`, `isFacilityInList`, `handleContainerOperationLogMessage`, `syncAll`, `toEntity`, `normalizeState`, `convertBusinessTime`, `selectLongerBusinessTime`, `calcDurationMinutes`, `handleOperationLogMessage`, `fetchLabelDimensions`, `pushAuto51005`, `doProcess`, `scheduleAfterCommit`, `afterCommit`, `doAfterCommit`, `computeEventTime`, `getValidInRedisByFacilityCode`, `cacheToRedis`, `getFromRedis`, `getFromApiWithRetry`, `queryParcelData`, `resolvePickupOrderForStaging`, `doRepush`, `buildEventPodForm`, `genPickupReport`, `genPickupStagingReport`, `createOfflineManual`, `getExportStagingData`, `processOnFacility` | 字段 `PushLogTypeEnum`, `MessageCode`, `RedisDataEnum`, `PushLabelForm`, `2026-08-02-pos-zip-sort-code-mapping-local-cache`, `2026-08-02-pos-zip-sort-code-mapping-local-cache-design`, `RefreshRouteController`, `BeansJob`, `WebInboundParcelController`, `WebRefreshRouteController`, `WebInboundParcelControllerTest`, `WebRefreshRouteControllerTest`, `BeanRefreshRouteServiceImplTest`, `persistence`, `UpdateFixRouteProfileBo`, `RefreshRouteBusinessData`, `PosZipSortCodeMappingLocalCache`, `FacilityRoutingMatrixDao`, `LabelDao`, `PosZipSortCodeMappingDao`, `ZoneMappingDao`, `Label`, `PosZipSortCodeMapping`, `PosZipSortCodeMappingCacheProperties`, `BeanRefreshRouteServiceImpl`, `BeanRefreshRouteService`, `DMSDispatchManifestServiceImpl`, `ProcessDispatchV2ToDmsServiceImpl`, `ProcessLabelBeansItemServiceImpl`, `ProcessLabelFixRouteRefreshServiceImpl`, `ProcessUncoveredZipFixRouteServiceImpl`, `LabelRouteServiceImpl`, `LabelServiceImpl`, `PosZipSortCodeMappingServiceImpl`, `PushLogServiceImpl`, `ZoneMappingServiceImpl`, `BeansItemsKafkaConsumer`, `FixRouteRefreshKafkaConsumer`, `MessageTopic`, `PosBeansKafkaSender`, `UncoveredZipFixRouteKafkaConsumer`, `FixRouteScanServiceImpl`, `WebInboundParcelServiceImpl`, `FixRouteScanService`, `PosZipSortCodeMappingService`, `UpdateAddressService`, `ZoneMappingService`, `RedisUtils`, `PosZipSortCodeMappingLocalCacheTest`, `DmsCloseboxKafkaConsumer`, `DmsDispatchKafkaConsumer`, `DmsPtcKafkaConsumer`, `DmsPtcOfflineExpKafkaConsumer`, `DmsPushMessageAssembler`, `WebOfflineSyncController`, `PosOfflinePtcExceptionDao`, `PosTmsDmsPushPendingDao`, `PosContainerImplService`, `InboundRouteServiceImpl`, `PosContainerImplServiceTest`, `InboundRouteServiceImplTest`, `DispatchLmSyncReqV2`, `code-review-SPX-PI-6955-offline-pos`, `review-SPX-PI-6955-offline-ascan-replay`, `UsernamePasswordRealm`, `bootstrap`, `OfflineReplayRetryJob`, `SpringSecurityAuditorAware`, `OfflineAscanListener`, `OfflinePtcResolveListener`, `OfflinePtcScanListener`, `DmsPushKafkaConsumer`, `DamonController`, `OfflineReplayController`, `TmsBolEventConsumer`, `OfflineSyncTokenRo`, `TmsBolEventConsumerTest`, `OfflinePingController`, `OfflineSyncController`, `OfflineSyncFailureResp`, `OfflineSyncMsg`, `OfflineSyncReq`, `OfflineOperationTypeEnum`, `OfflineSyncServiceImpl`, `OfflineSyncService`, `LoginUserBo`, `DmsPushKafkaConfig`, `PosOfflineEncodingExceptionDao`, `PosOfflineSyncEncodingRawDao`, `PosOfflineSyncPtcRawDao`, `ParcelSearchResultDto`, `DmsPushEventMessage`, `PtcEventMessage`, `OfflinePtcScanMsg`, `OfflineReplayContext`, `TmsBolEventMessage`, `InboundParcel`, `PosContainerParcelScanHistory`, `PosOfflineEncodingException`, `PosOfflinePtcException`, `PosOfflineSyncEncodingRaw`, `PosOfflineSyncPtcRaw`, `PosTmsDmsPushPending`, `ShipmentParcel`, `TmsBolMessage`, `OfflineScanReplayStatusEnum`, `PosOfflinePtcAbnormalEnum`, `PosContainerParcelScanHistoryImplService`, `PosContainerV2ServiceImpl`, `PosContainerService`, `ProcessContainerCloseboxToDmsServiceImpl`, `ProcessDispatchLmToDmsServiceImpl`, `ProcessTmsDispatchToDmsServiceImpl`, `DmsPushKafkaService`, `DmsPushKafkaServiceImpl`, `OfflineEncodingReplayServiceImpl`, `OfflinePtcScanReplayServiceImpl`, `OfflineEncodingReplayService`, `OfflinePtcScanReplayService`, `LabelOperationLogImplService`, `LabelOperationLogService`, `UserServiceImpl`, `TmsBolEventHandlerServiceImpl`, `WebReceivingBatchServiceImpl`, `PushLogService`, `LoginUserUtil`, `OfflineReplayContextHolder`, `TmsBolEventHandlerServiceImplTest`, `WebReceivingBatchServiceImplTest`, `parent-scan-whole`, `SPX-PI-7324-pudo-sync`, `LabelOperationLogConsumer`, `PosContainerOperationLogConsumer`, `VintedLocationConsumer`, `LabelStatusConsumer`, `PartnerLocationController`, `PudoLocationDto`, `WebPosContainerController`, `WebSorterController`, `WebWorkShareContainerController`, `WebPosContainerControllerTest`, `LabelStatusServiceImplTest`, `FacilityConfigProperties`, `PartnerLocationDao`, `SorterProfileDao`, `PickupLocationDto`, `VintedPudoLocationDto`, `PartnerLocation`, `PartnerWebhookLog`, `BeansFixRouteServiceImpl`, `PosContainerOperationLogImplService`, `PosContainerOperationLogService`, `LabelStatusServiceImpl`, `PartnerLocationServiceImpl`, `PickupLocationExtServiceImpl`, `VintedPudoSyncServiceImpl`, `WebSorterService`, `VintedPudoSyncService`, `VintedPudoSyncServiceImplTest`, `pom`, `WebReLabelController`, `WebReLabelServiceImpl`, `WebReLabelService`, `ConsolidatorLabelEncodingScanHandler`, `LabelEncodingScanHandler`, `ParcelStateInjectHandler`, `BaseFacilityService`, `CainiaoPickupServiceImpl`, `ConsolidatorPickupServiceImpl`, `DaysPickupServiceImpl`, `PickupBatchServiceImpl`, `PickupCreateServiceImpl`, `PickupFailureEventRepushServiceImpl`, `PickupRouteServiceImpl`, `PickupScheduleServiceImpl`, `PickupSuccessEventRepushServiceImpl`, `PudoFailureTrkPushServiceImpl`, `WebPickupRouteServiceImpl`, `WebPickupServiceImpl`, `WebPickupStagingServiceImpl`, `ConsolidatorLabelEncodingScanHandlerTest`, `LabelEncodingScanHandlerTest`, `CainiaoPickupServiceImplTest`, `ConsolidatorPickupServiceImplTest`, `PudoFailureTrkPushServiceImplTest`, `WebPickupServiceImplTest`, `ParcelStateInjectConsumer`, `AutoCreateStagingJob`, `PickupRolloverJob`, `PusLabelRepository`, `PosApiAdapter`, `PusExchangeApplication`, `PusJobApplication`, `PusWebApplication`, `PusXlsApplication`
+
+&gt; **软门禁**：允许 `⚠️ 缺口` 存在；每条 A/B 段条目在用例设计时逐条勾选，无关划掉、缺口反馈给 KB 运营。
+
+### 🅰️ 同系统异常/边界分支
+
+&gt; 来源: function-kb 卡片的 `missing_scenarios` / `historical_issues` + `rules/&lt;sys&gt;/error-playbook.md`
+
+- [ ] ⚠️ 缺口 error-playbook.md 存在但无条目匹配功能关键词 [&#x27;mapping&#x27;, &#x27;init&#x27;, &#x27;shutdown&#x27;, &#x27;scheduleNext&#x27;, &#x27;runAndScheduleNext&#x27;, &#x27;refresh&#x27;, &#x27;getByFacilityCodeAndZipCode&#x27;, &#x27;buildKey&#x27;, &#x27;updateProfile&#x27;, &#x27;beansFixRouteJob&#x27;, &#x27;toPredicate&#x27;, &#x27;refreshRouteNew&#x27;, &#x27;checkPolygon&#x27;, &#x27;saveUncoveredZipPushLog&#x27;, &#x27;persistZipSortCodeMappings&#x27;, &#x27;process&#x27;, &#x27;processBatch&#x27;, &#x27;updateProfileIdRefreshByZipCode&#x27;, &#x27;resetCorrectedZipCode&#x27;, &#x27;labelFixRouteProcess&#x27;, &#x27;getZipSortCodeMappingByZipCode&#x27;, &#x27;useNewFixRouteNameLogic&#x27;, &#x27;updateZipSortCodeMapping&#x27;, &#x27;getLabelFacilityCode&#x27;, &#x27;getZipSortCodeMappingByFacilityCode&#x27;, &#x27;getZipSortCodeMapping&#x27;, &#x27;findPosDspMappingByDspCode&#x27;, &#x27;updateLabelZone&#x27;, &#x27;sendBeansItems&#x27;, &#x27;sendFixRouteRefresh&#x27;, &#x27;sendUncoveredZipFixRoute&#x27;, &#x27;buildDto&#x27;, &#x27;fixRouteSet&#x27;, &#x27;batchDelete&#x27;, &#x27;findLabelFixRoute&#x27;, &#x27;buildParcelInfos&#x27;, &#x27;scanParcelToContainerOfflineReplay&#x27;, &#x27;saveInboundParcel&#x27;, &#x27;retryPtc&#x27;, &#x27;offlineEncodingReplayRetryJob&#x27;, &#x27;getParam&#x27;, &#x27;getCurrentAuditor&#x27;, &#x27;handleClosebox&#x27;, &#x27;handleDispatch&#x27;, &#x27;handleReScan&#x27;, &#x27;resolveShipmentInfo&#x27;, &#x27;buildShipmentInfo&#x27;, &#x27;buildAddress&#x27;, &#x27;extractRouteCode&#x27;, &#x27;getOfflineSyncToken&#x27;, &#x27;receiveAndReplay&#x27;, &#x27;receiveAndReplayPtc&#x27;, &#x27;backupRawMessage&#x27;, &#x27;ping&#x27;, &#x27;getTopic&#x27;, &#x27;handleOfflineSync&#x27;, &#x27;validate&#x27;, &#x27;generateMsgId&#x27;, &#x27;buildMsg&#x27;, &#x27;isPlaceholder&#x27;, &#x27;repushDmsIfAlreadySent&#x27;, &#x27;sendPtcEvent&#x27;, &#x27;fillContainerDate&#x27;, &#x27;createOperationLog&#x27;, &#x27;sendReScanEvent&#x27;, &#x27;offlineDataParcelEncodingScan&#x27;, &#x27;encodingReplayFailedProcess&#x27;, &#x27;saveEncodingException&#x27;, &#x27;buildRecord&#x27;, &#x27;executeReplay&#x27;, &#x27;saveExceptionRecord&#x27;, &#x27;resolveOfflineException&#x27;, &#x27;retryFailed&#x27;, &#x27;pushDmsForLocalFrContainers&#x27;, &#x27;isFrByContainerNum&#x27;, &#x27;checkAndCreateEvent&#x27;, &#x27;fistScanPushOms&#x27;, &#x27;getCurOperator&#x27;, &#x27;getScanDate&#x27;, &#x27;isOfflineReplay&#x27;, &#x27;singleDestinationMessage&#x27;, &#x27;stubSingleDestinationSuccess&#x27;, &#x27;sync&#x27;, &#x27;existsActive&#x27;, &#x27;listen_ValidMessage_ShouldUpdateLabelStatus_Delivered&#x27;, &#x27;listen_ValidMessage_ShouldUpdateLabelStatus_Undelivered&#x27;, &#x27;getConfigsForFacility&#x27;, &#x27;isFacilityInList&#x27;, &#x27;handleContainerOperationLogMessage&#x27;, &#x27;syncAll&#x27;, &#x27;toEntity&#x27;, &#x27;normalizeState&#x27;, &#x27;convertBusinessTime&#x27;, &#x27;selectLongerBusinessTime&#x27;, &#x27;calcDurationMinutes&#x27;, &#x27;handleOperationLogMessage&#x27;, &#x27;fetchLabelDimensions&#x27;, &#x27;pushAuto51005&#x27;, &#x27;doProcess&#x27;, &#x27;scheduleAfterCommit&#x27;, &#x27;afterCommit&#x27;, &#x27;doAfterCommit&#x27;, &#x27;computeEventTime&#x27;, &#x27;getValidInRedisByFacilityCode&#x27;, &#x27;cacheToRedis&#x27;, &#x27;getFromRedis&#x27;, &#x27;getFromApiWithRetry&#x27;, &#x27;queryParcelData&#x27;, &#x27;resolvePickupOrderForStaging&#x27;, &#x27;doRepush&#x27;, &#x27;buildEventPodForm&#x27;, &#x27;genPickupReport&#x27;, &#x27;genPickupStagingReport&#x27;, &#x27;createOfflineManual&#x27;, &#x27;getExportStagingData&#x27;, &#x27;processOnFacility&#x27;]；建议人工浏览 knowledge/rules/pos/error-playbook.md  `[source: error-playbook:pos:no-keyword-match | 置信度: low]`
+
+### 🅱️ 跨系统联动
+
+&gt; 来源: `knowledge/graph.md` 的实体节点 + 触发链
+
+- [ ] Graphify: ImportPartnerLabelNonSortedHelper.java ← BaseZipCodeMapping.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ImportPartnerLabelNonSortedHelper.java ← ZipCodeMappingService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ImportPartnerLabelSortedHelper.java ← BaseZipCodeMapping.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ImportPartnerLabelSortedHelper.java ← ZipCodeMappingService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BaseFacilityMappingDao.java → BaseFacilityMapping (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BaseZipCodeMappingDao.java → BaseZipCodeMapping (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PoeHolidayMappingDao.java → Holiday.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PoeHolidayMappingDao.java → PoeHolidayMapping (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PoeZoneFacilityMappingDao.java → PoeZoneFacilityMapping (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosDspMappingDao.java → PosDspMapping (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ScanToRouteMappingDao.java → ScanToRouteMapping (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: SorterChuteMappingDao.java → SorterChuteMapping (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: SorterSortCodeMappingDao.java → SorterSortCodeMapping (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: StateHolidayMappingDao.java → PoeHolidayMapping (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: StateHolidayMappingDao.java → StateHolidayMapping (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ProcessDduPopulationCmdHelper.java ← ExcelInitSortCodeV2Bo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: InitDduBibleCmd.java → UspsFastAddressDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: InitDduBibleCmd.java → UspsFastMailDirectionDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: InitDduBibleCmd.java → UspsDduBible (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: InitSortCodeListener.java → ExcelInitSortCodeBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: InitSortCodeV2Listener.java → ExcelInitSortCodeV2Bo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: SortCodeServiceImpl.java ← ExcelInitSortCodeBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: SortCodeServiceImpl.java ← ExcelInitSortCodeV2Bo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: SortCodeService.java ← ExcelInitSortCodeBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: SortCodeService.java ← ExcelInitSortCodeV2Bo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PldUtils.java ← ExcelInitSortCodeBo.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PldUtils.java ← InitSortCodeListener.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PldUtils.java ← ExcelInitSortCodeBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: RefreshRouteContext.java → Label (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: AddressUpdateRefreshRouteListener.java → ExcelAddressUpdateRefreshRouteBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: AddressUpdateRefreshRouteListener.java → ExcelAddressUpdateRefreshRouteErrorBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: AddressUpdateRefreshRouteListener.java → ExcelRowLimit.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BeanRefreshRouteService.java → Label (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BeanRefreshRouteService.java → Pickup (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BeanRefreshRouteService.java → CheckAddressGeocodedResult (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BeanRefreshRouteServiceImpl.java → BeansApi (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BeanRefreshRouteServiceImpl.java → CheckAddressGeocodedResult (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BeanRefreshRouteServiceImpl.java → RefreshRouteBusinessData.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelAddressHandleServiceImpl.java ← BeanRefreshRouteService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelModifyServiceImpl.java ← BeanRefreshRouteService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelRouteServiceImpl.java ← RefreshRouteBusinessData.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelRouteServiceImpl.java ← BeanRefreshRouteService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelServiceImpl.java ← BeanRefreshRouteService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ProcessDduPopulationStats.java → UspsDduPopulationWriteHolder (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ProcessDduPopulationStats.java → UspsDduPopulation (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ProcessDduPopulationStats.java → DduStatsOutVo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ProcessDduPopulationCmdHelper.java → DduPopulation (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ProcessDduPopulationCmdHelper.java → DduPopulationInput (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ProcessDduPopulationCmdHelper.java → UspsDduPopulationWriteHolder (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ProcessDduPopulationCmd.java → AciDduDiffResponse (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ProcessDduPopulationCmd.java → DduPopulation (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ProcessDduPopulationCmd.java → DduPopulationInput (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: AbstractReportTaskProcessor.java → ThreadPoolOrchestrator (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: AbstractReportTaskProcessor.java → ReportTaskProperties (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: AbstractReportTaskProcessor.java → ProcessResult (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ReportTaskValidatorFactory.java ← ReportTaskProcessor (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ProcessContainerCloseboxToDmsServiceImpl.java → DmsApi (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ProcessContainerCloseboxToDmsServiceImpl.java → FacilityConfigProperties (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ShippingPartnerEventDetailBo.java → EventCodeEnum (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ShippingPartnerEventBoBuilder.java → ShippingPartnerEventBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ShippingPartnerEventBoBuilder.java → ShippingPartnerEventDetailBo.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ShippingPartnerEventBoBuilder.java → EventCodeEnum.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ZoneMappingDao.java → ZoneMapping (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ZoneMappingDao.java → DmsZipZoneFacilityMappingBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: SorterChuteMapping.java → SorterChuteTypeEnum (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ServiceProviderExchangeUsps.java ← ShippingPartnerEventBo.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ServiceProviderExchangeUsps.java ← ShippingPartnerEventBoBuilder.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ServiceProviderExchangeUsps.java ← ShippingPartnerEventDetailForm (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ShippingPartnerEventDetailForm.java → EventCodeEnum (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: TrkApiService.java ← PoeZoneFacilityMappingDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: TrkApiService.java ← StateHolidayMappingDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: SorterSortCodeMappingServiceImpl.java → SorterSortCodeMappingDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: SorterSortCodeMappingServiceImpl.java → SorterSortCodeMapping (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosOfflineSyncEncodingRawDao.java → PosOfflineSyncEncodingRaw (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosOfflineSyncPtcRawDao.java → PosOfflineSyncPtcRaw (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: DmsService.java ← SyncDriverNoteReq (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: DmsServiceImpl.java ← SyncDriverNoteReq (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: processLabelEncodingAsyncServiceImpl.java → LabelEncodingDto.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: processLabelEncodingAsyncServiceImpl.java → Label (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: processLabelEncodingAsyncServiceImpl.java → LabelCostCalcService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: VintedPudoSyncServiceImpl.java → PosZipCodeInfoService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: VintedPudoSyncServiceImpl.java → PusPickupCoverageService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: VintedPudoSyncServiceImpl.java → VintedPudoSyncService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflineEncodingReplayServiceImpl.java ← PosOfflineSyncEncodingRaw (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflineEncodingReplayServiceImpl.java ← PosOfflineSyncEncodingRawDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflinePtcScanReplayServiceImpl.java ← PosOfflineSyncPtcRaw (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflinePtcScanReplayServiceImpl.java ← PosOfflineSyncPtcRawDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: VintedPudoSyncService.java → VintedPudoLocationDto (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerDispatchFragmentImpl.java ← javax.persistence.EntityManager (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerParcelProgressFragmentImpl.java ← javax.persistence.EntityManager (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerParcelScanHistoryCustomDaoImpl.java ← javax.persistence.EntityManager (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: UspsDduPopulationServiceImpl.java ← javax.persistence.EntityManager (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BaseServiceImpl.java ← javax.persistence.EntityManager (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PushLogServiceImpl.java ← RefreshRouteBusinessData (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PushLogService.java ← RefreshRouteBusinessData (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BeanRefreshRouteServiceImpl.java ← RefreshRouteBusinessData (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelRouteServiceImpl.java ← RefreshRouteBusinessData (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: FacilityRoutingMatrixDao.java → FacilityRoutingMatrix (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: FacilityRoutingMatrixServiceImpl.java ← FacilityRoutingMatrixDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LbFpxApi.java ← LabelDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: CheckInPartnerContainerCmdHelper.java ← DeliveryLabelDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: CheckInPartnerContainerCmdHelper.java ← LabelDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: CreateContainerCmdHelper.java ← DeliveryLabelDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: CreateContainerCmdHelper.java ← LabelDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ImportPartnerLabelNonSortedHelper.java ← LabelDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ImportPartnerLabelSortedHelper.java ← LabelDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: SubmitDduManifestCmdHelper.java ← LabelDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: CommercialLabelDao.java → CollectionUtil.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: CommercialLabelDao.java → CommercialLabel (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: DeliveryLabelDao.java → DeliveryLabel (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelDao.java → AutoDecrypt (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelDao.java → LableDataUnencryptedBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelDao.java → PendingAutoClosetoutBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosThirdLabelDao.java → PosThirdLabel (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ZoneMappingServiceImpl.java ← ZoneMappingDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LbFpxApi.java ← LabelService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LbFpxApi.java ← LabelExceptionDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LbFpxApi.java ← Label.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OmsApi.java ← LabelSurchargeMessageBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ContainerDduManifest.java ← Label (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: InboundAuditBatchBo.java ← Label (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelDownloadTaskBo.java → LabelSo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OmsReturnServiceConfigDto.java ← CreateRtsLabelConfigDto (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ReturnServiceConfigBo.java ← CreateRtsLabelConfigDto (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: CheckInPartnerContainerCmd.java ← GenerateLabelRes (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: CheckInPartnerContainerCmdHelper.java ← PdfDeliveryLabelBo.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: CheckInPartnerContainerCmdHelper.java ← DeliveryLabel.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: CheckInPartnerContainerCmdHelper.java ← Label.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: CreateContainerCmdHelper.java ← DeliveryLabel.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: CreateContainerCmdHelper.java ← Label.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BeanRefreshRouteServiceImpl.java → ExcelAddressUpdateRefreshRouteBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BeanRefreshRouteServiceImpl.java → ExcelAddressUpdateRefreshRouteErrorBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BeanRefreshRouteServiceImpl.java → RefreshRouteContext (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BeanRefreshRouteService.java → ExcelAddressUpdateRefreshRouteErrorBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BeanRefreshRouteService.java → RefreshRouteContext (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BeanRefreshRouteService.java → BeansRouteInfoDto (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BeanRefreshRouteServiceImpl.java → RefreshRouteExtInfoBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BeanRefreshRouteServiceImpl.java → SjuZipRouteMappingConfig (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BeanRefreshRouteServiceImpl.java → SjuZipRouteMappingItem (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PickupBatchServiceImpl.java ← BeanRefreshRouteService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PushLogServiceImpl.java ← BeanRefreshRouteService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: UpdateAddressService.java ← BeanRefreshRouteService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: FixRouteScanServiceImpl.java ← BeanRefreshRouteService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: DMSDispatchManifestServiceImpl.java → DmsApi (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: DMSDispatchManifestServiceImpl.java → PdxApi (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: DMSDispatchManifestServiceImpl.java → DmsDeliverTypeEnum.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebDispatchServiceImpl.java ← DMSDispatchManifestServiceImpl (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ProcessDispatchV2ToDmsServiceImpl.java → DmsApi (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ProcessDispatchV2ToDmsServiceImpl.java → DmsDeliverTypeEnum.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ProcessDispatchV2ToDmsServiceImpl.java → BaseFacilityService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelRouteServiceImpl.java → LabelOperationPushDto.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelRouteServiceImpl.java → OperationLogEntry (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelRouteServiceImpl.java → LabelRouteService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: CommercialLabelServiceImpl.java → AddressLibraryApi (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: CommercialLabelServiceImpl.java → CommercialLabelReportBo.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: CommercialLabelServiceImpl.java → CommercialLabelMailProperties (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: DeliveryLabelServiceImpl.java → DeliveryLabel (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: DeliveryLabelServiceImpl.java → DeliveryLabelService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: DeliveryLabelServiceImpl.java → DeliveryLabelSo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelServiceImpl.java → LabelSo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelServiceImpl.java → LoginUserBo.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelServiceImpl.java → LoginUserUtil.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebContainerLabelServiceImpl.java → ContainerLabelRowBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebContainerLabelServiceImpl.java → ContainerLabelFileHistoryBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebContainerLabelServiceImpl.java → SorterChuteMappingDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebLabelServiceImpl.java → LabelExceptionDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebLabelServiceImpl.java → LabelExtDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebLabelServiceImpl.java → LabelInterceptDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PushLogServiceImpl.java → DmsApi (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PushLogServiceImpl.java → PusLabelRpsUpdatePayload (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PushLogServiceImpl.java → LbFpxApi (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ZoneMappingServiceImpl.java → RpsApi (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ZoneMappingServiceImpl.java → Label (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ZoneMappingServiceImpl.java → PosDspMapping (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: CommercialAddressEventPublisher.java ← MessageTopic.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BeanRefreshRouteServiceImpl.java ← MessageTopic.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelAddressHandleServiceImpl.java ← MessageTopic.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: CommercialAddressEventPublisher.java ← MessageTopic (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BeanRefreshRouteServiceImpl.java ← MessageTopic (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelAddressHandleServiceImpl.java ← MessageTopic (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: FixRouteScanServiceImpl.java → PartnerBusinessHoursBo.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: FixRouteScanServiceImpl.java → ThreadPoolOrchestrator (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: FixRouteScanServiceImpl.java → BeansApi (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerImplService.java ← WebInboundParcelServiceImpl (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ParcelContainerService.java ← WebInboundParcelServiceImpl (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebInboundParcelServiceImpl.java → TrkApi (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebInboundParcelServiceImpl.java → CheckCrossPoeBo.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebInboundParcelServiceImpl.java → CalcChuteRo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: FixRouteScanService.java → InboundRoute (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: FixRouteScanService.java → Label (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: FixRouteScanService.java → RouteAccount (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: FixRouteScanServiceImpl.java → Route.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: FixRouteScanServiceImpl.java → RouteItem.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: FixRouteScanServiceImpl.java → BusinessAddressDeliveryTimeIntervalConfig (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: InboundRouteServiceImpl.java ← FixRouteScanService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebInboundParcelServiceImpl.java ← FixRouteScanService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebNewReturnParcelServiceImpl.java ← FixRouteScanService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ProcessPosDmsUpdateAddressServiceImpl.java → DmsApi (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ProcessPosTrkUpdateAddressServiceImpl.java → TrkApi (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: UpdateAddressService.java → DmsApi.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: UpdateAddressService.java → OmsApi (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: UpdateAddressService.java → TrkApi (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BaseFacilityServiceImpl.java ← ZoneMappingService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: CommercialDropShipAddressServiceImpl.java ← ZoneMappingService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: CommercialLabelServiceImpl.java ← ZoneMappingService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelModifyServiceImpl.java ← ZoneMappingService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ZoneMappingServiceImpl.java → ZoneMapping (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ZoneMappingServiceImpl.java → PosDspMappingService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ZoneMappingServiceImpl.java → ZoneMappingService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebInboundBatchServiceImpl.java ← ZoneMappingService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebInboundReceptacleServiceImpl.java ← ZoneMappingService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebNewReturnParcelServiceImpl.java ← ZoneMappingService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ZoneMappingService.java → Label (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ZoneMappingService.java → PosDspMapping (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ZoneMappingService.java → ZoneMapping (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: MaerskApi.java ← RedisUtils (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: CaffeineCacheOperator.java ← RedisUtils (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: RedisCacheOperator.java ← RedisUtils (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: InboundBatchCacheEvictListener.java ← RedisUtils.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OmsService.java ← RedisUtils (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: RouteServiceImpl.java ← RedisUtils (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: SorterSortCodeMappingServiceImpl.java ← RedisUtils (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: SortGroupServiceImpl.java ← RedisUtils (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ZipCodeMappingServiceImpl.java ← RedisUtils (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BeanRefreshRouteServiceImpl.java ← RedisUtils (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BeansServiceImpl.java ← RedisUtils (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: FedExServiceImpl.java ← RedisUtils (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BaseCourierServiceImpl.java ← RedisUtils (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BaseDduServiceImpl.java ← RedisUtils (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BaseFacilityServiceImpl.java ← RedisUtils (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosOfflinePtcExceptionDao.java → PosOfflinePtcException (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflinePtcScanReplayServiceImpl.java ← PosOfflinePtcExceptionDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosTmsDmsPushPendingDao.java → PosTmsDmsPushPending (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: TmsBolEventHandlerServiceImpl.java ← PosTmsDmsPushPendingDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerImplService.java → TrkApi (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerImplService.java → AutoEncodingBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerImplService.java → FacilityContainerProperties (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: InboundRouteServiceImpl.java → LoginUserUtil.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: InboundRouteServiceImpl.java → BeansApi (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: InboundRouteServiceImpl.java → EoOptimizeRouteBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: UserLoggingFilter.java ← LoginUserBo.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: DataFilterServiceImpl.java ← LoginUserBo.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerImplService.java ← LoginUserBo.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: RoleServiceImpl.java ← LoginUserBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: UserServiceImpl.java ← LoginUserBo.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: RoleService.java ← LoginUserBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LoginUserUtil.java ← LoginUserBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: UserLoggingFilter.java ← LoginUserBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: DataFilterServiceImpl.java ← LoginUserBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerImplService.java ← LoginUserBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelServiceImpl.java ← LoginUserBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: UserServiceImpl.java ← LoginUserBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerV2ServiceImpl.java ← DmsPushKafkaConfig (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: DmsPushKafkaServiceImpl.java ← DmsPushKafkaConfig (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflinePtcScanReplayServiceImpl.java ← DmsPushKafkaConfig (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: TmsBolEventHandlerServiceImpl.java ← DmsPushKafkaConfig (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebDispatchMMServiceImpl.java ← DmsPushKafkaConfig (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebDispatchV2ServiceImpl.java ← DmsPushKafkaConfig (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosOfflineEncodingExceptionDao.java → PosOfflineEncodingException (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflineEncodingReplayServiceImpl.java ← PosOfflineEncodingExceptionDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerReceptacleScanHistoryImplService.java ← ParcelSearchResultDto (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerParcelScanHistoryService.java ← ParcelSearchResultDto (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerReceptacleScanHistoryService.java ← ParcelSearchResultDto (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: DmsPushKafkaServiceImpl.java ← DmsPushEventMessage.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflinePtcScanReplayServiceImpl.java ← DmsPushEventMessage.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: DmsPushKafkaServiceImpl.java ← DmsPushEventMessage (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflinePtcScanReplayServiceImpl.java ← DmsPushEventMessage (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: DmsPushKafkaServiceImpl.java ← PtcEventMessage.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflinePtcScanReplayServiceImpl.java ← PtcEventMessage.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: DmsPushKafkaServiceImpl.java ← PtcEventMessage (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflinePtcScanReplayServiceImpl.java ← PtcEventMessage (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflineEncodingReplayServiceImpl.java ← OfflinePtcScanMsg (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflinePtcScanReplayServiceImpl.java ← OfflinePtcScanMsg (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflineEncodingReplayService.java ← OfflinePtcScanMsg (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflinePtcScanReplayService.java ← OfflinePtcScanMsg (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflineEncodingReplayServiceImpl.java ← OfflineReplayContextHolder.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflineEncodingReplayServiceImpl.java ← OfflineReplayContext (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflinePtcScanReplayServiceImpl.java ← OfflineReplayContext (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflinePtcScanReplayServiceImpl.java ← OfflineReplayContextHolder.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LoginUserUtil.java ← OfflineReplayContext (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflineReplayContextHolder.java → OfflineReplayContext (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflineEncodingReplayServiceImpl.java ← OfflineReplayContextHolder (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflinePtcScanReplayServiceImpl.java ← OfflineReplayContextHolder (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: TmsBolEventHandlerServiceImpl.java ← TmsBolEventMessage (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: TmsBolEventHandlerService.java ← TmsBolEventMessage (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: InboundManifestSubmitCmd.java ← InboundParcelDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: InboundManifestSubmitCmd.java ← InboundParcel.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: InboundBatchDao.java ← InboundParcel.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: InboundParcelDao.java → AuditParcelBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: InboundParcelDao.java → InboundParcel (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: InboundParcelDao.java → InboundParcelScanLog.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: InboundParcelExtDao.java → InboundParcelExt (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: InboundParcelScanLogDao.java → InboundParcelScanLog (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ParcelEventPublisher.java ← InboundParcel (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: InboundParcelScanForm.java → ScanOpTypeEnum.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ScanInboundParcelRo.java → InboundParcel (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ParcelContainerService.java ← InboundParcelDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ParcelContainerService.java ← InboundParcel.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ParcelContainerService.java ← InboundParcelScanForm.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflineEncodingReplayServiceImpl.java ← InboundParcelScanForm.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerParcelScanHistoryCustomDao.java → PtcScanReportSearchDto (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerParcelScanHistoryCustomDao.java → PosContainerParcelScanHistory (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerParcelScanHistoryCustomDaoImpl.java → PtcScanReportSearchDto (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerParcelScanHistoryCustomDaoImpl.java → PosContainerParcelScanHistory (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerParcelScanHistoryDao.java → PosContainerParcelScanHistory (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerReceptacleScanHistoryDao.java ← PosContainerParcelScanHistory.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ContainerScanReportDto.java ← PosContainerParcelScanHistory (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ParcelSearchDto.java ← PosContainerParcelScanHistory (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ReceptacleSearchDto.java ← PosContainerParcelScanHistory.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerParcelScanHistoryImplService.java → PosContainerParcelExcelBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerParcelScanHistoryImplService.java → Container.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerParcelScanHistoryImplService.java → BaseFacilityService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerParcelScanHistoryService.java → PosContainerParcelExcelBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerParcelScanHistoryService.java → ParcelSearchDto (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerParcelScanHistoryService.java → PtcExportContext (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflineEncodingReplayServiceImpl.java ← PosOfflineEncodingException (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflinePtcScanReplayServiceImpl.java ← PosOfflinePtcException (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ShipmentBatchDao.java ← ShipmentParcel (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ShipmentParcelDao.java → ShipmentParcel (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: DispatchV2SubmitBuildContext.java ← ShipmentParcel (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: DispatchRollbackServiceImpl.java ← ShipmentParcelDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ReceptacleServiceImpl.java ← ShipmentParcelDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ReceptacleServiceImpl.java ← ShipmentParcel (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: TmsBolEventHandlerServiceImpl.java ← ShipmentParcelDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: TmsBolEventHandlerServiceImpl.java ← ShipmentParcel.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: TmsUnloadEventHandlerServiceImpl.java ← ShipmentParcel.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: TmsUnloadEventHandlerServiceImpl.java ← ShipmentParcelDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: AutoCloseoutServiceImpl.java ← ShipmentParcelDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: AutoCloseoutServiceImpl.java ← ShipmentParcel.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebBolServiceImpl.java ← ShipmentParcelDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebBolServiceImpl.java ← ShipmentParcel.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebDispatchMMServiceImpl.java ← ShipmentParcelDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: TmsBolMessageDao.java → TmsBolMessage (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflineEncodingReplayServiceImpl.java ← OfflineScanReplayStatusEnum.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflinePtcScanReplayServiceImpl.java ← OfflineScanReplayStatusEnum.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflineEncodingReplayServiceImpl.java ← OfflineScanReplayStatusEnum (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflinePtcScanReplayServiceImpl.java ← OfflineScanReplayStatusEnum (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerParcelScanHistoryImplService.java → PosContainerParcelScanHistoryService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerParcelScanHistoryImplService → PosContainerParcelScanHistoryService (implements)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerV2ServiceImpl.java → PosContainerOperationLog (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerV2ServiceImpl.java → DmsPushKafkaService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerV2ServiceImpl.java → ContainerCombineBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerImplService.java ← PosContainerService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerService.java → Container.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerService.java → PosContainerSo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflinePtcScanReplayServiceImpl.java ← PosContainerService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebNewReturnParcelServiceImpl.java ← PosContainerService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerImplService ← PosContainerService (implements)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ProcessContainerCloseboxToDmsServiceImpl.java → LabelDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ProcessContainerCloseboxToDmsServiceImpl.java → LabelExtDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ProcessContainerCloseboxToDmsServiceImpl.java → PosContainerDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ProcessDispatchLmToDmsServiceImpl.java → DmsApi (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ProcessDispatchLmToDmsServiceImpl.java → FacilityConfigProperties (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ProcessDispatchLmToDmsServiceImpl.java → DispatchContainerV2Dao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ProcessTmsDispatchToDmsServiceImpl.java → DmsApi (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ProcessTmsDispatchToDmsServiceImpl.java → FacilityConfigProperties (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ProcessTmsDispatchToDmsServiceImpl.java → LabelDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: DmsPushKafkaService.java → DispatchV2 (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: DmsPushKafkaService.java → PosContainer (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: DmsPushKafkaService.java → Shipment (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: DmsPushKafkaServiceImpl.java → PosContainer (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: DmsPushKafkaServiceImpl.java → Shipment (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: DmsPushKafkaServiceImpl.java → FacilityConfigProperties (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflinePtcScanReplayServiceImpl.java ← DmsPushKafkaService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: TmsBolEventHandlerServiceImpl.java ← DmsPushKafkaService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebDispatchMMServiceImpl.java ← DmsPushKafkaService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebDispatchV2ServiceImpl.java ← DmsPushKafkaService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebInboundParcelServiceImpl.java ← DmsPushKafkaService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: DmsPushKafkaServiceImpl.java → AscanEventMessage.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: DmsPushKafkaServiceImpl.java → LoginUserUtil.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: DmsPushKafkaServiceImpl.java → DispatchV2 (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflineEncodingReplayServiceImpl.java → BaseFacility.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflineEncodingReplayServiceImpl.java → InboundBatch.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflineEncodingReplayServiceImpl.java → ScanInboundParcelRo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflinePtcScanReplayServiceImpl.java → KafkaService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflinePtcScanReplayServiceImpl.java → LoginUserUtil.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflinePtcScanReplayServiceImpl.java → ConnectParcelResponse.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflineEncodingReplayServiceImpl.java → BaseFacilityService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflineEncodingReplayServiceImpl.java → OfflineEncodingReplayService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflineEncodingReplayServiceImpl.java → WebInboundBatchService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflineEncodingReplayService.java → ScanInboundParcelRo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflinePtcScanReplayServiceImpl.java → OfflinePtcScanReplayService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflinePtcScanReplayServiceImpl.java → PosContainer.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: OfflinePtcScanReplayServiceImpl → OfflinePtcScanReplayService (implements)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelOperationLogImplService.java → PlOperationLogTaskDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelOperationLogImplService.java → LabelOperationPushDto.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelOperationLogImplService.java → OperationLogEntry (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BeanRefreshRouteServiceImpl.java ← LabelOperationLogService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerImplService.java ← LabelOperationLogService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: CommercialDropShipAddressServiceImpl.java ← LabelOperationLogService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: DmsServiceImpl.java ← LabelOperationLogService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PickupBatchServiceImpl.java ← LabelOperationLogService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ProcessOperationLogServiceImpl.java ← LabelOperationLogService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PushLogServiceImpl.java ← LabelOperationLogService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelOperationLogImplService.java ← LabelOperationLogService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelOperationLogService.java → OperationLogEntry (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelOperationLogService.java → PushLog (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelOperationLogService.java → LabelOperationLog (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: TmsBolEventHandlerServiceImpl.java ← LabelOperationLogService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebDispatchMMServiceImpl.java ← LabelOperationLogService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebDispatchV2ServiceImpl.java ← LabelOperationLogService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebReLabelServiceImpl.java ← LabelOperationLogService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: SSOUserServiceImpl.java → SysUserDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: SSOUserServiceImpl.java → SysUser.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: SSOUserServiceImpl.java → SSOUserService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: UserServiceImpl.java → MD5Util.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: UserServiceImpl.java → DmsUserList (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: UserServiceImpl.java → PasswordConfig (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: TmsBolEventHandlerServiceImpl.java → OperationLogEntry.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: TmsBolEventHandlerServiceImpl.java → PosContainerDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: TmsBolEventHandlerServiceImpl.java → PosContainerParcelDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebReceivingBatchServiceImpl.java → DmsApi (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebReceivingBatchServiceImpl.java → SorterProfileService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebReceivingBatchServiceImpl.java → RpsApi (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: CreateAhManifestCmdHelper.java ← PushLogService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ImportPartnerLabelNonSortedHelper.java ← PushLogService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ImportPartnerLabelSortedHelper.java ← PushLogService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BeansServiceImpl.java ← PushLogService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerImplService.java ← com.miq.backendcommonservice.service.CommonPushLogService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerV2ServiceImpl.java ← PushLogService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: DefaultDispatchManifestServiceImpl.java ← PushLogService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: DMSDispatchManifestServiceImpl.java ← PushLogService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: USPSDispatchManifestServiceImpl.java ← PushLogService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelAddressHandleServiceImpl.java ← PushLogService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelCostCalcServiceImpl.java ← com.miq.backendcommonservice.service.CommonPushLogService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PickupBatchServiceImpl.java ← com.miq.backendcommonservice.service.CommonPushLogService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ProcessContainerCloseboxToDmsServiceImpl.java ← com.miq.backendcommonservice.service.ProcessPushLogService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ProcessDispatchLmToDmsServiceImpl.java ← com.miq.backendcommonservice.service.ProcessPushLogService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ProcessDispatchSubmitServiceImpl.java ← com.miq.backendcommonservice.service.ProcessPushLogService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ContainerProgressEventPublisher.java ← LoginUserUtil.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: SpxReturnLabelStrategy.java ← LoginUserUtil.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: DataFilterServiceImpl.java ← LoginUserUtil.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BeanRefreshRouteServiceImpl.java ← LoginUserUtil.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BeansCallbackServiceImpl.java ← LoginUserUtil.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: FndCodesServiceImpl.java ← LoginUserUtil.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelRouteServiceImpl.java ← LoginUserUtil.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelStatusServiceImpl.java ← LoginUserUtil.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PickupBatchServiceImpl.java ← LoginUserUtil.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PushLogServiceImpl.java ← LoginUserUtil.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ReceivingEventServiceImpl.java ← LoginUserUtil.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ReportTaskServiceImpl.java ← LoginUserUtil.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ReverseBatchCreateService.java ← LoginUserUtil.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ReverseBatchScanService.java ← LoginUserUtil.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ReverseBatchService.java ← LoginUserUtil.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: VintedPudoSyncServiceImpl.java ← VintedPudoLocationDto (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ProcessLabelAscanToDmsServiceImpl.java ← FacilityConfigProperties.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebFacilityConfigServiceImpl.java ← FacilityConfigProperties (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ProcessLabelAscanToDmsServiceImpl.java ← FacilityConfigProperties (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BeansApi.java ← PartnerLocationDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PartnerLocationDao.java → PartnerLocationCoverageCheckBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PartnerLocationDao.java → PartnerLocation (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PartnerLocationAdminServiceImpl.java ← PartnerLocationDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PartnerLocationServiceImpl.java ← PartnerLocationDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PickupLocationExtServiceImpl.java ← PartnerLocationDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: VintedPudoSyncServiceImpl.java ← PartnerLocationDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PartnerLocationExportProcessor.java ← PartnerLocationDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: SorterProfileDao.java → SorterProfile (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: SorterProfileServiceImpl.java ← SorterProfileDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebContainerLabelServiceImpl.java ← SorterProfileDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PickupLocationExtServiceImpl.java ← PickupLocationDto (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PickupLocationExtService.java ← PickupLocationDto (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BeansApi.java ← PartnerLocation (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PartnerTrackingEventBo.java ← PartnerLocation (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PartnerLocationAdminServiceImpl.java → PartnerLocationSo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PartnerLocationAdminServiceImpl.java → PartnerLocationPageDto (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PartnerLocationAdminServiceImpl.java → PartnerLocation (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PartnerLocationServiceImpl.java → RefreshCoverageResult (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PartnerLocationServiceImpl.java → PartnerLocation (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PartnerLocationServiceImpl.java → PusCoverageTypeEnum.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PickupLocationExtServiceImpl.java ← PartnerLocation (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: VintedPudoSyncServiceImpl.java ← PartnerLocation (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: VintedService.java ← PartnerLocation (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: partner/PartnerService.java ← PartnerLocation (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PartnerLocationAdminService.java → PartnerLocationPageDto (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PartnerLocationAdminService.java → BatchEnableSo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PartnerLocationAdminService.java → PartnerLocationSo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PartnerWebhookLogDao.java → PartnerWebhookLog (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PartnerWebhookLogServiceImpl.java → PartnerWebhookLogDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PartnerWebhookLogServiceImpl.java → PartnerWebhookLog (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PartnerWebhookLogServiceImpl.java → CallbackStatusEnum.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PartnerWebhookLogService.java → PartnerWebhookLog (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BeansFixRouteServiceImpl.java → BeansApi (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BeansFixRouteServiceImpl.java → LabelExtDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BeansFixRouteServiceImpl.java → GetBeansItemDataBatchReq.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerOperationLogImplService.java → PosContainerOperationLogService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerOperationLogImplService.java → PosContainerOperationLogSo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerOperationLogImplService.java → PosContainerOperationLogDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerOperationLogService.java → PosContainerOperationLogSo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerOperationLogImplService ← PosContainerOperationLogService (implements)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelStatusServiceImpl.java → LabelEventCodeMessageBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelStatusServiceImpl.java → LabelStatusUpdateMessageBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: LabelStatusServiceImpl.java → LabelStatusService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PartnerLocationServiceImpl.java → PartnerLocationService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PartnerLocationServiceImpl.java → PusPickupCoverageService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PartnerLocationServiceImpl.java → CollectionUtil.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PickupLocationExtServiceImpl.java → PickupLocationExtService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PickupLocationExtServiceImpl → PickupLocationExtService (implements)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: VintedPudoSyncServiceImpl.java → PusCoverageConfigBo.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: VintedPudoSyncServiceImpl.java → PusCoverageTypeEnum.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: VintedPudoSyncServiceImpl → VintedPudoSyncService (implements)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebSorterService.java → BeansApi (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebSorterService.java → FacilityRoutingMatrixBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebSorterService.java → ProfilerTemplateBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: VintedPudoSyncServiceImpl.java → PusCoverageConfigBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: VintedPudoSyncServiceImpl.java → PusCoverageTypeEnum (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebReLabelServiceImpl.java → ChangeOrderRecordDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebReLabelServiceImpl.java → CnuspsRelabelLogDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebReLabelServiceImpl.java → LabelDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebReLabelServiceImpl.java → LabelExtDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebReLabelServiceImpl.java → ReLabelReq (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebReLabelServiceImpl.java → ReLabelRes (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebReLabelService.java → ReLabelReq (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebReLabelService.java → ReLabelRes (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: SubmitDduManifestCmd.java ← BaseFacilityService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ParcelStatusKafkaPublisher.java ← BaseFacilityService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ServiceProviderExchangeUsps.java ← BaseFacilityService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BaseFacilityService.java → ScanTypeEnum (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BaseFacilityService.java → BaseFacilitySo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BaseFacilityService.java → CheckCrossPoeBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BeansServiceImpl.java ← BaseFacilityService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PosContainerV2ServiceImpl.java ← BaseFacilityService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: ParcelContainerService.java ← BaseFacilityService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: DMSDispatchManifestServiceImpl.java ← BaseFacilityService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: USPSDispatchManifestServiceImpl.java ← BaseFacilityService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BaseFacilityServiceImpl.java → DelegatingCacheOperator (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BaseFacilityServiceImpl.java → CheckCrossPoeBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BaseFacilityServiceImpl.java → RoutingResult (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: BolPdfServiceImpl.java ← BaseFacilityService (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PickupBatchServiceImpl.java → DmsApi (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PickupBatchServiceImpl.java → PickupErrorTrackingBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: PickupBatchServiceImpl.java → Pickup (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebPickupRouteServiceImpl.java → EiImportLabelRouteBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebPickupRouteServiceImpl.java → ExcelRowLimit.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebPickupRouteServiceImpl.java → LabelDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebPickupRouteServiceImpl.java → PickupDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebPickupRouteServiceImpl.java → PickupParcelDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebPickupRouteServiceImpl.java → PickupRouteDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebPickupServiceImpl.java → ExcelDataPoolBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebPickupServiceImpl.java → PickupOrderBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebPickupServiceImpl.java → PickupOrderParcelInfoBo.java (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebPickupStagingServiceImpl.java → PickupConsolidateBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebPickupStagingServiceImpl.java → PickupOrderParcelInfoBo (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify: WebPickupStagingServiceImpl.java → PickupStagingDao (imports)  `[source: graphify:pos | 置信度: high]`
+- [ ] Graphify 去噪已折叠 2077 条边（外部依赖 import 239 条 / 超上限折叠 1838 条，上限=每查询词 15·每源类 3）；如需全量请直接跑 scripts/graphify_query.py  `[source: graphify:pos:fold-summary | 置信度: low]`
+
+### ©️ 历史规则冲突候选
+
+&gt; 来源: `knowledge/rules/&lt;sys&gt;/` 关键字命中。**⚠️ Phase 1 仅做关键字匹配，必须人工复核**。
+
+- [ ] `knowledge/rules/pos/pos-address-001.md` (POS API 修改地址规则) 包含关键字 [&#x27;mapping&#x27;, &#x27;refresh&#x27;, &#x27;process&#x27;] — 上下文: ...Zip Code 校验逻辑（`recipientZip5` 校验流程）  ``` Step 1: 在 pos_zone_mapping 中查找 zip5         → 若不存在 → 报错：&quot;The zip code is out of covera...  `[rule: pos-address-001 | source: rules:pos-address-001 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-address-011.md` (POS Admin 商业地址库规则) 包含关键字 [&#x27;refresh&#x27;, &#x27;process&#x27;, &#x27;batchdelete&#x27;] — 上下文: ...地址更新模板下载**（Report） | GET `/get-address-update-template` | `/refresh-route/get-address-update-template` | 公开 | RefreshRouteContr...  `[rule: pos-address-011 | source: rules:pos-address-011 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-address-013.md` (驿站地址管理（pos_partner_location，Vinted PUDO 地址）——无编辑UI，仅查询/批量启停/导出) 包含关键字 [&#x27;refresh&#x27;, &#x27;sync&#x27;, &#x27;vintedlocationconsumer&#x27;] — 上下文: ...—`zipCode` 为空时直接判定不覆盖，不调用 PUS。  `PartnerLocationServiceImpl#refreshCoverage()`（:107 起）批量刷新一个 partner 下所有驿站的覆盖判定结果，按 `updated_at...  `[rule: pos-address-013 | source: rules:pos-address-013 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-batch-010.md` (POS Return 2.0 回仓逆向物流规则) 包含关键字 [&#x27;refresh&#x27;, &#x27;process&#x27;, &#x27;label&#x27;] — 上下文: ...`` 数据落地： - 写入 pos_push_log，push_code = POS_FIX_ROUTE_EXPIRE_REFRESH - 触发 fix_route 专属场景（processFixRouteScanExpireJob）  特殊处理： -...  `[rule: pos-batch-010 | source: rules:pos-batch-010 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-batch-017.md` (Reverse Batch 反向批次（退回/销毁/批量退回）) 包含关键字 [&#x27;process&#x27;, &#x27;label&#x27;] — 上下文: ...**: 按类型查找已有 ACTIVE 批次 5. **checkCanReverse**: 资格判定（见下） 6. **process**: 创建批次，状态 ACTIVE  ## 包裹扫描流程  1. 校验批次存在且 ACTIVE 2. 重复检查（已扫...  `[rule: pos-batch-017 | source: rules:pos-batch-017 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-container-001.md` (BOL 装车扫描触发 Container 关闭) 包含关键字 [&#x27;poscontainerimplservice&#x27;] — 上下文: ...ISPATCHING（BOL 装车扫描）→ DISPATCHED（BOL 提交生成 PDF）`：  - **关箱**（`PosContainerImplService.closeContainer()`）：`ACTIVE → CLOSED` - **BOL 装车扫描**（`saveSc...  `[rule: pos-container-001 | source: rules:pos-container-001 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-container-003.md` (Container 创建条件（Stop 按键触发）) 包含关键字 [&#x27;validate&#x27;] — 上下文: ...验点：  - **Container Destination 必填**：`pos-dispatch-002` 已记录 `validateCreate`/`validateScan` 校验 `posContainer.getDestination()` 不可...  `[rule: pos-container-003 | source: rules:pos-container-003 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-container-004.md` (PtC 绑定时机（自动 + 手动）) 包含关键字 [&#x27;sendptcevent&#x27;, &#x27;pushlogtypeenum&#x27;, &#x27;messagecode&#x27;] — 上下文: .../ routeCode 为空）→ **不推送**，且代码无告警，仅 info 日志 - **PtC 补扫后的重推**（`sendPtcEvent()`，`:1261-1283`，被 `:1242` 和 `:1561` 两处调用）：关箱后若还有包裹补扫进该容器，会重...  `[rule: pos-container-004 | source: rules:pos-container-004 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-container-006.md` (Container 与 Dispatch 规则) 包含关键字 [&#x27;process&#x27;, &#x27;pushlogtypeenum&#x27;, &#x27;poscontainerimplservice&#x27;] — 上下文: ...→ CANCELLED ```  ## Pickup 状态机  ``` CREATED → CONFIRMED → PROCESSING → COMPLETED         → CANCELLED         → FAILED ```  ##...  `[rule: pos-container-006 | source: rules:pos-container-006 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-container-007.md` (parentBatchCode 与多 Batch/日 Container 隔离策略) 包含关键字 [&#x27;init&#x27;] — 上下文: ...de` 为空时，自动触发一次 `handleFirstStop` 为新 Batch 创建 Container（lazy init） | | B | Batch 创建时批量预创建所有 chute 的 type-A Container（类似 ID_MA...  `[rule: pos-container-007 | source: rules:pos-container-007 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-container-008.md` (Encoding Workshare（预分拣大包接收与拆包分拣）) 包含关键字 [&#x27;labeldao&#x27;, &#x27;label&#x27;, &#x27;poscontainerimplservice&#x27;] — 上下文: ...lready connected.&quot;`（`:1943-1946`） 2. **receptacle 下必须有包裹**：`labelDao.findByReceptacleCode(receptacleNo)` 为空 → `&quot;No package found...  `[rule: pos-container-008 | source: rules:pos-container-008 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-datapool-001.md` (Datapool 包裹详细批量匹配与导出) 包含关键字 [&#x27;process&#x27;, &#x27;label&#x27;, &#x27;webpickupserviceimpl&#x27;] — 上下文: ...rtCodeController.java:338） | | v2 异步 | 走 `AbstractReportTaskProcessor`，任务池 `TP-DataPool:processing`（WebSortCodeController.java:...  `[rule: pos-datapool-001 | source: rules:pos-datapool-001 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-ddu-001.md` (Ddu 模块业务规则摘要) 包含关键字 [&#x27;mapping&#x27;, &#x27;ping&#x27;, &#x27;validate&#x27;] — 上下文: ...m-ddu-postage —  | | POST /usps-ddu-population/validate-ddu-mapping —  | | POST /usps-drop-ship-facility/load-data —  |  ## 关键规...  `[rule: pos-ddu-001 | source: rules:pos-ddu-001 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-dispatch-002.md` (BOL Origin/Destination 与 PDF 生成) 包含关键字 [&#x27;validate&#x27;, &#x27;getvalidinredisbyfacilitycode&#x27;, &#x27;basefacilityservice&#x27;] — 上下文: ...MM 模式指向 CDA ID） |  ## 校验规则  - **Container Destination 必填**: validateCreate/validateScan 时校验 `posContainer.getDestination()` 不可为空...  `[rule: pos-dispatch-002 | source: rules:pos-dispatch-002 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-dispatch-009.md` (POS Dispatch 状态流转规则) 包含关键字 [&#x27;process&#x27;, &#x27;label&#x27;] — 上下文: ...atchStatusEnum` 共有 **8 个枚举值**（2026-07-31 复核：CREATED/PENDING/PROCESSING/PARTIAL_COMPLETED/COMPLETED/FAILURE/**CLOSED**/DELETED，初...  `[rule: pos-dispatch-009 | source: rules:pos-dispatch-009 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-dispatch-013.md` (Dispatch V2 Destination 聚合与多 BOL 机制) 包含关键字 [&#x27;sync&#x27;, &#x27;label&#x27;, &#x27;basefacilityservice&#x27;] — 上下文: ...，`submit()` 会额外异步触发 `maerskDispatchManifestService.manifestAsync()`（马士基舱单提交，由 `maerskFeatureEnabled` 开关控制）——这是本规则此前完全未覆盖的分支，...  `[rule: pos-dispatch-013 | source: rules:pos-dispatch-013 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-dispatch-014.md` (弱化批次（Dispatch LM）POS→DMS 推送链路) 包含关键字 [&#x27;init&#x27;, &#x27;refresh&#x27;, &#x27;process&#x27;] — 上下文: ...optimize（DispatchLMService.java:489-532） | | Optimize 状态机 | INIT→PROCESSING→SUCCEED/FAILED/TBC（Route.java:168-170） | | TBC 条...  `[rule: pos-dispatch-014 | source: rules:pos-dispatch-014 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-dispatch-022.md` (pos_dispatch.dispatch_id varchar(40) 累积溢出) 包含关键字 [&#x27;mapping&#x27;, &#x27;ping&#x27;, &#x27;sync&#x27;] — 上下文: ...&#x27; at row 1     at com.mysql.cj.jdbc.exceptions.SQLExceptionsMapping.translateException     at com.mysql.cj.jdbc.ClientPreparedS...  `[rule: pos-dispatch-022 | source: rules:pos-dispatch-022 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-dispatch-023.md` (Dispatch MM / Dispatch 3.0（团队口语&quot;Dispatch SC&quot;）BOL 预建 + 独立提交流程) 包含关键字 [&#x27;init&#x27;, &#x27;process&#x27;, &#x27;handledispatch&#x27;] — 上下文: ...BOL → 最后 Submit 才统一生成 PDF 并落终态**，即 Shipment/BOL 记录在提交前就已经存在（INITIALIZE 态），Submit 只做 UPDATE，不做 INSERT。  Dispatch V2（COMM/NORM...  `[rule: pos-dispatch-023 | source: rules:pos-dispatch-023 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-encoding-001.md` (只读查看类补充（Encoding Sc / 分拣看板 / 到货看板 / PTC扫描记录）) 包含关键字 [&#x27;webinboundparcelserviceimpl&#x27;, &#x27;inboundparcel&#x27;, &#x27;poscontainerparcelscanhistory&#x27;] — 上下文: ...B 分拣机分拣走的是完全同一套扫描接口**（A/B/C-Scan，见 `[[pos-shipment-016]]`），`WebInboundParcelServiceImpl` 的扫描逻辑中未搜到任何按 `SC` vs `HUB` 分支的判断代码。两者的唯一区别是发生扫描动作的**设施本身的...  `[rule: pos-encoding-001 | source: rules:pos-encoding-001 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-facility-014.md` (Chute / Sort Profile 配置与路由) 包含关键字 [&#x27;mapping&#x27;, &#x27;ping&#x27;, &#x27;messagecode&#x27;] — 上下文: ...code/facility_type/poe）——「主仓/子仓身份」来源 | | `pos_base_facility_mapping` | `BaseFacilityMapping` | external_id 外部映射 | | `pos_poe_zo...  `[rule: pos-facility-014 | source: rules:pos-facility-014 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-facility-023.md` (AUTO SORTER 复称重量的双写与 pos_inbound_parcel 等值时序) 包含关键字 [&#x27;label&#x27;, &#x27;webinboundparcelserviceimpl&#x27;, &#x27;inboundparcel&#x27;] — 上下文: ...l`**。`pos_inbound_parcel.weight` 只有在后续 A-Scan / encode 时，由 `WebInboundParcelServiceImpl` 从 `label.getWeight()` 复制过来——此时 `label.weight` 已被 sorter 改为...  `[rule: pos-facility-023 | source: rules:pos-facility-023 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-facility-024.md` (Facility Routing Matrix 跨 POE 转运决策（pos_config_facility_routing_matrix）) 包含关键字 [&#x27;mapping&#x27;, &#x27;ping&#x27;, &#x27;label&#x27;] — 上下文: ...de)   destFacilityCode 由 poe + zone 经 pos_poe_zone_facility_mapping 派生  ROUTE → success=true（直接派送） HUB/SC → success=false, isCr...  `[rule: pos-facility-024 | source: rules:pos-facility-024 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-label-005.md` (Label 完整生命周期规则（20 态）) 包含关键字 [&#x27;refresh&#x27;, &#x27;process&#x27;, &#x27;sync&#x27;] — 上下文: ...UTE_PROFILE, FIX_ROUTE_EXPIRE, FIX_ROUTE_OTHER_ERROR, FORCE_REFRESH_STATUS, UPDATE_INACTIVE_ROUTE, UPDATE_ADDRESS_REFRESH_ROUTE...  `[rule: pos-label-005 | source: rules:pos-label-005 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-label-020.md` (POS label_status 签收同步链路（DMS→TRK→POS 三跳）) 包含关键字 [&#x27;label&#x27;, &#x27;labelstatusserviceimpl&#x27;] — 上下文: ...ir/xxl_job/service.py` — exchangeTrkEventJob - `qa_gate/.../LabelStatusServiceImpl.java:73-99` — 事件码→状态映射 - `knowledge/rules/pos/pos-label-005...  `[rule: pos-label-020 | source: rules:pos-label-020 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-label-021.md` (POS RECEIVED 状态未实现（二次考古确认）) 包含关键字 [&#x27;init&#x27;, &#x27;label&#x27;, &#x27;labelstatusserviceimpl&#x27;] — 上下文: ...Event，不改 labelStatus | | 事件码→状态映射 | `LabelStatusServiceImpl.initEventCodeStatusMap()` | ✗ 仅映射 DELIVERED(57201/57202) 和 UNDEL...  `[rule: pos-label-021 | source: rules:pos-label-021 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-manifest-001.md` (Manifest/Shipment 数据来源与外部对接矩阵) 包含关键字 [&#x27;process&#x27;, &#x27;label&#x27;, &#x27;processdispatchv2todmsserviceimpl&#x27;] — 上下文: ...mentDao.save`（新建 shipment+parcel）；**UPDATE**→`PickupService.processPickupResultFeedback`（回填 pickup 结果到已有 shipment/label）；**APPE...  `[rule: pos-manifest-001 | source: rules:pos-manifest-001 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-manifest-002.md` (马士基（Maersk）POS Manifest 提交与重试链路) 包含关键字 [&#x27;mapping&#x27;, &#x27;ping&#x27;, &#x27;sync&#x27;] — 上下文: ...。  &gt; **2026-07-25 补充考古（任务110）：FD/MSK 容器写入点已定位**。链路：`pos_dsp_mapping` 表需有 `dsp_code=MSK,dsp_type=LP_DSP` 记录（sit1/uat 均已配置，2026-0...  `[rule: pos-manifest-002 | source: rules:pos-manifest-002 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-offline-001.md` (POS 离线扫描重放（断网暂存 + 联网补录，复用在线 A-Scan/PTC 链路）) 包含关键字 [&#x27;refresh&#x27;, &#x27;process&#x27;, &#x27;scanparceltocontainerofflinereplay&#x27;] — 上下文: ...|  token 配置键 `exchange.offline.sync.token` 在代码用 `@Value`+`@RefreshScope` 引用，仓库 yml 无值（在 Nacos 配置中心，符合项目惯例）。  ## 重放状态机  `Offlin...  `[rule: pos-offline-001 | source: rules:pos-offline-001 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-pickup-001.md` (Pickup 揽收全链路规则（staging → order → route → DMS 回传 → receiving）) 包含关键字 [&#x27;refresh&#x27;, &#x27;process&#x27;, &#x27;sync&#x27;] — 上下文: ...upBatchController.java:131，**手动触发，无定时 job**） - 调 Beans：`BeanRefreshRouteServiceImpl.getRouteInfo`（:421），`facilityCode += &quot;-PICK...  `[rule: pos-pickup-001 | source: rules:pos-pickup-001 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-ptc-001.md` (箱单打印（Container Label 预打印，基于 Sort Profile）) 包含关键字 [&#x27;mapping&#x27;, &#x27;ping&#x27;, &#x27;label&#x27;] — 上下文: ...码/序号/目的地） | 一次派车的完整装载清单 | | 数据来源 | Sort Profile（`SorterChuteMapping`） | Shipment + Container 列表 |  ⚠️ **纠正差异清单假设**：`pos-dispatc...  `[rule: pos-ptc-001 | source: rules:pos-ptc-001 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-route-008.md` (POS FixRoute 配置规则与 Job 链路) 包含关键字 [&#x27;mapping&#x27;, &#x27;refresh&#x27;, &#x27;updateprofile&#x27;] — 上下文: ...| 表名 | 字段说明 | 用途 | |---|---|---| | `pos_poe_zone_facility_mapping` | `poe` + `zone` → `facility_code`, `warehouse_id` | POE +...  `[rule: pos-route-008 | source: rules:pos-route-008 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-route-025.md` (包裹重置（Reset Fix Route Label Status，OP 手动批量重置路线）) 包含关键字 [&#x27;mapping&#x27;, &#x27;refresh&#x27;, &#x27;process&#x27;] — 上下文: ...reshRouteController.java`，仓库侧 Web）两个模块里逐行相同的重复实现，均 `@RequestMapping(&quot;/refresh-route&quot;)`，调同一个 `BeanRefreshRouteServiceImpl`。团队内部实...  `[rule: pos-route-025 | source: rules:pos-route-025 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-shein-001.md` (Shein USPS 分拣装箱（Gaylord）与派发 —— POS 侧为薄代理，真实业务逻辑在 ags-sorter-api) 包含关键字 [&#x27;mapping&#x27;, &#x27;process&#x27;, &#x27;processbatch&#x27;] — 上下文: ...s.getZipcode(barcode)` 截取条码第 4-6 位作为邮编前 3 位 3. 用邮编查 `ZipcodeMapping` 表（`zipcodeMappingCacheService.findByZipcode`）→ 命中的第一条记录的 `...  `[rule: pos-shein-001 | source: rules:pos-shein-001 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-shipment-007.md` (POS Receiving 轨迹触发规则（异步链路）) 包含关键字 [&#x27;process&#x27;, &#x27;webinboundparcelcontroller&#x27;, &#x27;labeldao&#x27;] — 上下文: ...）  ``` parcel A-Scan (/scan)    ↓ 写入 pos_encoding_scan_log (processStatus=PENDING)    ↓ XXL-Job 周期消费 encodingTrigerReceivingEve...  `[rule: pos-shipment-007 | source: rules:pos-shipment-007 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-shipment-015.md` (Exception Parcel 异常件识别、分类与处理) 包含关键字 [&#x27;labeldao&#x27;, &#x27;label&#x27;, &#x27;fixroutescanserviceimpl&#x27;] — 上下文: ...ode 不可重复扫描（&quot;exception parcel already exits&quot;）   2. **标签存在**: labelDao.findByTrackingNumber 必须找到（&quot;label not exits&quot;）   3. **Custome...  `[rule: pos-shipment-015 | source: rules:pos-shipment-015 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-shipment-016.md` (A/B/C-Scan 三步审核扫描链) 包含关键字 [&#x27;process&#x27;, &#x27;fistscanpushoms&#x27;, &#x27;getscandate&#x27;] — 上下文: ...atchCode} | {routeCode}&quot;` 关联） 5. AUDIT 记录已 OK → 返回 &quot;Already Processed&quot; 警告 6. 设置 `bscanTime` 和 `bscanOperator` 7. 写入 B_SCAN 到 `p...  `[rule: pos-shipment-016 | source: rules:pos-shipment-016 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-shipment-018.md` (Shipment 7 种 shipmentMode 来源枚举) 包含关键字 [&#x27;label&#x27;, &#x27;pickupbatchserviceimpl&#x27;] — 上下文: ...B or CUSTOMIZED&quot;） | ⚠️ 会议混同 CUSTOMER | | `PICKUP` | 提货生成 | `PickupBatchServiceImpl.java:874,946` setPICKUP | ✅「提货生成」 |  ## ⚠️ CUSTOMER vs CUST...  `[rule: pos-shipment-018 | source: rules:pos-shipment-018 | 置信度: low]`
+- [ ] `knowledge/rules/pos/pos-tms-001.md` (TMS Middle Mile 卸货/装货触发 POS 收货/Dispatch（Kafka 异步链路）) 包含关键字 [&#x27;process&#x27;, &#x27;handledispatch&#x27;, &#x27;label&#x27;] — 上下文: ...`，在线模式）或 `PosTmsDmsPushPendingDao.insertIgnore` 落待确认表（离线模式，`ProcessTmsDispatchToDmsServiceImpl` 后续异步补推，`businessNo=dispatchCode...  `[rule: pos-tms-001 | source: rules:pos-tms-001 | 置信度: low]`
+
+### 🅳 知识库影响面（维护核对清单）
+
+&gt; 来源: `knowledge/ui-maps/`（操作层）+ `knowledge/graph/`（图谱）+ `knowledge/rules/&lt;sys&gt;/`（规则）关键词命中，每条带 `文件:行号` 锚点（任务 107 C1）。
+&gt; 用法（D1 流动维护）: 谁测这单需求，谁顺手核对清单里的条目是否需更新；确认过期 → 更新条目或写收件箱 `system_alert`
+
+- [ ] `knowledge/ui-maps/_flows/driver-delivery.yaml` — 命中需求关键词「label」@ knowledge/ui-maps/_flows/driver-delivery.yaml:4，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:ui-maps | 置信度: medium]`
+- [ ] `knowledge/ui-maps/_flows/driver-loading-scan.yaml` — 命中需求关键词「process」@ knowledge/ui-maps/_flows/driver-loading-scan.yaml:4，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:ui-maps | 置信度: medium]`
+- [ ] `knowledge/ui-maps/_flows/driver-pickup.yaml` — 命中需求关键词「label」@ knowledge/ui-maps/_flows/driver-pickup.yaml:4，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:ui-maps | 置信度: medium]`
+- [ ] `knowledge/ui-maps/_flows/pos-container-combine.yaml` — 命中需求关键词「process」@ knowledge/ui-maps/_flows/pos-container-combine.yaml:2，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:ui-maps | 置信度: medium]`
+- [ ] `knowledge/ui-maps/_flows/pos-container-label-print.yaml` — 命中需求关键词「label」@ knowledge/ui-maps/_flows/pos-container-label-print.yaml:1，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:ui-maps | 置信度: medium]`
+- [ ] `knowledge/ui-maps/_flows/pos-ptc-manual-scan.yaml` — 命中需求关键词「label」@ knowledge/ui-maps/_flows/pos-ptc-manual-scan.yaml:6，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:ui-maps | 置信度: medium]`
+- [ ] `knowledge/ui-maps/cps.yaml` — 命中需求关键词「label」@ knowledge/ui-maps/cps.yaml:9，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:ui-maps | 置信度: medium]`
+- [ ] `knowledge/ui-maps/dms-app.yaml` — 命中需求关键词「label」@ knowledge/ui-maps/dms-app.yaml:9，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:ui-maps | 置信度: medium]`
+- [ ] `knowledge/ui-maps/oms.yaml` — 命中需求关键词「ping」@ knowledge/ui-maps/oms.yaml:6，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:ui-maps | 置信度: medium]`
+- [ ] `knowledge/ui-maps/pos.yaml` — 命中需求关键词「label」@ knowledge/ui-maps/pos.yaml:9，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:ui-maps | 置信度: medium]`
+- [ ] `knowledge/ui-maps/pus.yaml` — 命中需求关键词「label」@ knowledge/ui-maps/pus.yaml:24，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:ui-maps | 置信度: medium]`
+- [ ] `knowledge/graph/data-ownership.md` — 命中需求关键词「mapping」@ knowledge/graph/data-ownership.md:24，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:graph | 置信度: medium]`
+- [ ] `knowledge/graph/entities-ags-sorter.md` — 命中需求关键词「label」@ knowledge/graph/entities-ags-sorter.md:9，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:graph | 置信度: medium]`
+- [ ] `knowledge/graph/entities-dms.md` — 命中需求关键词「mapping」@ knowledge/graph/entities-dms.md:3，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:graph | 置信度: medium]`
+- [ ] `knowledge/graph/entities-oms.md` — 命中需求关键词「mapping」@ knowledge/graph/entities-oms.md:11，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:graph | 置信度: medium]`
+- [ ] `knowledge/graph/entities-pos-ext.md` — 命中需求关键词「label」@ knowledge/graph/entities-pos-ext.md:4，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:graph | 置信度: medium]`
+- [ ] `knowledge/graph/entities-pos.md` — 命中需求关键词「beansfixroutejob」@ knowledge/graph/entities-pos.md:14，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:graph | 置信度: medium]`
+- [ ] `knowledge/graph/entities-pus.md` — 命中需求关键词「label」@ knowledge/graph/entities-pus.md:12，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:graph | 置信度: medium]`
+- [ ] `knowledge/graph/entities-rps.md` — 命中需求关键词「label」@ knowledge/graph/entities-rps.md:4，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:graph | 置信度: medium]`
+- [ ] `knowledge/graph/entities-tms.md` — 命中需求关键词「pom」@ knowledge/graph/entities-tms.md:158，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:graph | 置信度: medium]`
+- [ ] `knowledge/graph/entities-trk.md` — 命中需求关键词「label」@ knowledge/graph/entities-trk.md:5，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:graph | 置信度: medium]`
+- [ ] `knowledge/graph/impact-matrix.md` — 命中需求关键词「label」@ knowledge/graph/impact-matrix.md:5，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:graph | 置信度: medium]`
+- [ ] `knowledge/graph/knowledge-gaps.md` — 命中需求关键词「label」@ knowledge/graph/knowledge-gaps.md:6，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:graph | 置信度: medium]`
+- [ ] `knowledge/graph/trigger-chains.md` — 命中需求关键词「validate」@ knowledge/graph/trigger-chains.md:7，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:graph | 置信度: medium]`
+- [ ] `knowledge/graph.md` — 命中需求关键词「label」@ knowledge/graph.md:11，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:graph | 置信度: medium]`
+- [ ] `knowledge/rules/pos/error-playbook.md` — 命中需求关键词「sync」@ knowledge/rules/pos/error-playbook.md:127，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-address-001.md` — 命中需求关键词「updateaddressservice」@ knowledge/rules/pos/pos-address-001.md:6，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-address-011.md` — 命中需求关键词「refresh」@ knowledge/rules/pos/pos-address-011.md:18，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-address-013.md` — 命中需求关键词「partnerlocation」@ knowledge/rules/pos/pos-address-013.md:9，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-batch-010.md` — 命中需求关键词「process」@ knowledge/rules/pos/pos-batch-010.md:44，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-batch-017.md` — 命中需求关键词「process」@ knowledge/rules/pos/pos-batch-017.md:79，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-container-001.md` — 命中需求关键词「poscontainerimplservice」@ knowledge/rules/pos/pos-container-001.md:32，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-container-003.md` — 命中需求关键词「validate」@ knowledge/rules/pos/pos-container-003.md:54，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-container-004.md` — 命中需求关键词「poscontainerimplservice」@ knowledge/rules/pos/pos-container-004.md:11，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-container-006.md` — 命中需求关键词「process」@ knowledge/rules/pos/pos-container-006.md:37，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-container-007.md` — 命中需求关键词「init」@ knowledge/rules/pos/pos-container-007.md:69，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-container-008.md` — 命中需求关键词「webworksharecontainercontroller」@ knowledge/rules/pos/pos-container-008.md:9，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-datapool-001.md` — 命中需求关键词「process」@ knowledge/rules/pos/pos-datapool-001.md:11，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-ddu-001.md` — 命中需求关键词「mapping」@ knowledge/rules/pos/pos-ddu-001.md:57，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-dispatch-002.md` — 命中需求关键词「getvalidinredisbyfacilitycode」@ knowledge/rules/pos/pos-dispatch-002.md:63，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-dispatch-009.md` — 命中需求关键词「process」@ knowledge/rules/pos/pos-dispatch-009.md:31，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-dispatch-013.md` — 命中需求关键词「sync」@ knowledge/rules/pos/pos-dispatch-013.md:52，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-dispatch-014.md` — 命中需求关键词「facilityconfigproperties」@ knowledge/rules/pos/pos-dispatch-014.md:7，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-dispatch-022.md` — 命中需求关键词「mapping」@ knowledge/rules/pos/pos-dispatch-022.md:38，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-dispatch-023.md` — 命中需求关键词「tmsboleventhandlerserviceimpl」@ knowledge/rules/pos/pos-dispatch-023.md:19，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-encoding-001.md` — 命中需求关键词「webinboundparcelserviceimpl」@ knowledge/rules/pos/pos-encoding-001.md:27，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-exception-001.md` — 命中需求关键词「webrelabelcontroller」@ knowledge/rules/pos/pos-exception-001.md:12，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-facility-014.md` — 命中需求关键词「websorterservice」@ knowledge/rules/pos/pos-facility-014.md:11，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-facility-023.md` — 命中需求关键词「inboundparcel」@ knowledge/rules/pos/pos-facility-023.md:10，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-facility-024.md` — 命中需求关键词「basefacilityservice」@ knowledge/rules/pos/pos-facility-024.md:12，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-label-005.md` — 命中需求关键词「labelstatusserviceimpl」@ knowledge/rules/pos/pos-label-005.md:10，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-label-020.md` — 命中需求关键词「labelstatusserviceimpl」@ knowledge/rules/pos/pos-label-020.md:11，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-label-021.md` — 命中需求关键词「labelstatusserviceimpl」@ knowledge/rules/pos/pos-label-021.md:9，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-manifest-001.md` — 命中需求关键词「isplaceholder」@ knowledge/rules/pos/pos-manifest-001.md:11，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-manifest-002.md` — 命中需求关键词「shipmentparcel」@ knowledge/rules/pos/pos-manifest-002.md:29，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-offline-001.md` — 命中需求关键词「offlineencodingreplayserviceimpl」@ knowledge/rules/pos/pos-offline-001.md:9，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-pickup-001.md` — 命中需求关键词「pickuprolloverjob」@ knowledge/rules/pos/pos-pickup-001.md:13，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-ptc-001.md` — 命中需求关键词「labelserviceimpl」@ knowledge/rules/pos/pos-ptc-001.md:11，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-route-008.md` — 命中需求关键词「fixroutescanserviceimpl」@ knowledge/rules/pos/pos-route-008.md:9，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-route-025.md` — 命中需求关键词「refresh」@ knowledge/rules/pos/pos-route-025.md:9，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-shein-001.md` — 命中需求关键词「pom」@ knowledge/rules/pos/pos-shein-001.md:16，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-shipment-007.md` — 命中需求关键词「webinboundparcelcontroller」@ knowledge/rules/pos/pos-shipment-007.md:15，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-shipment-015.md` — 命中需求关键词「fixroutescanserviceimpl」@ knowledge/rules/pos/pos-shipment-015.md:11，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-shipment-016.md` — 命中需求关键词「webinboundparcelserviceimpl」@ knowledge/rules/pos/pos-shipment-016.md:11，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-shipment-018.md` — 命中需求关键词「pickupbatchserviceimpl」@ knowledge/rules/pos/pos-shipment-018.md:18，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `knowledge/rules/pos/pos-tms-001.md` — 命中需求关键词「tmsboleventhandlerserviceimpl」@ knowledge/rules/pos/pos-tms-001.md:11，本单测试人顺手核对该条目是否需更新（D1）  `[source: kb-surface:rules | 置信度: medium]`
+- [ ] `prod-2026-04-pos-pus-sync` — 命中需求关键词「rollover」（历史事故参考）@ knowledge/gotchas/prod-incidents.md#pospus-数据同步是高频故障点；该测边界：POS→PUS 双向一致性验证（不只验证写入方）；consolidate 与 pickup 时间窗口联合场景（不能单点测）  `[source: kb-surface:lessons | 置信度: high]`
+- [ ] `prod-2026-07-sorter-ff-regression` — 命中需求关键词「sorter」（历史事故参考）@ knowledge/gotchas/prod-incidents.md#分拣机sorter场景必须显式回归；该测边界：改了 P2C / SGA / encoding_version 必须回归分拣机；分拣机回归走 F2 + FF 两种模式，不只走主流程；评审 checklist 显式确认&quot;是否涉及分拣机&quot;  `[source: kb-surface:lessons | 置信度: high]`
+
+### 📊 覆盖摘要
+
+| 段 | 条目数 | 其中缺口 ⚠️ |
+|---|---|---|
+| A 同系统异常 | 1 | 1 |
+| B 跨系统联动 | 544 | 0 |
+| C 冲突候选   | 39 | — |
+| D 知识库影响面 | 68 | — |
+
+**用例设计提示**：A 段每条 → 至少 1 条异常用例；B 段每条 → 至少 1 条跨系统集成验证点；C 段每条 → 人工复核是否真冲突。</pre>
+      <div id="rr-impact-rendered"></div>
+    </div>
+  </details>
+</div>
+
+<div class="rr-section rr-judgement" id="sec-5">
+  <div class="rr-section-head"><span class="rr-num">5</span><span class="rr-section-title">综合判断（QA Lead 手填）</span></div>
+  <div class="rr-card">
+    <p class="rr-judgement-recap">基于实测信号,本次最值得关注的3 件事(共 5 项,其余详见顶部「上线判读」):</p><ul class="rr-judgement-recap-list"><li>1 个关键/阻塞 bug 未修复</li><li>MR CodeReview 在 4 个 MR 里发现 20 个 critical、41 个 major 问题——一次性扫描快照,不确定后续是否已处理</li><li>1 个改动系统不在申报的项目组范围内——影响面扫描没扫到它们,跨团队改动未被测试覆盖确认</li></ul>
+    <div class="rr-field">
+      <label>风险级别</label>
+      <select>
+        <option value="">请选择</option>
+        <option value="高">高</option>
+        <option value="中">中</option>
+        <option value="低">低</option>
+      </select>
+    </div>
+    <div class="rr-field">
+      <label>一句话理由</label>
+      <textarea rows="3" placeholder="填写风险判断的理由，不写能否上线的结论，只给建议"></textarea>
+    </div>
+  </div>
+</div>
+
+<div class="rr-section" id="sec-6"><div class="rr-section-head"><span class="rr-num">6</span><span class="rr-section-title">跨发布趋势（自动汇总）</span></div><div class="rr-card"><p class="rr-summary">把历次发布的关键指标摆在一起看——单次报告回答「这次怎么样」,这张表回答「跟上一次比,是好了还是差了」。</p><div class="rr-tc-links"><table class="rr-tc-table"><thead><tr><th>发布</th><th>判读</th><th>缺口数</th><th>需求覆盖</th><th>关联用例</th><th>盲区</th><th>MR·CR 发现</th></tr></thead><tbody><tr><td class='rr-tc-pi'>26/08/11 - POS Release<span class="rr-tc-count">2026-08-11</span></td><td><span class="rr-badge rr-badge-amber">存在缺口</span></td><td>3</td><td>1/16</td><td>6</td><td>1</td><td>42 个 · c2/m12</td></tr><tr><td class='rr-tc-pi'>26/08/14- pos 商业地址库发布<span class="rr-tc-count">2026-08-14</span></td><td><span class="rr-badge rr-badge-amber">存在缺口</span></td><td>2</td><td>0/1</td><td>—</td><td>0</td><td>—</td></tr><tr class="rr-trend-current"><td class='rr-tc-pi'>26/08/17 - Beans 刷新优化<span class="rr-tc-count">2026-08-17</span></td><td><span class="rr-badge rr-badge-amber">存在缺口</span></td><td>5</td><td>1/4</td><td>56</td><td>1</td><td>20 个 · c20/m41</td></tr></tbody></table></div><p class="rr-testcase-atrisk-title">对比上一次</p><p class="rr-summary">待确认缺口比上次多了3（上次 2，本次 5），值得注意;测试盲区比上次多了1（上次 0，本次 1），值得注意。</p></div></div>
+
+<div class="rr-footer">
+  报告生成时间（UTC）：2026-08-17T08:09:52Z · 本报告不阻断发布 · 不绑 KPI · 任务 91 S1
+</div>
+
+</div>
+
+<script>
+// 把 impact_scan.py 产出的 markdown 文本(存在隐藏 <pre> 里)解析成可折叠、可勾选的交互式清单。
+// 解析失败时保留原始 <pre> 兜底显示,不隐藏任何内容。
+(function renderImpactScan(){
+  const raw = document.querySelector('.rr-impact-raw');
+  const target = document.getElementById('rr-impact-rendered');
+  if(!raw || !target) return;
+  const text = raw.textContent || '';
+  if(!text.trim()){ raw.style.display='block'; return; }
+
+  try{
+    const lines = text.split('\n');
+    let html = '';
+    let leadHtml = '';
+    let inGroup = false;
+    let inTable = false;
+    let tableRows = [];
+    let seenFirstGroup = false;
+
+    const escapeHtml = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const inlineMd = s => escapeHtml(s)
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+    function closeGroup(){ if(inGroup){ html += '</div></div>'; inGroup=false; } }
+
+    function flushTable(){
+      if(!tableRows.length) return;
+      const header = tableRows[0].map(c=>c.trim());
+      const body = tableRows.slice(2); // 跳过表头 + 分隔行
+      let t = '<div class="rr-impact-summary">';
+      body.forEach(cols=>{
+        const seg = (cols[0]||'').trim();
+        const count = (cols[1]||'').trim();
+        const gap = (cols[2]||'').trim();
+        const hasGap = gap && gap !== '—' && gap !== '0';
+        t += `<div class="rr-impact-stat"><div class="rr-impact-stat-num">${escapeHtml(count)}</div>` +
+             (hasGap ? `<div class="rr-impact-stat-gap">缺口 ${escapeHtml(gap)}</div>` : '') +
+             `<div class="rr-impact-stat-label">${escapeHtml(seg)}</div></div>`;
+      });
+      t += '</div>';
+      html += t;
+      tableRows = [];
+      inTable = false;
+    }
+
+    for(const rawLine of lines){
+      const line = rawLine.trimEnd();
+      if(!line.trim()){ continue; }
+
+      if(line.startsWith('|')){
+        inTable = true;
+        tableRows.push(line.split('|').slice(1,-1));
+        continue;
+      }
+      if(inTable){ flushTable(); }
+
+      if(line.startsWith('### ')){
+        closeGroup();
+        seenFirstGroup = true;
+        const rawTitle = line.replace(/^###\s*/, '');
+        const title = inlineMd(rawTitle);
+        // 覆盖摘要是一眼要看到的关键数字,不折叠隐藏——跟其余(可折叠的)分组区分渲染。
+        if(/📊/.test(rawTitle)){
+          html += `<div class="rr-impact-group rr-impact-summary-group">` +
+                  `<div class="rr-impact-group-title" style="padding:14px 18px 4px">${title}</div>` +
+                  `<div class="rr-impact-group-body" style="padding:6px 18px 14px">`;
+        } else {
+          html += `<div class="rr-impact-group"><div class="rr-impact-group-head">` +
+                  `<span class="rr-impact-group-toggle">▾</span><span class="rr-impact-group-title">${title}</span></div>` +
+                  `<div class="rr-impact-group-body">`;
+        }
+        inGroup = true;
+        continue;
+      }
+      if(line.startsWith('## ')){
+        continue; // 顶层标题已由 h2 章节标题承担,markdown 里的重复标题跳过
+      }
+      if(line.startsWith('> ')){
+        const noteHtml = `<div class="${seenFirstGroup ? 'rr-impact-meta' : 'rr-impact-note'}">${inlineMd(line.replace(/^>\s*/, ''))}</div>`;
+        if(seenFirstGroup && inGroup){ html += noteHtml; } else { leadHtml += noteHtml; }
+        continue;
+      }
+      const m = line.match(/^-\s*\[( |x)\]\s*(.+)$/i);
+      if(m && inGroup){
+        const checked = m[1].toLowerCase() === 'x';
+        let body = m[2];
+        const tagMatch = body.match(/`\[([^\]]+)\]`\s*$/);
+        let tagHtml = '';
+        let confClass = '';
+        if(tagMatch){
+          body = body.slice(0, tagMatch.index).trim();
+          const tagText = tagMatch[1];
+          tagHtml = `<span class="rr-impact-item-tag">${escapeHtml(tagText)}</span>`;
+          if(/置信度:\s*high/i.test(tagText)) confClass = 'rr-impact-item-conf-high';
+          else if(/置信度:\s*low/i.test(tagText)) confClass = 'rr-impact-item-conf-low';
+        }
+        html += `<label class="rr-impact-item ${checked?'checked':''} ${confClass}">` +
+                `<input type="checkbox" ${checked?'checked':''}>` +
+                `<span class="rr-impact-item-text">${inlineMd(body)}${tagHtml}</span></label>`;
+        continue;
+      }
+      // 兜底:未识别的行(比如段落文字)原样接在当前分组或前言里
+      const para = `<div class="${inGroup ? '' : 'rr-impact-meta'}">${inlineMd(line)}</div>`;
+      if(inGroup){ html += para; } else { leadHtml += para; }
+    }
+    flushTable();
+    closeGroup();
+
+    if(!seenFirstGroup){ throw new Error('未识别到任何 ### 分组,判定解析失败,保留原始文本'); }
+
+    target.innerHTML =
+      '<div class="rr-impact-toolbar"><button type="button" class="rr-impact-toggle-btn" id="rr-impact-toggle-all">全部展开 / 折叠</button></div>' +
+      leadHtml + html;
+
+    // 事件委托:折叠/展开分组、勾选清单项——不拼接内联事件属性字符串,统一走 addEventListener
+    target.addEventListener('click', ev => {
+      const head = ev.target.closest('.rr-impact-group-head');
+      if(head) head.parentElement.classList.toggle('collapsed');
+    });
+    target.addEventListener('change', ev => {
+      const cb = ev.target.closest('.rr-impact-item input[type=checkbox]');
+      if(cb) cb.closest('.rr-impact-item').classList.toggle('checked', cb.checked);
+    });
+    document.getElementById('rr-impact-toggle-all')?.addEventListener('click', () => {
+      document.querySelectorAll('.rr-impact-group').forEach(g => g.classList.toggle('collapsed'));
+    });
+  }catch(e){
+    raw.style.display = 'block';
+  }
+})();
+</script>
+</body>
+</html>
