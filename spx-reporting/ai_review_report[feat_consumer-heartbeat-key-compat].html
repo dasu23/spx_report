@@ -1259,7 +1259,7 @@
   <div class="page">
     <header class="hero">
       <h1>AI Code Review 报告</h1>
-      <p class="hero-meta">服务: spx-reporting | 生成时间: 2026-08-19 15:02:11</p>
+      <p class="hero-meta">服务: spx-reporting | 生成时间: 2026-08-19 15:31:32</p>
       <div class="top-criticals" id="top-criticals">
         <h3>Top 3 Critical 问题</h3>
         <ul id="top-criticals-list"></ul>
@@ -1274,14 +1274,17 @@
     <div id="panel-general" class="report-panel is-active" role="tabpanel" aria-labelledby="tab-general">
     <section class="summary">
       <h2>总体结论</h2>
-      <div id="summary-text" class="summary-body">本次变更未发现 SQL 注入、敏感信息泄露或权限放开问题，但 <code>send_heartbeat</code> 在“代码不依赖唯一键”的设计下引入了并发双 INSERT 的一致性风险；若迁移窗口内唯一键缺失，仍可能生成重复心跳行。</div>
+      <div id="summary-text" class="summary-body">发现 2 条权限问题，根因一致：后端接口直接读取共享 schema 的全量 consumer 数据，把环境/租户范围控制错误地下放给前端展示层，导致直接调用 API 时可读取或推断其他 deployment 的信息。
+
+HTTP 入口清单（方法 + 路径）
+- GET /api/query/admin/download-reports/consumers：存在新增权限与数据范围风险。根据本次 diff，接口新增返回的 <code>nodes</code> 与 <code>hidden_silent</code> 都未在服务端按 <code>app</code>/环境做限制，前端本地筛选不能替代后端鉴权。</div>
       <div class="filter-row">
         <span class="filter-label">点击筛选:</span>
         <div class="chips">
           <span class="chip critical filter-chip" data-filter="critical" onclick="filterBySeverity(this)">Critical: 0</span>
-          <span class="chip major filter-chip" data-filter="major" onclick="filterBySeverity(this)">Major: 1</span>
+          <span class="chip major filter-chip" data-filter="major" onclick="filterBySeverity(this)">Major: 0</span>
           <span class="chip minor filter-chip" data-filter="minor" onclick="filterBySeverity(this)">Minor: 0</span>
-          <span class="chip info filter-chip" data-filter="info" onclick="filterBySeverity(this)">Info: 0</span>
+          <span class="chip info filter-chip" data-filter="info" onclick="filterBySeverity(this)">Info: 1</span>
           <span class="chip">Total: 1</span>
         </div>
         
@@ -1444,17 +1447,17 @@
 .impact-merged-row { border-top: 1px dashed #e2e2e2; padding: 10px 0; font-size: 14px; }
 .impact-merged-row-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 </style>
-<section class="impact-section"><h2 class="section-title">牵连影响</h2><p class="impact-section-note">本节分析改动波及的其他 Java 调用点，目前仅支持 Java 调用链。</p><div class="impact-empty">本次改动的 7 个文件均非 .java，未分析（不代表已排查安全，如需评估该改动的牵连范围，请人工核实）。</div></section><h2 class="section-title subsection-title">按文件的审查发现</h2><details class="action-group action-group-pm_decision" style="margin-bottom:14px;border:1px solid #b7791f;border-radius:8px;"><summary style="cursor:pointer;font-weight:700;font-size:15px;color:#b7791f;padding:8px 12px;list-style:none;">&#128993; 待确认 / 需人工拍板 &middot; 1 个问题</summary><div style="padding:0 12px 8px;"><div class="findings-list-wrap"><details class="file-group findings-file-group" open="open" id="fg-8e5e634e0e2b" data-file-path="utils/heart_beat.py" data-short-name="heart_beat.py" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">utils/heart_beat.py</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L223-230</span><span class="finding-cat">并发安全</span></div><div class="finding-desc"><strong>原因：</strong><code>send_heartbeat</code> 在 <code>cursor.rowcount == 0</code> 时执行 <code>INSERT</code>，若捕获到 1062 仅再补一次 <code>UPDATE</code>，但整个流程没有任何事务内锁或数据库约束兜底来保证 <code>(app, role, hostname)</code> 的唯一性。当前变更还明确把实现设计为“<strong>不依赖唯一键</strong>”，这意味着在唯一索引被 <code>076</code> 删除、<code>077</code> 尚未完整生效或执行失败的窗口期，两个并发 heartbeat 线程/进程都可能先执行 <code>UPDATE 0 rows</code>，随后都成功 <code>INSERT</code>，形成重复身份行。  
-<strong>影响：</strong>一旦出现并发双写，<code>data_tool_job.tb_report_consumer</code> 会再次产生同一节点同一角色的多条 ACTIVE/STALE 记录，导致消费者看板误报、运维误判，且后续 <code>UPDATE ... WHERE app = %s AND role = %s AND hostname = %s</code> 会同时覆盖多行，掩盖数据损坏，属于运行态安全/一致性风险。
-
-<strong>⚠️ 需求核对提示：</strong> 该 finding 指出的具体文案/取值（<code>cursor.rowcount == 0</code>）已逐字出现在本次需求原文中，可能是需求明确要求的行为，而非开发自行引入的缺陷。是否需要调整须与需求方确认，不建议直接按「立即修代码」处理。</div><div class="finding-evidence"><div class="detail-label">证据代码（含上下文，问题行已高亮）</div><pre class="code-block"><code><span class="code-row"><span class="code-ln">218</span>        identity = (app_name, role, hostname)</span><span class="code-row"><span class="code-ln">219</span></span><span class="code-row"><span class="code-ln">220</span>        conn = openDataToolConnection()</span><span class="code-row"><span class="code-ln">221</span>        cursor = conn.cursor()</span><span class="code-row"><span class="code-ln">222</span></span><span class="code-row code-row-target"><span class="code-ln">223</span>        cursor.execute(_HEARTBEAT_UPDATE, set_params + identity)</span><span class="code-row code-row-target"><span class="code-ln">224</span>        <span class="code-keyword">if</span> cursor.rowcount == <span class="code-number">0</span>:</span><span class="code-row code-row-target"><span class="code-ln">225</span>            <span class="code-keyword">try</span>:</span><span class="code-row code-row-target"><span class="code-ln">226</span>                cursor.execute(_HEARTBEAT_INSERT, identity + set_params)</span><span class="code-row code-row-target"><span class="code-ln">227</span>            except Exception as e:</span><span class="code-row code-row-target"><span class="code-ln">228</span>                <span class="code-keyword">if</span> not _is_duplicate_entry(e):</span><span class="code-row code-row-target"><span class="code-ln">229</span>                    raise</span><span class="code-row code-row-target"><span class="code-ln">230</span>                # Another writer created <span class="code-keyword">this</span> identity between our UPDATE and</span><span class="code-row"><span class="code-ln">231</span>                # our INSERT. Its row IS the row <span class="code-keyword">for</span> <span class="code-keyword">this</span> node — write ours over</span><span class="code-row"><span class="code-ln">232</span>                # it rather than treating a resolved race as a failure.</span><span class="code-row"><span class="code-ln">233</span>                cursor.execute(_HEARTBEAT_UPDATE, set_params + identity)</span><span class="code-row"><span class="code-ln">234</span>        conn.commit()</span><span class="code-row"><span class="code-ln">235</span></span></code></pre></div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>在 <code>utils/heart_beat.py:send_heartbeat</code> 恢复由数据库强制保证唯一性，不要让代码路径在无唯一约束时承担幂等语义。可执行方案是：确保 <code>077</code> 最终稳定提供 <code>(app, hostname, role)</code> 唯一键，并将写入改回单条 <code>INSERT ... ON DUPLICATE KEY UPDATE</code>，或在当前两步写法中显式使用事务隔离/<code>SELECT ... FOR UPDATE</code> 锁定身份行对应键空间，避免并发双 INSERT。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>补充并发测试：在无唯一键环境下，两个线程/进程同时对同一 <code>(app, role, hostname)</code> 调用 <code>send_heartbeat</code>，断言最终表中不会出现 2 条以上同身份记录；同时覆盖 076 已执行但 077 未执行的迁移窗口。</p></div></div></details></div></div></details></div></div></details>
+<section class="impact-section"><h2 class="section-title">牵连影响</h2><p class="impact-section-note">本节分析改动波及的其他 Java 调用点，目前仅支持 Java 调用链。</p><div class="impact-empty">本次改动的 4 个文件均非 .java，未分析（不代表已排查安全，如需评估该改动的牵连范围，请人工核实）。</div></section><h2 class="section-title subsection-title">按文件的审查发现</h2><details class="action-group action-group-optional" style="margin-bottom:14px;border:1px solid #2f855a;border-radius:8px;"><summary style="cursor:pointer;font-weight:700;font-size:15px;color:#2f855a;padding:8px 12px;list-style:none;">&#128994; 可选优化 &middot; 1 个问题</summary><div style="padding:0 12px 8px;"><div class="findings-list-wrap"><details class="file-group findings-file-group" id="fg-8ba04503c890" data-file-path="data-portal-api/routes/download_report_config.py" data-short-name="download_report_config.py" data-worst-severity="info"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-info" aria-hidden="true"></span><span class="file-path-text">data-portal-api/routes/download_report_config.py</span></span><span class="file-group-stats"><span class="stat-chip stat-info">1 Info</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><details class="finding-security-fold" style="margin-top:8px;border-top:1px dashed #e2e2e2;padding-top:8px;"><summary style="cursor:pointer;font-weight:600;font-size:13px;color:#555;">🔒 安全/权限相关 · 1 项（点击展开）</summary><div class="finding-card severity-info" data-severity="info"><div class="finding-header"><span class="sev-badge info">INFO</span><span class="finding-line" title="行号">L919</span><span class="finding-cat">权限与访问控制</span></div><div class="finding-desc"><strong>原因：</strong> <code>list_consumers()</code> 新增的节点查询仍然直接从共享表 <code>data_tool_job.tb_report_consumer</code> 读取全部记录，只按 <code>include_silent</code> 控制静默节点是否隐藏，没有在服务端基于当前环境/租户增加 <code>app</code> 数据范围过滤。代码注释已明确该表位于共享 schema、会包含“other deployments&#x27; nodes”，但实际过滤被下放到前端 <code>ConsumersTab</code> 的本地 <code>appFilter</code>。<pre class="code-block"><code>                <span class="code-string">"FROM data_tool_job.tb_report_consumer "</span>
+                f<span class="code-string">"{silent_filter}"</span>
+                <span class="code-string">"ORDER BY app, hostname, role"</span>,</code></pre> 
+<strong>影响：</strong> 任何能访问 <code>GET /api/query/admin/download-reports/consumers</code> 的调用方都会先拿到其他 deployment 的节点元数据（<code>app/role/hostname/ip_addr/pid/status</code> 等），即使前端默认再做筛选也无法阻止直接调用接口读取全量数据，形成跨环境数据越权读取风险。</div><details class="finding-details"><summary>修复建议与测试场景</summary><div class="finding-details-body"><div class="finding-suggestion"><div class="detail-label">修复建议</div><p>在 <code>data-portal-api/routes/download_report_config.py</code> 的 <code>list_consumers()</code> 中把 <code>app</code> 过滤前移到 SQL，并从服务端可信上下文（当前环境配置、租户上下文或鉴权信息）推导允许访问的 <code>app</code> 范围，而不是依赖前端下拉框做展示过滤。若确需支持多 app 查询，也应在后端校验调用方是否有查看对应 <code>app</code> 的权限，再拼接参数化 <code>WHERE app = %s</code> / <code>IN (...)</code> 条件。</p></div><div class="finding-test"><div class="detail-label">测试场景</div><p>新增接口鉴权/数据范围测试：1）构造共享表中两个 deployment 的节点记录；2）以仅允许访问 deployment-A 的身份请求 <code>/api/query/admin/download-reports/consumers</code>；3）断言返回 <code>nodes</code> 中不包含 deployment-B 的任何记录，且直接抓包调用接口也无法绕过。</p></div></div></details></div></details></div></details></div></div></details>
     </div>
 
     <div id="panel-dp" class="report-panel" role="tabpanel" aria-labelledby="tab-dp">
       <div class="dp-shell"><div class="dp-header">
   <h1>数据权限分析报告</h1>
   <p class="subtitle">AI Code Review · 接口级别数据权限审计</p>
-  <div class="meta-row"><div class="meta-item">项目 <strong>spx-reporting</strong></div><div class="meta-item">涉及接口路径（自动汇总） <strong>服务 spx-reporting · 本次无可聚合路径的权限类接口（请检查 path_pattern）</strong></div><div class="meta-item">报告日期 <strong>2026-08-19 15:02:11</strong></div><div class="meta-item">涉及角色标签 <strong>见 role_data / findings</strong></div></div>
+  <div class="meta-row"><div class="meta-item">项目 <strong>spx-reporting</strong></div><div class="meta-item">涉及接口路径（自动汇总） <strong>/api/query/admin/download-reports/consumers</strong></div><div class="meta-item">报告日期 <strong>2026-08-19 15:31:32</strong></div><div class="meta-item">涉及角色标签 <strong>app</strong></div></div>
 </div>
 
 <div class="dp-body">
@@ -1465,9 +1468,9 @@
     <div class="summary-card critical"><div class="count">0</div><div class="label">Critical</div></div>
     <div class="summary-card high"><div class="count">0</div><div class="label">Major</div></div>
     <div class="summary-card medium"><div class="count">0</div><div class="label">Minor</div></div>
-    <div class="summary-card info"><div class="count">0</div><div class="label">Info</div></div>
+    <div class="summary-card info"><div class="count">1</div><div class="label">Info</div></div>
   </div>
-  <p style="margin:8px 0 0;font-size:.8rem;color:#718096;">Total 0 条权限类问题 · 涉及 0 个接口（已解析路径）</p>
+  <p style="margin:8px 0 0;font-size:.8rem;color:#718096;">Total 1 条权限类问题 · 涉及 1 个接口（已解析路径）</p>
 
   </div>
 
@@ -1480,21 +1483,49 @@
 
   <div class="dp-section">
     <div class="dp-section-title">接口权限审计总览</div>
-    <div class="empty">暂无可解析路径的「权限与访问控制」条目；请检查 path_pattern 与 HTTP 清单。</div>
+    <div class="table-wrap"><table class="dp-audit"><thead><tr><th>方法</th><th>路径</th><th>Service 方法</th><th>权限校验</th><th>数据范围</th><th>风险</th><th>问题描述</th></tr></thead><tbody><tr class=""><td style='white-space:nowrap;vertical-align:middle;'><span class="badge badge-get">GET</span></td><td style='min-width:120px;'><code style="font-size:.82rem;word-break:break-all;">/api/query/admin/download-reports/consumers</code></td><td style='min-width:160px;'>—</td><td style='white-space:nowrap;'><span style="color:#dd6b20;">待复核</span></td><td style='min-width:140px;font-size:.85rem;'><span style="font-size:.85rem;">接口直接查询共享表并返回结果，<code>app</code> 过滤仅在前端本地执行，服务端未限制数据范围。</span></td><td style='white-space:nowrap;'><div class="risk-zh">高风险（跨环境数据越权读取）</div><div style="margin-top:6px;"><span class="badge badge-medium">MEDIUM</span></div></td><td style='min-width:220px;'><ul class="issue-list"><li><strong>原因：</strong> <code>list_consumers()</code> 新增的节点查询仍然直接从共享表 <code>data_tool_job.tb_report_consumer</code> 读取全部记录，只按 <code>include_silent</code> 控制静默节点是否隐藏，没有在服务端基于当前环境/租户增加 <code>app</code> 数据范围过滤</li><li>代码注释已明确该表位于共享 schema、会包含“other deployments&#x27; nodes”，但实际过滤被下放到前端 <code>ConsumersTab</code> 的本地 <code>appFilter</code></li><li><strong>影响：</strong> 任何能访问 <code>GET /api/query/admin/download-reports/consumers</code> 的调用方都会先拿到其他 deployment 的节点元数据（<code>app/role/hostname/ip_addr/pid/status</code> 等），即使前端默认再做筛选也无法阻止直接调用接口读取全量数据，形成跨环境数据越权读取风险</li></ul></td></tr></tbody></table></div>
   </div>
 
   
 
   <div class="dp-section">
     <div class="dp-section-title">端点详情</div>
-    <div class="dp-folds"></div>
+    <div class="dp-folds"><details class="issue-fold"><summary>GET /api/query/admin/download-reports/consumers</summary><div class="issue-fold-body">
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="badge medium">Medium</span>
+      <span class="method-badge">GET</span>
+      <span class="endpoint">/api/query/admin/download-reports/consumers</span>
+    </div>
+    <div class="issue-body">
+      <div class="section-title">问题描述</div>
+      <p class="loc-hint">关联位置：<code>data-portal-api/routes/download_report_config.py L919</code></p>
+      <p class="desc">1.
+<code>list_consumers()</code> 新增的节点查询仍然直接从共享表 <code>data_tool_job.tb_report_consumer</code> 读取全部记录，只按 <code>include_silent</code> 控制静默节点是否隐藏，没有在服务端基于当前环境/租户增加 <code>app</code> 数据范围过滤。代码注释已明确该表位于共享 schema、会包含“other deployments&#x27; nodes”，但实际过滤被下放到前端 <code>ConsumersTab</code> 的本地 <code>appFilter</code>。</p>
+      <div class="section-title">问题代码</div><pre><code>                &quot;FROM data_tool_job.tb_report_consumer &quot;
+                f&quot;{silent_filter}&quot;
+                &quot;ORDER BY app, hostname, role&quot;,</code></pre>
+      <div class="two-col">
+        <div class="impact-box">
+          <h4>安全影响</h4>
+          <p>任何能访问 <code>GET /api/query/admin/download-reports/consumers</code> 的调用方都会先拿到其他 deployment 的节点元数据（<code>app/role/hostname/ip_addr/pid/status</code> 等），即使前端默认再做筛选也无法阻止直接调用接口读取全量数据，形成跨环境数据越权读取风险。</p>
+        </div>
+        <div class="fix-box">
+          <h4>修复建议</h4>
+          <ul class="list"><li>在 <code>data-portal-api/routes/download_report_config.py</code> 的 <code>list_consumers()</code> 中把 <code>app</code> 过滤前移到 SQL，并从服务端可信上下文（当前环境配置、租户上下文或鉴权信息）推导允许访问的 <code>app</code> 范围，而不是依赖前端下拉框做展示过滤。若确需支持多 app 查询，也应在后端校验调用方是否有查看对应 <code>app</code> 的权限，再拼接参数化 <code>WHERE app = %s</code> / <code>IN (...)</code> 条件。</li></ul>
+        </div>
+      </div>
+      
+    </div>
+  </div>
+</div></details></div>
   </div>
 
   
 
   
 
-  <div class="dp-footer"><p>本报告由 AI Code Review 生成（data_permission 模式）。权限类 finding 涉及文件：<strong>（无）</strong></p><p style="margin-top:4px;">生成时间：2026-08-19 15:02:11 · 项目：spx-reporting</p></div>
+  <div class="dp-footer"><p>本报告由 AI Code Review 生成（data_permission 模式）。权限类 finding 涉及文件：<strong>data-portal-api/routes/download_report_config.py</strong></p><p style="margin-top:4px;">生成时间：2026-08-19 15:31:32 · 项目：spx-reporting</p></div>
 
 </div>
 </div>
@@ -1835,7 +1866,7 @@
     function exportCsv() { alert('导出为 CSV 功能待实现'); }
 
     // Inject summary data (Task 5)
-    if (typeof renderCategoryChart === 'function') renderCategoryChart({"\u5e76\u53d1\u5b89\u5168": 1});
+    if (typeof renderCategoryChart === 'function') renderCategoryChart({"\u6743\u9650\u4e0e\u8bbf\u95ee\u63a7\u5236": 1});
 if (typeof renderTopCriticals === 'function') renderTopCriticals([]);
 
     // Export dropdown toggle
