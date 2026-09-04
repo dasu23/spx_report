@@ -1,0 +1,2222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Code Review Report</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      /* 重新设计（用户反馈"前端样式不好看"）：底色/正文/次要文字/边框/标题
+         此前全部带一层绿色调（跟 --accent 撞在一起，显得到处都是同一种绿），
+         改成中性板岩灰基调 + 一个teal 强调色，层次更清楚，也更耐看。 */
+      --bg: #f3f4f7;
+      --card: #ffffff;
+      --text: #1c2333;
+      --muted: #667085;
+      --border: #e3e6ec;
+      --heading: #0f1420;
+      --accent: #0f766e;
+      --accent-dark: #0b5850;
+      --accent-soft: #e6f4f2;
+
+      --critical-bg: #fdeceb;
+      --critical-text: #b3261e;
+      --critical-border: #f3b7b2;
+      --critical-strong: #d1291f;
+
+      --major-bg: #fdf1e3;
+      --major-text: #a85311;
+      --major-border: #f4d19d;
+      --major-strong: #d5720f;
+
+      --minor-bg: #fdf7e0;
+      --minor-text: #8a6208;
+      --minor-border: #f1e096;
+      --minor-strong: #a37d0a;
+
+      --info-bg: #eaf1fd;
+      --info-text: #23509c;
+      --info-border: #c0d6f6;
+      --info-strong: #2f66c9;
+
+      --safe-bg: #e8f6ee;
+      --safe-text: #1a7a4c;
+      --safe-border: #aee3c4;
+
+      --chip-bg: #eef0f5;
+      --code-bg: #10182b;
+      --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+      --shadow: 0 8px 24px rgba(16, 24, 40, 0.08);
+      --shadow-lg: 0 20px 44px rgba(16, 24, 40, 0.14);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans SC", Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .page {
+      max-width: 1180px;
+      margin: 28px auto 48px;
+      padding: 0 20px;
+    }
+
+    /* 重新设计：原来是一大片高饱和绿色渐变斜切块，视觉上很"闹"；
+       改成深板岩底色 + 顶部一条细 teal 强调线，克制一些，也更像专业
+       研发工具的报告头，而不是营销落地页banner。 */
+    .hero {
+      position: relative;
+      background: linear-gradient(165deg, #0b1220 0%, #121a2c 55%, #0e2422 100%);
+      color: #f4f7fb;
+      border-radius: 18px;
+      padding: 26px 28px 24px;
+      box-shadow: var(--shadow-lg);
+      margin-bottom: 18px;
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 3px;
+      background: linear-gradient(90deg, #14b8a6, #22d3ee 45%, #14b8a6 100%);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -60px;
+      top: -60px;
+      width: 220px;
+      height: 220px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(20, 184, 166, 0.22), transparent 70%);
+      pointer-events: none;
+    }
+
+    .hero h1 {
+      margin: 0 0 10px;
+      font-size: 24px;
+      font-weight: 700;
+      line-height: 1.25;
+      letter-spacing: 0.1px;
+    }
+
+    .hero-meta {
+      margin: 0;
+      font-size: 13.5px;
+      color: #aab4c8;
+      letter-spacing: 0.01em;
+    }
+
+    .summary {
+      background: var(--card);
+      padding: 16px 18px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      margin-bottom: 20px;
+    }
+
+    .summary h2,
+    .section-title {
+      margin: 0 0 12px;
+      font-size: 18px;
+      color: var(--heading);
+    }
+
+    .subsection-title {
+      margin-top: 28px;
+    }
+
+    .api-permission-block code {
+      font-size: 12px;
+      word-break: break-all;
+    }
+
+    .api-surface-sub {
+      margin: 18px 0 8px;
+      font-size: 16px;
+      color: var(--heading);
+    }
+
+    .inferred-hint {
+      margin: 0 0 12px;
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    /* 总体结论正文区 */
+    .summary-body {
+      margin: 0 0 16px;
+      font-size: 14px;
+      color: var(--text);
+      line-height: 1.75;
+    }
+
+    .summary-body p {
+      margin: 0 0 10px;
+    }
+
+    .summary-body p:last-child {
+      margin-bottom: 0;
+    }
+
+    .summary-body ol,
+    .summary-body ul {
+      margin: 4px 0 12px;
+      padding-left: 22px;
+    }
+
+    .summary-body ol li,
+    .summary-body ul li {
+      margin-bottom: 6px;
+      line-height: 1.65;
+    }
+
+    .summary-body .summary-section-title {
+      font-weight: 700;
+      color: var(--heading);
+      margin: 16px 0 6px;
+      font-size: 13px;
+      letter-spacing: 0.3px;
+      padding-left: 8px;
+      border-left: 3px solid var(--accent);
+    }
+
+    .summary-body .summary-section-title:first-child {
+      margin-top: 0;
+    }
+
+    .summary-body strong {
+      color: var(--heading);
+      font-weight: 700;
+    }
+
+    /* 严重级别筛选区 */
+    .filter-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-top: 6px;
+    }
+
+    .filter-label {
+      font-size: 12px;
+      color: var(--muted);
+      margin-right: 2px;
+    }
+
+    .chips-impact-note {
+      width: 100%;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 5px 13px;
+      border-radius: 9px;
+      font-size: 12.5px;
+      font-weight: 700;
+      background: var(--chip-bg);
+      color: var(--heading);
+      border: 1px solid transparent;
+    }
+
+    .filter-chip {
+      cursor: pointer;
+      transition: transform 0.12s, box-shadow 0.12s, opacity 0.12s;
+      user-select: none;
+    }
+
+    .filter-chip:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 3px 8px rgba(0,0,0,0.12);
+    }
+
+    .filter-chip.active {
+      box-shadow: 0 0 0 2.5px currentColor;
+      transform: translateY(-1px);
+    }
+
+    .filter-chip.dimmed {
+      opacity: 0.4;
+    }
+
+    .critical { background: var(--critical-bg); color: var(--critical-text); border-color: var(--critical-border); }
+    .major { background: var(--major-bg); color: var(--major-text); border-color: var(--major-border); }
+    .minor { background: var(--minor-bg); color: var(--minor-text); border-color: var(--minor-border); }
+    .info { background: var(--info-bg); color: var(--info-text); border-color: var(--info-border); }
+
+    /* 筛选状态提示条 */
+    #filter-hint {
+      display: none;
+      margin: -10px 0 14px;
+      padding: 8px 14px;
+      background: var(--accent-soft);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    #filter-hint .clear-filter {
+      margin-left: 8px;
+      color: var(--accent);
+      cursor: pointer;
+      font-weight: 600;
+      text-decoration: underline;
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    /* 工具栏：搜索 + 展开折叠 */
+    .findings-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+      padding: 12px 14px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+    }
+
+    .findings-search {
+      flex: 1 1 220px;
+      min-width: 0;
+      padding: 10px 14px;
+      font: inherit;
+      font-size: 14px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+      color: var(--text);
+    }
+
+    .findings-search:focus {
+      outline: none;
+      box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.35);
+      border-color: var(--accent);
+    }
+
+    .findings-toolbar-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .toolbar-btn {
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--chip-bg);
+      color: var(--heading);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .toolbar-btn:hover {
+      background: #e3e6ec;
+    }
+
+    /* 文件 TOC */
+    .findings-toc {
+      margin-bottom: 16px;
+      padding: 10px 12px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+    }
+
+    .toc-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 8px;
+      letter-spacing: 0.04em;
+    }
+
+    .toc-pill-wrap {
+      display: flex;
+      flex-wrap: nowrap;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .toc-pill {
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      text-decoration: none;
+      color: var(--heading);
+      background: var(--chip-bg);
+      border: 1px solid var(--border);
+      transition: transform 0.12s, box-shadow 0.12s;
+    }
+
+    .toc-pill:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+
+    .toc-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .toc-dot.sev-critical { background: var(--critical-text); }
+    .toc-dot.sev-major { background: var(--major-text); }
+    .toc-dot.sev-minor { background: var(--minor-text); }
+    .toc-dot.sev-info { background: var(--info-text); }
+
+    /* 总体结论：多分片 */
+    .summary-shards-wrap {
+      margin-bottom: 4px;
+    }
+
+    .summary-shard {
+      margin-bottom: 14px;
+      padding: 12px 14px;
+      background: #fafbfd;
+      border-radius: 10px;
+      border-left: 4px solid var(--accent);
+    }
+
+    .summary-shard:last-of-type {
+      margin-bottom: 10px;
+    }
+
+    .summary-more[hidden] {
+      display: none !important;
+    }
+
+    .summary-toggle {
+      display: inline-block;
+      margin-top: 4px;
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 16px;
+      border-radius: 8px;
+      border: 1px solid var(--accent);
+      background: #fff;
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .summary-toggle:hover {
+      background: #eef8f5;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details {
+      margin-top: 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0 12px 10px;
+      background: #fafbfc;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details summary {
+      cursor: pointer;
+      padding: 10px 0;
+      font-weight: 600;
+      color: var(--accent);
+      list-style: none;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .summary-raw-pre {
+      margin: 0;
+      max-height: 420px;
+      overflow: auto;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* 按文件 findings：可折叠组 + 卡片 */
+    .findings-list-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    details.file-group.findings-file-group {
+      margin: 0;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .file-group-summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 14px;
+      padding: 14px 16px;
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .file-group-summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .file-group-title {
+      display: inline-flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 14px;
+      color: var(--heading);
+      flex: 1 1 200px;
+      min-width: 0;
+    }
+
+    .file-path-text {
+      word-break: break-all;
+      line-height: 1.45;
+    }
+
+    .sev-indicator {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      margin-top: 4px;
+    }
+
+    .sev-indicator.sev-critical { background: var(--critical-text); box-shadow: 0 0 0 2px var(--critical-bg); }
+    .sev-indicator.sev-major { background: var(--major-text); box-shadow: 0 0 0 2px var(--major-bg); }
+    .sev-indicator.sev-minor { background: var(--minor-text); box-shadow: 0 0 0 2px var(--minor-bg); }
+    .sev-indicator.sev-info { background: var(--info-text); box-shadow: 0 0 0 2px var(--info-bg); }
+
+    .file-group-stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .stat-chip {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 999px;
+    }
+
+    .stat-chip.stat-critical { background: var(--critical-bg); color: var(--critical-text); }
+    .stat-chip.stat-major { background: var(--major-bg); color: var(--major-text); }
+    .stat-chip.stat-minor { background: var(--minor-bg); color: var(--minor-text); }
+    .stat-chip.stat-info { background: var(--info-bg); color: var(--info-text); }
+
+    .file-group-count {
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .file-group-body {
+      padding: 12px 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .finding-card {
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: #fff;
+      padding: 15px 17px;
+      border-left-width: 4px;
+      border-left-style: solid;
+      box-shadow: var(--shadow-sm);
+      transition: box-shadow 0.15s;
+    }
+
+    .finding-card:hover { box-shadow: var(--shadow); }
+
+    .finding-card.severity-critical { border-left-color: var(--critical-strong); background: linear-gradient(90deg, var(--critical-bg) 0%, #fff 14px); }
+    .finding-card.severity-major { border-left-color: var(--major-strong); background: linear-gradient(90deg, var(--major-bg) 0%, #fff 14px); }
+    .finding-card.severity-minor { border-left-color: var(--minor-strong); background: linear-gradient(90deg, var(--minor-bg) 0%, #fff 14px); }
+    .finding-card.severity-info { border-left-color: var(--info-strong); background: linear-gradient(90deg, var(--info-bg) 0%, #fff 14px); }
+
+    .finding-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .sev-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 4px 12px;
+      border-radius: 7px;
+      font-size: 11.5px;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .sev-badge.critical { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .sev-badge.major { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .sev-badge.minor { background: var(--minor-bg); color: var(--minor-text); border: 1px solid var(--minor-border); }
+    .sev-badge.info { background: var(--info-bg); color: var(--info-text); border: 1px solid var(--info-border); }
+
+    .finding-line {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      background: var(--chip-bg);
+      padding: 4px 8px;
+      border-radius: 6px;
+    }
+
+    .finding-cat {
+      font-size: 12.5px;
+      font-weight: 700;
+      color: var(--accent-dark);
+      background: var(--accent-soft);
+      padding: 3px 9px;
+      border-radius: 6px;
+    }
+
+    /* 需求对账三类（需求未实现/需求矛盾/需求外动作）用色块徽章而非纯文字，
+       跟严重级别徽章一样醒目——用户反馈普通文字分类容易在列表里被漏看，
+       尤其"需求未实现"现在总是 Critical。*/
+    .finding-cat-requirement {
+      background: var(--critical-bg);
+      color: var(--critical-text);
+      border: 1px solid var(--critical-border);
+      border-radius: 6px;
+      padding: 3px 10px;
+    }
+
+    /* ── 接口审查覆盖清单 ── */
+    .endpoint-coverage {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px 18px;
+      box-shadow: var(--shadow);
+      margin-bottom: 20px;
+    }
+
+    .ec-note {
+      margin: 0 0 10px;
+      font-size: 13px;
+      line-height: 1.7;
+      color: var(--muted);
+    }
+
+    .ec-note-warn {
+      padding: 9px 12px;
+      border-radius: 8px;
+      background: var(--major-bg);
+      border-left: 4px solid var(--major-strong);
+      color: var(--major-text);
+    }
+
+    .ec-note-warn strong { color: var(--major-strong); }
+
+    .ec-table-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid var(--border); }
+
+    .ec-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .ec-table th {
+      text-align: left;
+      padding: 9px 12px;
+      background: #fafbfd;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .ec-table td {
+      padding: 10px 12px;
+      border-top: 1px solid var(--border);
+      vertical-align: top;
+      line-height: 1.65;
+    }
+
+    .ec-table tbody tr:first-child td { border-top: none; }
+
+    .ec-table .ec-method,
+    .ec-table .ec-verdict { white-space: nowrap; }
+
+    .ec-table .ec-path code {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+      word-break: break-all;
+    }
+
+    .ec-table .ec-reason { color: var(--muted); }
+
+    .ec-badge {
+      display: inline-block;
+      padding: 2px 9px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .ec-badge.ec-risk { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .ec-badge.ec-pending { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .ec-badge.ec-safe { background: var(--safe-bg); color: var(--safe-text); border: 1px solid var(--safe-border); }
+
+    tr.ec-risk td { background: #fffbfa; }
+    tr.ec-pending td { background: #fffdf9; }
+
+    /* 分片没审成时的披露条：必须比正文更抢眼，否则读者会把
+       「报告里没写」误当成「这里没问题」 */
+    .shard-health-alert {
+      margin: 0 0 12px;
+      padding: 12px 15px;
+      border-radius: 10px;
+      background: var(--critical-bg);
+      border: 1px solid var(--critical-border);
+      border-left: 4px solid var(--critical-strong);
+      color: var(--critical-text);
+      font-size: 13.5px;
+      line-height: 1.7;
+    }
+
+    .shard-health-alert strong { color: var(--critical-strong); }
+
+    .finding-desc {
+      font-size: 14px;
+      line-height: 1.65;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* finding 卡片正文的四行结构（问题 / 后果 / 怎么改 / 怎么验）。
+       用户反馈（build 532）"文案挤在一团，难以阅读"：此前正文是一整段
+       `原因：…影响：…` 靠 white-space:pre-wrap 原样糊上去，修复建议和测试
+       场景又被折叠藏起来。改成左标签 + 右正文的两列网格，每行一个语义单元，
+       段落之间有明确留白，长句由 Python 侧按句末标点拆成多个 <p>。 */
+    .finding-body {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      font-size: 14px;
+      line-height: 1.7;
+      color: var(--text);
+    }
+
+    .fb-row {
+      display: grid;
+      grid-template-columns: 68px minmax(0, 1fr);
+      gap: 2px 14px;
+      padding: 10px 0;
+      border-top: 1px dashed var(--border);
+    }
+
+    .fb-row:first-child {
+      border-top: none;
+      padding-top: 2px;
+    }
+
+    /* 重新设计：标签从"一段带颜色的纯文字"改成小色块标签（跟 sev-badge/
+       finding-cat 同一套视觉语言），扫一眼列表就能靠色块分辨这行是"问题"
+       还是"怎么改"，比单靠文字颜色更容易一眼分辨。 */
+    .fb-label {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1.6;
+      letter-spacing: 0.03em;
+      white-space: nowrap;
+      padding: 2px 8px;
+      border-radius: 6px;
+      margin-top: 1px;
+    }
+
+    .fb-problem .fb-label { color: var(--major-text); background: var(--major-bg); }
+    .fb-impact .fb-label { color: var(--critical-text); background: var(--critical-bg); }
+    .fb-fix .fb-label { color: var(--accent-dark); background: var(--accent-soft); }
+    .fb-test .fb-label { color: var(--info-text); background: var(--info-bg); }
+
+    .fb-text {
+      min-width: 0;
+      word-break: break-word;
+    }
+
+    .fb-text > p {
+      margin: 0 0 7px;
+    }
+
+    .fb-text > p:last-child {
+      margin-bottom: 0;
+    }
+
+    .fb-text .rt-list {
+      margin: 2px 0 6px;
+      padding-left: 20px;
+    }
+
+    .fb-text .rt-list li {
+      margin-bottom: 4px;
+    }
+
+    .fb-text .code-block {
+      margin: 8px 0 4px;
+      font-size: 12.5px;
+    }
+
+    .fb-text code {
+      background: var(--chip-bg);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+    }
+
+    /* 窄屏（Jenkins 里报告常挤在窗格里看）时标签落到正文上方，不再抢走
+       62px 宽度，避免正文被压成一列细条 */
+    @media (max-width: 720px) {
+      .fb-row {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 2px;
+      }
+    }
+
+    /* 证据代码块从固定 div 改成可折叠 details（默认展开）——一份报告里
+       十几张卡片各带 8-10 行代码，读者需要能收起来快速扫结论 */
+    details.finding-evidence > summary {
+      cursor: pointer;
+      list-style: none;
+    }
+
+    details.finding-evidence > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    details.finding-evidence > summary::before {
+      content: "▾ ";
+      color: var(--muted);
+    }
+
+    details.finding-evidence:not([open]) > summary::before {
+      content: "▸ ";
+    }
+
+    /* 证据代码块（2026-07-19 补）：evidence_quote 的稳定展示位置，不再依赖
+       模型是否顺手把代码写进 description 里；纯 CSS + Python 正则高亮，
+       不引外部 JS 库，内网报告零外部依赖风险。 */
+    .finding-evidence {
+      margin-top: 10px;
+    }
+
+    .finding-evidence .detail-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .code-block {
+      margin: 0;
+      padding: 12px 15px;
+      background: var(--code-bg);
+      color: #e6edf3;
+      border-radius: 9px;
+      overflow-x: auto;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+      line-height: 1.6;
+    }
+
+    .code-block code {
+      white-space: pre;
+      /* 2026-09-02 用户反馈：安全/权限折叠卡里"怎么改"给的整段修复示意代码
+         （``` 代码围栏渲染出来也是 <pre class="code-block"><code>）看不清——
+         根因是 .fb-text code（第 833 行，给"问题/后果/怎么改/怎么验"正文里
+         `existsActive` 这类行内代码片段配的浅灰底色）跟这里选择器优先级/
+         特异性相同，同一个 <code> 标签只要落在 .fb-text 范围内就会被套上
+         浅灰底，而 .code-annotation/.code-keyword 这套语法高亮配色是给
+         .code-block 本来的深色底（--code-bg）设计的，叠在浅灰底上对比度
+         塌陷，几乎看不见字。显式声明透明背景覆盖掉那条通用规则，让
+         .code-block 自己的深色底透出来。 */
+      background: transparent;
+    }
+
+    .code-comment { color: #8b949e; font-style: italic; }
+    .code-string { color: #a5d6ff; }
+    .code-annotation { color: #d2a8ff; }
+    .code-keyword { color: #ff7b72; font-weight: 600; }
+    .code-number { color: #79c0ff; }
+
+    /* 带上下文的证据代码块（逐行渲染，问题行整行高亮）*/
+    .code-row {
+      display: block;
+      padding: 0 6px;
+      border-left: 3px solid transparent;
+    }
+
+    .code-row-target {
+      background: rgba(255, 123, 114, 0.16);
+      border-left-color: #ff7b72;
+    }
+
+    .code-ln {
+      display: inline-block;
+      min-width: 2.5em;
+      margin-right: 12px;
+      color: #6e7681;
+      text-align: right;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    .finding-details {
+      margin-top: 12px;
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+      padding: 0;
+      background: #fafbfd;
+    }
+
+    .finding-details > summary {
+      cursor: pointer;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--heading);
+      list-style: none;
+    }
+
+    .finding-details > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .finding-details-body {
+      padding: 0 14px 14px;
+      border-top: 1px solid var(--border);
+    }
+
+    .detail-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin: 12px 0 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .finding-suggestion p,
+    .finding-test p {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.65;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .file-block {
+      margin: 14px 0 18px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: var(--shadow);
+    }
+
+    .file-block h3 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      color: var(--heading);
+      word-break: break-all;
+    }
+
+    table {
+      border-collapse: separate;
+      border-spacing: 0;
+      width: 100%;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+    }
+
+    th, td {
+      border-bottom: 1px solid var(--border);
+      padding: 10px;
+      vertical-align: top;
+      text-align: left;
+      font-size: 13px;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      background: #fafbfd;
+      color: var(--heading);
+      font-weight: 700;
+      z-index: 1;
+    }
+
+    tbody tr:nth-child(even) { background: #fafbfd; }
+    tbody tr:last-child td { border-bottom: none; }
+
+    .empty {
+      padding: 18px;
+      border: 1px dashed var(--border);
+      border-radius: 14px;
+      color: var(--muted);
+      background: #fafbfd;
+    }
+
+    @media (max-width: 900px) {
+      .hero h1 { font-size: 22px; }
+      .summary,
+      .file-block { padding: 12px; }
+      th, td { padding: 8px; font-size: 12px; }
+      .charts-row { flex-direction: column; }
+    }
+
+    /* ── 报告标签页 ──
+       重新设计：从"按钮选中变绿色渐变块"改成分段控件（segmented control）
+       的样式——浅灰底槽 + 选中项浮成白色药丸，更接近成熟工具（如 GitHub/
+       Linear）里的页签观感，也跟下面卡片的白底形成呼应。 */
+    .report-tabs {
+      display: inline-flex;
+      gap: 2px;
+      padding: 4px;
+      margin-bottom: 18px;
+      background: #e9ebf0;
+      border-radius: 12px;
+      flex-wrap: wrap;
+    }
+    .report-tabs button {
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 18px;
+      border-radius: 9px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 13.5px;
+      transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+    }
+    .report-tabs button:hover {
+      color: var(--heading);
+    }
+    .report-tabs button[aria-selected="true"] {
+      background: #ffffff;
+      color: var(--heading);
+      box-shadow: var(--shadow-sm);
+    }
+    .report-panel { display: none; }
+    .report-panel.is-active { display: block; }
+
+    /* ── 数据权限页（嵌入，与综合页隔离） ── */
+    .dp-shell {
+      font-family: "Avenir Next", "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif;
+      color: #1a2b22;
+      line-height: 1.6;
+    }
+
+    /* 重置全局 table 样式污染 */
+    .dp-shell table {
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+    }
+    .dp-shell th, .dp-shell td {
+      border: none !important;
+      border-bottom: 1px solid #edf2f7 !important;
+      background: transparent !important;
+    }
+
+    .dp-shell .dp-header {
+      position: relative;
+      background: linear-gradient(165deg, #0b1220 0%, #121a2c 55%, #0e2422 100%);
+      color: #f4f7fb;
+      padding: 26px 28px 24px;
+      border-radius: 18px;
+      margin-bottom: 24px;
+      box-shadow: var(--shadow-lg);
+      overflow: hidden;
+    }
+    .dp-shell .dp-header::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 3px;
+      background: linear-gradient(90deg, #14b8a6, #22d3ee 45%, #14b8a6 100%);
+    }
+    .dp-shell .dp-header h1 { font-size: 1.4rem; font-weight: 700; letter-spacing: .01em; margin: 0 0 6px; }
+    .dp-shell .dp-header .subtitle { margin: 0; color: #aab4c8; font-size: .9rem; }
+    .dp-shell .dp-header .meta-row { margin-top: 16px; display: flex; gap: 24px; flex-wrap: wrap; }
+    .dp-shell .dp-header .meta-item { font-size: .8rem; color: #8b95ab; }
+    .dp-shell .dp-header .meta-item strong { color: #8ce8d4; font-weight: 600; }
+
+    .dp-shell .dp-body { padding: 0 0 32px; }
+
+    /* ── dp-shell 内部组件（与 Python 生成的类名严格对齐） ── */
+
+    /* 统计卡片区（Python 生成 .summary-grid / .summary-card） */
+    .dp-shell .dp-stats { margin-bottom: 4px; }
+    .dp-shell .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+    .dp-shell .summary-card {
+      background: #fff;
+      border-radius: 14px;
+      padding: 18px 20px;
+      box-shadow: var(--shadow-sm);
+      border: 1px solid var(--border);
+      border-top: 3px solid transparent;
+    }
+    .dp-shell .summary-card.critical { border-top-color: var(--critical-strong); }
+    .dp-shell .summary-card.high     { border-top-color: var(--major-strong); }
+    .dp-shell .summary-card.medium   { border-top-color: var(--minor-strong); }
+    .dp-shell .summary-card.info     { border-top-color: var(--info-strong); }
+    .dp-shell .summary-card .count   { font-size: 2.1rem; font-weight: 800; line-height: 1; }
+    .dp-shell .summary-card.critical .count { color: var(--critical-text); }
+    .dp-shell .summary-card.high     .count { color: var(--major-text); }
+    .dp-shell .summary-card.medium   .count { color: var(--minor-text); }
+    .dp-shell .summary-card.info     .count { color: var(--info-text); }
+    .dp-shell .summary-card .label   { margin-top: 8px; font-size: .72rem; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .07em; }
+
+    /* 区块标题 */
+    .dp-shell .dp-section { margin-bottom: 24px; }
+    .dp-shell .dp-section-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--heading);
+      margin: 0 0 14px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* 角色定义盒（Python 生成 .role-box / .role-icon / .role-info） */
+    .dp-shell .dp-roles { display: flex; flex-direction: column; gap: 10px; }
+    .dp-shell .role-box {
+      background: #fff;
+      border-radius: 12px;
+      padding: 16px 20px;
+      box-shadow: 0 2px 10px rgba(17,51,38,.07);
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+    }
+    .dp-shell .role-box.muted {
+      background: #f8f9fb;
+      border: 1px solid var(--border);
+      box-shadow: none;
+    }
+    .dp-shell .role-icon { font-size: 1.8rem; line-height: 1; flex-shrink: 0; }
+    .dp-shell .role-info { flex: 1; min-width: 0; }
+    .dp-shell .role-info h3 { font-size: 1rem; font-weight: 700; color: var(--heading); margin: 0 0 4px; }
+    .dp-shell .role-info .role-md { font-size: .88rem; color: #4a5568; margin-top: 8px; line-height: 1.65; word-break: break-word; }
+    .dp-shell .role-info code { background: #edf2f7; padding: 1px 6px; border-radius: 4px; font-size: .85em; }
+
+    /* gate banner */
+    .dp-shell .dp-gate { margin-bottom: 20px; }
+
+    /* 审计表格包装（Python 生成 .table-wrap > table.dp-audit）
+       表头从深绿底改成跟报告其它表格（.ec-table）同一套浅底大写小标签，
+       整份报告的表格风格统一，不再是"深色表头 vs 浅色表头"两套语言。 */
+    .dp-shell .table-wrap {
+      overflow-x: auto;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow-sm);
+    }
+    .dp-shell table.dp-audit {
+      width: 100% !important;
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+      font-size: .84rem;
+    }
+    .dp-shell .dp-audit th {
+      background: #fafbfd !important;
+      color: var(--muted) !important;
+      padding: 11px 14px !important;
+      text-align: left !important;
+      font-size: .68rem !important;
+      font-weight: 700 !important;
+      text-transform: uppercase !important;
+      letter-spacing: .07em !important;
+      white-space: nowrap !important;
+      border-bottom: 1px solid var(--border) !important;
+      position: sticky;
+      top: 0;
+    }
+    .dp-shell .dp-audit td {
+      padding: 11px 14px !important;
+      border-bottom: 1px solid var(--border) !important;
+      vertical-align: top !important;
+      color: var(--text) !important;
+      background: transparent !important;
+    }
+    .dp-shell .dp-audit tr:last-child td { border-bottom: none !important; }
+    .dp-shell .dp-audit tr:hover td { background: #f8f9fb !important; }
+    .dp-shell .dp-audit tr.row-critical td { background: var(--critical-bg) !important; }
+    .dp-shell .dp-audit tr.row-critical:hover td { background: #fbdcda !important; }
+    .dp-shell .dp-audit tr.row-major td { background: var(--major-bg) !important; }
+    .dp-shell .dp-audit tr.row-major:hover td { background: #fbe4c4 !important; }
+
+    /* HTTP 方法 & 严重性徽标（Python 生成 .badge .badge-*） */
+    .dp-shell .badge {
+      display: inline-block; padding: 2px 9px; border-radius: 6px;
+      font-size: .72rem; font-weight: 700; letter-spacing: .04em; white-space: nowrap;
+    }
+    .dp-shell .badge-get    { background: var(--info-bg); color: var(--info-text); }
+    .dp-shell .badge-post   { background: var(--safe-bg); color: var(--safe-text); }
+    .dp-shell .badge-put    { background: var(--minor-bg); color: var(--minor-text); }
+    .dp-shell .badge-delete { background: var(--critical-bg); color: var(--critical-text); }
+    .dp-shell .badge-patch  { background: #f4f0fd; color: #6b46c1; }
+    .dp-shell .badge-critical { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .dp-shell .badge-high     { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .dp-shell .badge-medium   { background: var(--minor-bg); color: var(--minor-text); border: 1px solid var(--minor-border); }
+    .dp-shell .badge-info     { background: var(--info-bg); color: var(--info-text); border: 1px solid var(--info-border); }
+
+    /* 风险文字 */
+    .dp-shell .risk-zh { font-size: .82rem; color: var(--text); font-weight: 600; line-height: 1.4; }
+
+    /* Issue 列表（Python 生成 .issue-list） */
+    .dp-shell .issue-list { list-style: none !important; margin: 6px 0 0; padding: 0; }
+    .dp-shell .issue-list li { position: relative; padding: 3px 0 3px 18px; font-size: .84rem; color: #4a5568; line-height: 1.55; }
+    .dp-shell .issue-list li::before { content: "▸"; position: absolute; left: 2px; color: #e53e3e; }
+    .dp-shell .issue-list li strong { color: var(--heading); }
+    .dp-shell .issue-list code { background: #edf2f7; padding: 1px 5px; border-radius: 3px; font-size: .85em; }
+
+    /* 修复建议卡片（Python 生成 .fix-card） */
+    .dp-shell .fix-card {
+      background: #f0faf5;
+      border-left: 4px solid var(--accent);
+      border-radius: 0 10px 10px 0;
+      padding: 13px 16px;
+      margin-top: 10px;
+    }
+    .dp-shell .fix-card h4 { font-size: .84rem; font-weight: 700; color: var(--heading); margin: 0 0 6px; }
+    .dp-shell .fix-card p, .dp-shell .fix-card li { font-size: .83rem; color: #2d4a3d; line-height: 1.6; margin: 0; }
+    .dp-shell .fix-card ul, .dp-shell .fix-card ol { padding-left: 18px; margin: 6px 0; }
+    .dp-shell .fix-card code { background: #d4efe4; padding: 1px 5px; border-radius: 4px; font-size: .85em; }
+
+    /* 代码块（Python 生成 .code-block） */
+    .dp-shell .code-block {
+      background: var(--code-bg); color: #e2e8f0; border-radius: 9px;
+      padding: 12px 16px; margin-top: 8px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: .78rem; line-height: 1.55; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+    }
+
+    /* 端点详情折叠（Python 生成 details.issue-fold） */
+    .dp-shell details.issue-fold {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: var(--shadow-sm);
+      margin-bottom: 12px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .dp-shell details.issue-fold > summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 13px 16px;
+      font-weight: 600;
+      font-size: .9rem;
+      color: var(--heading);
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid transparent;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transition: background .15s;
+    }
+    .dp-shell details.issue-fold > summary::-webkit-details-marker { display: none; }
+    .dp-shell details.issue-fold > summary::before { content: "▸"; font-size: 11px; color: var(--accent); transition: transform .15s; }
+    .dp-shell details.issue-fold[open] > summary::before { transform: rotate(90deg); }
+    .dp-shell details.issue-fold[open] > summary { border-bottom-color: var(--border); background: var(--accent-soft); }
+    .dp-shell .issue-fold-body { padding: 16px 20px; font-size: .85rem; color: #4a5568; }
+    .dp-shell .issue-fold-body p { margin: 6px 0; line-height: 1.65; }
+    .dp-shell .issue-fold-body strong { color: var(--heading); }
+
+    /* dp-fold（端点详情另一种渲染，Python 生成 details.dp-fold） */
+    .dp-shell .dp-folds { display: flex; flex-direction: column; gap: 10px; }
+    .dp-shell .dp-fold {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
+    }
+    .dp-shell .dp-fold > summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 13px 16px;
+      font-weight: 600;
+      font-size: .9rem;
+      color: var(--heading);
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .dp-shell .dp-fold > summary::-webkit-details-marker { display: none; }
+    .dp-shell .dp-fold > summary::before { content: "▸"; font-size: 11px; color: var(--accent); transition: transform .15s; }
+    .dp-shell .dp-fold[open] > summary::before { transform: rotate(90deg); }
+    .dp-shell .dp-fold-body { padding: 16px; font-size: .85rem; color: #4a5568; }
+
+    /* issue list（dp-fold 内部用） */
+    .dp-shell .dp-issue-list { list-style: none; margin: 8px 0 0; padding: 0; }
+    .dp-shell .dp-issue-list li { position: relative; padding: 3px 0 3px 18px; font-size: .84rem; color: #4a5568; }
+    .dp-shell .dp-issue-list li::before { content: "▸"; position: absolute; left: 2px; color: #e53e3e; }
+
+    /* dp-fix（dp-fold 内部修复建议） */
+    .dp-shell .dp-fix {
+      background: #f0faf5;
+      border-left: 4px solid var(--accent);
+      border-radius: 0 10px 10px 0;
+      padding: 12px 16px;
+      margin-top: 10px;
+    }
+    .dp-shell .dp-fix h4 { font-size: .84rem; font-weight: 700; color: var(--heading); margin: 0 0 6px; }
+    .dp-shell .dp-fix p, .dp-shell .dp-fix li { font-size: .83rem; color: #2d4a3d; line-height: 1.6; margin: 0; }
+    .dp-shell .dp-fix code { background: #d4efe4; padding: 1px 5px; border-radius: 4px; font-size: .85em; }
+
+    /* dp-code（dp-fold 内部代码块） */
+    .dp-shell .dp-code {
+      background: var(--code-bg); color: #e2e8f0; border-radius: 9px;
+      padding: 12px 16px; margin-top: 8px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: .78rem; line-height: 1.55; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+    }
+
+    /* 存量越权风险区块（dp-shell 内，全文扫描）*/
+    .dp-shell .legacy-privilege-block {
+      background: var(--minor-bg);
+      border: 1px solid var(--minor-border);
+      border-left: 4px solid var(--minor-strong);
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin-bottom: 16px;
+    }
+    .dp-shell .legacy-privilege-block .lp-title { font-size: 14px; font-weight: 700; color: var(--minor-strong); margin: 0 0 4px; }
+    .dp-shell .legacy-privilege-block .lp-subtitle { font-size: 12px; color: var(--minor-text); margin: 0 0 14px; }
+
+    .dp-shell .dp-footer {
+      text-align: center; font-size: .78rem; color: #a0aec0;
+      margin-top: 36px; padding-top: 20px; border-top: 1px solid var(--border);
+    }
+
+    /* ── 综合审查 Tab 权限接口表（privilege_endpoints 模式，在 dp-shell 外） ── */
+    .perm-table-wrap {
+      overflow-x: auto;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow-sm);
+    }
+    .perm-table {
+      width: 100%;
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+      font-size: .84rem;
+    }
+    .perm-table th {
+      background: #fafbfd !important;
+      color: var(--muted) !important;
+      padding: 10px 14px !important;
+      text-align: left !important;
+      font-size: .68rem !important;
+      font-weight: 700 !important;
+      text-transform: uppercase !important;
+      letter-spacing: .07em !important;
+      white-space: nowrap !important;
+      border-bottom: 1px solid var(--border) !important;
+    }
+    .perm-table td {
+      padding: 10px 14px !important;
+      border-bottom: 1px solid var(--border) !important;
+      vertical-align: top !important;
+      color: var(--text) !important;
+      background: transparent !important;
+    }
+    .perm-table tr:last-child td { border-bottom: none !important; }
+    .perm-table tr:hover td { background: #f8f9fb !important; }
+    .api-permission-block { overflow-x: auto; }
+
+    /* 存量越权风险区块（综合审查 Tab，全文扫描） */
+    .legacy-privilege-block {
+      background: var(--minor-bg);
+      border: 1px solid var(--minor-border);
+      border-left: 4px solid var(--minor-strong);
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin-bottom: 16px;
+    }
+    .legacy-privilege-block .lp-title { font-size: 14px; font-weight: 700; color: var(--minor-strong); margin: 0 0 4px; }
+    .legacy-privilege-block .lp-subtitle { font-size: 12px; color: var(--minor-text); margin: 0 0 14px; }
+    /* 根因聚合卡片 */
+    .cluster-card { border-left: 4px solid #6366f1; }
+    .cluster-badge {
+      background: #6366f1; color: #fff;
+      font-size: 11px; padding: 2px 8px;
+      border-radius: 10px; margin-left: 8px;
+      font-weight: 600; letter-spacing: .02em;
+    }
+    .cluster-locations { margin: 8px 0 4px; }
+    .cluster-locations > summary {
+      cursor: pointer; color: #6366f1;
+      font-size: 13px; font-weight: 500;
+    }
+    .cluster-locations > summary:hover { text-decoration: underline; }
+    .loc-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+    .loc-table th, .loc-table td {
+      padding: 4px 8px; border: 1px solid #e5e7eb; text-align: left;
+    }
+    .loc-table th { background: #f9fafb; font-weight: 600; }
+    .loc-file { font-family: monospace; color: #374151; }
+    .loc-line { text-align: center; color: #6b7280; white-space: nowrap; }
+    .loc-snippet { color: #4b5563; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* ── Charts Row (并列布局) ── */
+    .charts-row {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    /* ── Chart Section ── */
+    .chart-section {
+      flex: 1 1 0;
+      min-width: 0;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .chart-container {
+      position: relative;
+      height: 260px;
+    }
+
+    /* ── Top 3 Criticals in Hero ── */
+    .top-criticals {
+      position: relative;
+      margin-top: 18px;
+      padding-top: 16px;
+      border-top: 1px solid rgba(255,255,255,0.12);
+    }
+
+    .top-criticals h3 {
+      margin: 0 0 10px;
+      font-size: 13px;
+      font-weight: 700;
+      color: #ff9d94;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .top-criticals ul {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .top-criticals li {
+      font-size: 13px;
+      color: #d6dcea;
+      line-height: 1.5;
+      padding: 9px 12px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.09);
+      border-left: 3px solid #f2645a;
+      border-radius: 0 8px 8px 0;
+    }
+
+    .top-criticals li strong {
+      color: #ffe1dc;
+      font-weight: 700;
+      display: block;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12px;
+    }
+
+    .top-criticals[hidden] { display: none !important; }
+
+    .top-criticals .tc-desc {
+      display: block;
+      margin-top: 3px;
+    }
+
+    .top-criticals .tc-source {
+      display: inline-block;
+      margin-bottom: 4px;
+      padding: 1px 7px;
+      border-radius: 5px;
+      background: rgba(255,255,255,0.14);
+      color: #f4f7fb;
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    /* ── Export Dropdown ── */
+    .export-dropdown {
+      position: relative;
+    }
+
+    .export-menu {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 4px);
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+      min-width: 160px;
+      z-index: 100;
+      overflow: hidden;
+    }
+
+    .export-menu a {
+      display: block;
+      padding: 10px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--heading);
+      text-decoration: none;
+      transition: background 0.12s;
+    }
+
+    .export-menu a:hover {
+      background: #eef5f1;
+    }
+
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <h1>AI Code Review 报告</h1>
+      <p class="hero-meta">服务: spx-reporting | 生成时间: 2026-09-04 12:51:09</p>
+      <div class="top-criticals" id="top-criticals" hidden>
+        <h3>最需要先看的问题（Critical）</h3>
+        <ul id="top-criticals-list"></ul>
+      </div>
+    </header>
+
+    <div class="report-tabs" role="tablist" aria-label="报告视图">
+      <button type="button" role="tab" id="tab-general" aria-controls="panel-general" aria-selected="true" onclick="switchReportTab('general')">综合审查</button>
+      <button type="button" role="tab" id="tab-dp" aria-controls="panel-dp" aria-selected="false" onclick="switchReportTab('dp')">权限与业务规则</button>
+    </div>
+
+    <div id="panel-general" class="report-panel is-active" role="tabpanel" aria-labelledby="tab-general">
+    <section class="summary">
+      <h2>总体结论</h2>
+      <div id="summary-text" class="summary-body">本次 diff 仅涉及前端表格列宽/最小宽度/拖拽计算与样式调整，未引入新的 HTTP 入口、鉴权逻辑、数据访问、外部调用、日志、敏感信息处理或命令/SQL/文件操作；按提供的变更内容看，未发现新增/修改行上的安全问题。</div>
+      <div class="filter-row">
+        <span class="filter-label">点击筛选:</span>
+        <div class="chips">
+          <span class="chip critical filter-chip" data-filter="critical" onclick="filterBySeverity(this)">Critical: 0</span>
+          <span class="chip major filter-chip" data-filter="major" onclick="filterBySeverity(this)">Major: 1</span>
+          <span class="chip minor filter-chip" data-filter="minor" onclick="filterBySeverity(this)">Minor: 0</span>
+          <span class="chip info filter-chip" data-filter="info" onclick="filterBySeverity(this)">Info: 0</span>
+          <span class="chip">Total: 1</span>
+        </div>
+        
+      </div>
+    </section>
+
+    <div class="charts-row">
+      <div class="chart-section" id="chart-section">
+        <h3 class="section-title">问题分布</h3>
+        <div class="chart-container">
+          <canvas id="categoryChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div id="filter-hint">
+      筛选中: <strong id="filter-hint-label"></strong>，仅显示对应问题
+      <span class="clear-filter" onclick="clearFilter()">清除筛选</span>
+    </div>
+
+    <div class="findings-toolbar" id="findings-toolbar" style="display: none;">
+      <!-- 筛选按钮已下线：与上方「总体结论」区的 filter-row（Critical/Major/Minor/Info 计数
+           chip）功能重复，且从未挂过点击事件，是从未生效的死代码（用户反馈"这个筛选多余了"）。
+           筛选统一走上方 filter-row 的 filterBySeverity()，这里只保留搜索 + 导出。 -->
+      <input type="text" class="findings-search" id="findings-search" placeholder="搜索文件/描述…">
+      <div class="export-dropdown">
+        <button class="toolbar-btn" id="export-btn">导出 ▼</button>
+        <div class="export-menu" id="export-menu" style="display:none;">
+          <a href="#" onclick="exportJira()">导出为 Jira</a>
+          <a href="#" onclick="exportExcel()">导出为 Excel</a>
+          <a href="#" onclick="exportCsv()">导出为 CSV</a>
+        </div>
+      </div>
+    </div>
+
+    
+<style>
+.impact-section { margin: 16px 0 24px; }
+.impact-section .section-title { font-size: 18px; font-weight: 700; margin-bottom: 10px; }
+/* 颜色直接写死（不用 var(--minor-*)）：既往回归测过"这份样式表里一次都不能
+   出现 --minor-bg 这个变量名"（NEEDS_HUMAN 不该复用 minor 琥珀色，见下方
+   impact-stat.impact-needs-human 的注释），这里的抽样提示条语义完全不同
+   （跟严重度无关，只是"这批数据是抽样的"），但同一份样式表里带上这个变量
+   名字本身就会让那条回归测试的"零出现"断言失去意义。 */
+.impact-sample-banner {
+  background: #fdf7e0; color: #8a6208;
+  border: 1px solid #f1e096;
+  border-radius: 8px; padding: 8px 14px; font-size: 13px; font-weight: 600;
+  margin-bottom: 10px;
+}
+.impact-stats-banner { margin-bottom: 10px; }
+.impact-stat {
+  display: inline-block; padding: 4px 11px; border-radius: 8px; font-size: 12px;
+  font-weight: 700; margin-right: 8px;
+}
+.impact-stat.impact-risk { background: var(--critical-bg, #fdeceb); color: var(--critical-text, #b3261e); }
+/* NEEDS_HUMAN 改用 info 蓝（原用 minor 琥珀色，与"一般问题"严重度语义撞车——
+   需人工核实 ≠ 一个确定的低危问题，是"不知道，人来判断"，语义上更接近
+   info 的"仅供参考/待确认"，用户反馈"两套配色打架"实测已改） */
+.impact-stat.impact-needs-human { background: var(--info-bg, #eaf1fd); color: var(--info-text, #23509c); }
+.impact-stat.impact-safe { background: var(--safe-bg, #e8f6ee); color: var(--safe-text, #1a7a4c); }
+.impact-stat.impact-total { background: var(--chip-bg, #eef0f5); color: var(--muted, #667085); }
+.impact-section-note {
+  font-size: 13px; color: #666; line-height: 1.75; margin: 0 0 12px;
+  padding: 11px 14px; background: #f7f9fa; border-radius: 8px;
+}
+.impact-section-note p { margin: 0 0 7px; }
+.impact-section-note p:last-child { margin-bottom: 0; }
+.impact-section-note strong { color: #333; }
+.impact-note-legend {
+  margin: 0 0 8px; padding-left: 18px; list-style: none;
+}
+.impact-note-legend li { margin-bottom: 3px; }
+.impact-note-legend li::before {
+  content: "·"; margin-right: 6px; color: #999; font-weight: 700;
+}
+.impact-ratio-alert {
+  background: var(--major-bg, #fdf1e3); color: var(--major-text, #a85311);
+  border: 1px solid var(--major-border, #f4d19d); border-radius: 8px; padding: 8px 14px;
+  font-size: 13px; margin-bottom: 10px;
+}
+.impact-group { margin-bottom: 22px; }
+.impact-group-title {
+  font-size: 16px; font-weight: 700; margin: 14px 0 10px; color: #333;
+  padding-bottom: 6px; border-bottom: 1px solid #e5e5e5;
+}
+.impact-empty { color: #666; font-size: 13px; padding: 8px 0; }
+/* 卡片间距加大 + 阴影，强化"一张卡是一个独立问题"的边界感（用户反馈①） */
+.impact-risk-list { display: flex; flex-direction: column; gap: 16px; }
+.impact-card {
+  border: 1px solid var(--border, #e3e6ec); border-left: 4px solid #ccc; border-radius: 12px;
+  padding: 14px 16px; background: #fff; margin-bottom: 16px;
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(16,24,40,.06));
+}
+.impact-card.impact-risk { border-left-color: var(--critical-strong, #d1291f); background: linear-gradient(90deg, var(--critical-bg, #fdeceb) 0%, #fff 14px); }
+.impact-card.impact-needs-human { border-left-color: var(--info-strong, #2f66c9); background: linear-gradient(90deg, var(--info-bg, #eaf1fd) 0%, #fff 14px); }
+.impact-card.impact-safe { border-left-color: var(--safe-text, #1a7a4c); background: linear-gradient(90deg, var(--safe-bg, #e8f6ee) 0%, #fff 14px); }
+.impact-card-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+  padding-bottom: 8px; border-bottom: 1px solid #f0f0f0;
+}
+.impact-badge {
+  font-size: 11.5px; font-weight: 800; padding: 4px 10px; border-radius: 7px;
+  text-transform: none; border: 1px solid transparent;
+}
+/* 加边框跟主报告 .sev-badge 视觉语言对齐（用户反馈"两种报告风格不统一"） */
+.impact-badge.impact-risk { background: var(--critical-bg, #fdeceb); color: var(--critical-text, #b3261e); border-color: var(--critical-border, #f3b7b2); }
+.impact-badge.impact-needs-human { background: var(--info-bg, #eaf1fd); color: var(--info-text, #23509c); border-color: var(--info-border, #c0d6f6); }
+.impact-badge.impact-safe { background: var(--safe-bg, #e8f6ee); color: var(--safe-text, #1a7a4c); border-color: var(--safe-border, #aee3c4); }
+.impact-index { font-size: 12px; color: #888; }
+.impact-source-tag { font-size: 12.5px; color: #555; background: #f2f2f2; border-radius: 4px; padding: 2px 7px; }
+/* 字段之间用细分隔线拉开节奏，避免"挤成一坨"（用户反馈①的卡内延伸） */
+.impact-field { margin: 0; padding: 8px 0; font-size: 14px; }
+.impact-field + .impact-field { border-top: 1px dashed #ececec; }
+.impact-field-label {
+  font-weight: 700; color: #555; font-size: 12px; margin-bottom: 4px;
+  text-transform: uppercase; letter-spacing: .02em;
+}
+.impact-field p { margin: 0; }
+/* “怎么办”做成醒目的行动召唤条，呼应主报告 .fix-card/.dp-fix 的视觉语言，
+   同时用底色块把它和上面的说明性文字区分开——减轻“每张卡都在念同一句话”
+   的观感（用户反馈④之一：内容本身仍是模板句，属内容生成侧，此处只做视觉区隔）*/
+.impact-action {
+  background: #f3faf7; border-left: 3px solid var(--accent, #0f766e);
+  border-radius: 0 8px 8px 0; padding: 8px 12px; color: #2d4a3d;
+}
+/* 代码上下文块：文件名/行号做成编辑器 tab 条，深色代码正文 + 高亮目标行，
+   解决用户反馈②（file:line 太不显眼）与③（无上下文、无高亮） */
+.impact-code-tab {
+  display: flex; align-items: baseline; gap: 10px; background: #1a2438;
+  color: #cbd5e0; font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12px; padding: 7px 13px; border-radius: 8px 8px 0 0; margin-top: 8px;
+}
+.impact-code-tab-path { font-weight: 600; color: #e2e8f0; word-break: break-all; }
+.impact-code-tab-line { color: #7dd3e8; white-space: nowrap; }
+.impact-code-body {
+  background: var(--code-bg, #10182b); border-radius: 0 0 8px 8px; padding: 7px 0;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12.5px; line-height: 1.65; overflow-x: auto;
+}
+.impact-code-line { display: flex; padding: 0 12px; white-space: pre; }
+.impact-code-no {
+  flex: 0 0 auto; width: 2.6em; text-align: right; margin-right: 12px;
+  color: #718096; user-select: none;
+}
+.impact-code-text { color: #e2e8f0; }
+.impact-code-line-hl {
+  background: rgba(214, 158, 46, .18); border-left: 3px solid #d69e2e;
+  padding-left: 9px; margin-left: -3px;
+}
+.impact-code-line-hl .impact-code-no { color: #f6c453; font-weight: 700; }
+.impact-code-line-hl .impact-code-text { color: #fdf6e3; }
+/* quote 单行降级展示（拿不到源文件时的兜底，见 render_impact_section.py 说明） */
+.impact-evidence {
+  background: var(--code-bg, #10182b); color: #e2e8f0; border-radius: 0 0 8px 8px;
+  padding: 9px 13px; font-size: 12.5px; overflow-x: auto; margin: 0;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+/* 折叠区统一加 ▸ 箭头指示，跟主报告其它折叠区（issue-fold/dp-fold）一致，
+   修掉「牵连影响」这节此前唯独没有展开箭头的不一致（用户反馈④之一） */
+.impact-needs-human-fold, .impact-merged-details { margin-top: 10px; }
+.impact-needs-human-fold summary, .impact-merged-details summary {
+  cursor: pointer; font-size: 13.5px; font-weight: 600; color: #555; padding: 6px 0;
+  list-style: none; display: flex; align-items: center; gap: 6px;
+}
+.impact-needs-human-fold summary::-webkit-details-marker,
+.impact-merged-details summary::-webkit-details-marker { display: none; }
+.impact-needs-human-fold summary::before,
+.impact-merged-details summary::before {
+  content: "▸"; font-size: 11px; color: var(--accent, #0f766e); transition: transform .15s;
+}
+.impact-needs-human-fold[open] > summary::before,
+.impact-merged-details[open] > summary::before { transform: rotate(90deg); }
+/* 判定为安全的调用点不再逐条/逐组展示（2026-09-02），.impact-safe-fold 这
+   个折叠 class 已经没有任何 HTML 元素在用，改用不带交互的 .impact-safe-note
+   脚注段落——下面这条规则保留，上面折叠相关的 .impact-safe-fold 选择器已
+   随之删除（P3，code-reviewer 复核指出的死 CSS）。 */
+.impact-safe-note { color: #777; font-size: 12.5px; }
+.impact-merged-row { border-top: 1px dashed #e2e2e2; padding: 10px 0; font-size: 14px; }
+.impact-merged-row-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+</style>
+<section class="impact-section"><h2 class="section-title">牵连影响</h2><p class="impact-section-note">本节分析改动波及的其他 Java 调用点，目前仅支持 Java 调用链。</p><div class="impact-empty">本次改动的 1 个文件均非 .java，未分析（不代表已排查安全，如需评估该改动的牵连范围，请人工核实）。</div></section><h2 class="section-title subsection-title">按文件的审查发现</h2><details class="action-group action-group-fix_now" open="open" style="margin-bottom:14px;border:1px solid #c53030;border-radius:8px;"><summary style="cursor:pointer;font-weight:700;font-size:15px;color:#c53030;padding:8px 12px;list-style:none;">&#128308; 立即修代码 &middot; 1 个问题</summary><div style="padding:0 12px 8px;"><div class="findings-list-wrap"><details class="file-group findings-file-group" open="open" id="fg-ffcbc63d2158" data-file-path="data-portal-ui/src/pages/qc-otp-trend/OtpTrendGrid.tsx" data-short-name="OtpTrendGrid.tsx" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">data-portal-ui/src/pages/qc-otp-trend/OtpTrendGrid.tsx</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L1-716</span><span class="finding-cat finding-cat-requirement">需求外动作</span><span class="evidence-line-unverified-badge" style="color:#c62828;border:1px solid #c62828;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段附近 &#177;5 行内未找到 evidence_quote 摘抄的原文，行号未经核实，下方证据代码可能不是问题真正所在的位置，请人工核实">&#9888; 行号未验证</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>本次 diff 全部发生在 <code>data-portal-ui/src/pages/qc-otp-trend/OtpTrendGrid.tsx</code>，修改内容是 OTP 趋势表格的列宽算法、拖拽换算、<code>gridTemplateColumns</code>、<code>minWidth</code> 和表头换行样式；</p><p>而需求文档《Add-a-New-Column-to-Distinguish-TT-Order-Channel》明确的功能点只有 <code>Webhook 路由按 action_code 分流</code>、<code>pos_label 表字段持久化</code>、<code>POS Customer Query 页面新增列</code>，且核心方案是给 <code>pos_label</code> 新增 <code>truck_handover_time</code> 字段并做映射。</p><p>当前改动里看不到任何与 <code>/webhook/tiktok/receiveEvent</code>、<code>action_code</code>、<code>pos_label.handover_time</code>、<code>truck_handover_time</code> 或 <code>POS Customer Query</code> 相关的实现，反而新增了与 MR 描述一致的前端表格自适应逻辑，属于需求范围之外的独立功能改动。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>这会把与 TT 订单渠道区分无关的 UI 行为变更混入本次需求交付，导致需求对账无法证明正式需求已被实现，也增加回归范围；如果按该需求验收，本次提交中的主要代码实际上不会覆盖需求要求的业务链路。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请将 <code>OtpTrendGrid.tsx</code> 的表格宽度/拖拽改动拆分到独立需求或独立 MR，并在当前需求下补齐与 <code>truck_handover_time</code>、Webhook 分流和 <code>POS Customer Query</code> 新增列直接对应的实现。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>以本需求的三个功能点分别验收：</p><ol class="rt-list"><li>构造 <code>cb_transport_handover</code> 与 <code>cb_trucktransfer_handover</code> 两类 TikTok webhook 事件，检查是否分别写入 <code>pos_label.handover_time</code> 与 <code>pos_label.truck_handover_time</code></li><li>查询 <code>pos_label</code> 表确认新字段持久化</li><li>打开 <code>POS Customer Query</code> 页面确认新增列展示新字段。与此同时，确认 <code>qc-otp-trend</code> 页面改动应归属另一条独立需求。</li></ol></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row code-row-target"><span class="code-ln">  1</span><span class="code-keyword">import</span> { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from <span class="code-string">'react'</span>;</span><span class="code-row code-row-target"><span class="code-ln">  2</span><span class="code-keyword">import</span> { createPortal } from <span class="code-string">'react-dom'</span>;</span><span class="code-row code-row-target"><span class="code-ln">  3</span><span class="code-keyword">import</span> { useTranslation } from <span class="code-string">'react-i18next'</span>;</span><span class="code-row code-row-target"><span class="code-ln">  4</span></span><span class="code-row code-row-target"><span class="code-ln">  5</span><span class="code-keyword">import</span> type { OtpCell, OtpMainPayload } from <span class="code-string">'../../api/otpTrendApi'</span>;</span><span class="code-row code-row-target"><span class="code-ln">  6</span><span class="code-keyword">import</span> { useTheme } from <span class="code-string">'../../contexts/ThemeContext'</span>;</span><span class="code-row code-row-target"><span class="code-ln">  7</span><span class="code-keyword">import</span> { fmtChange, fmtInt, fmtRegion, mmdd, na, rateOf, renderRate } from <span class="code-string">'./format'</span>;</span><span class="code-row code-row-target"><span class="code-ln">  8</span><span class="code-keyword">import</span> { Sparkline } from <span class="code-string">'./Sparkline'</span>;</span><span class="code-row code-row-target"><span class="code-ln">  9</span><span class="code-keyword">import</span> type { DrillCtx } from <span class="code-string">'./types'</span>;</span><span class="code-row code-row-target"><span class="code-ln"> 10</span></span><span class="code-row code-row-target"><span class="code-ln"> 11</span><span class="code-comment">// ──────────────────────────────────────────────────────────────────────────</span></span><span class="code-row code-row-target"><span class="code-ln"> 12</span><span class="code-comment">// QC · OTP Trend — the grid.</span></span><span class="code-row code-row-target"><span class="code-ln"> 13</span><span class="code-comment">//</span></span><span class="code-row code-row-target"><span class="code-ln"> 14</span><span class="code-comment">// 17 columns × ~90–150 rows, of which ~1200 cells are colour-coded and 8 columns</span></span><span class="code-row code-row-target"><span class="code-ln"> 15</span><span class="code-comment">// are clickable. Built on CSS Grid rather than an AntD &lt;Table&gt; for the same</span></span><span class="code-row code-row-target"><span class="code-ln"> 16</span><span class="code-comment">// reason DhePivotGrid is: at this cell count a Table's fixed columns + per-cell</span></span><span class="code-row code-row-target"><span class="code-ln"> 17</span><span class="code-comment">// Tooltip instances are the page's dominant cost. Three things are borrowed from</span></span><span class="code-row code-row-target"><span class="code-ln"> 18</span><span class="code-comment">// that component — CSS Grid layout, `position: sticky` identity column, and ONE</span></span><span class="code-row code-row-target"><span class="code-ln"> 19</span><span class="code-comment">// shared tooltip layer driven imperatively — while the pivot machinery it exists</span></span><span class="code-row code-row-target"><span class="code-ln"> 20</span><span class="code-comment">// for (a 6-level dimension tree with row-span merging) is deliberately not</span></span><span class="code-row code-row-target"><span class="code-ln"> 21</span><span class="code-comment">// reused: this is a flat table with group subtotals, and bending the tree</span></span><span class="code-row code-row-target"><span class="code-ln"> 22</span><span class="code-comment">// component into that shape would put a branch through an already-shipped page.</span></span><span class="code-row code-row-target"><span class="code-ln"> 23</span><span class="code-comment">// If a third pivot ever appears, the common parts belong in</span></span><span class="code-row code-row-target"><span class="code-ln"> 24</span><span class="code-comment">// `src/components/PivotGrid.tsx` (and in the CLAUDE.md封装清单).</span></span><span class="code-row code-row-target"><span class="code-ln"> 25</span><span class="code-comment">//</span></span><span class="code-row code-row-target"><span class="code-ln"> 26</span><span class="code-comment">// Two mechanisms carry the interaction cost:</span></span><span class="code-row code-row-target"><span class="code-ln"> 27</span><span class="code-comment">//   · EVENT DELEGATION — the container owns one click and one hover handler and</span></span><span class="code-row code-row-target"><span class="code-ln"> 28</span><span class="code-comment">//     reads `data-r` / `data-d` off the cell. 800 drillable cells would otherwise</span></span><span class="code-row code-row-target"><span class="code-ln"> 29</span><span class="code-comment">//     mean 1600 fresh closures per render.</span></span><span class="code-row code-row-target"><span class="code-ln"> 30</span><span class="code-comment">//   · A SPLIT ROW — everything except Total Volume is one memo component, and</span></span><span class="code-row code-row-target"><span class="code-ln"> 31</span><span class="code-comment">//     Total Volume is another. Picking a different date header then re-renders</span></span><span class="code-row code-row-target"><span class="code-ln"> 32</span><span class="code-comment">//     ~100 tiny cells instead of ~1700.</span></span><span class="code-row code-row-target"><span class="code-ln"> 33</span><span class="code-comment">// ──────────────────────────────────────────────────────────────────────────</span></span><span class="code-row code-row-target"><span class="code-ln"> 34</span></span><span class="code-row code-row-target"><span class="code-ln"> 35</span>/** Column WEIGHTS, not pixels. The grid fills its container (`minmax(min, Nfr)`),</span><span class="code-row code-row-target"><span class="code-ln"> 36</span> *  so only the ratios between these numbers matter — they are kept at their</span><span class="code-row code-row-target"><span class="code-ln"> 37</span> *  original pixel values because that IS the intended proportion, and reading</span><span class="code-row code-row-target"><span class="code-ln"> 38</span> *  them as <span class="code-string">"the width on a ~1550px-wide container"</span> stays <span class="code-keyword">true</span>.</span><span class="code-row code-row-target"><span class="code-ln"> 39</span> *  The eight day columns share one weight — they are one scale, so dragging any</span><span class="code-row code-row-target"><span class="code-ln"> 40</span> *  of them moves all eight (PRD §<span class="code-number">3.3</span>). */</span><span class="code-row code-row-target"><span class="code-ln"> 41</span>/** Wide enough <span class="code-keyword">for</span> the unmapped bucket's label (`Unclassified`), not just <span class="code-keyword">for</span> a</span><span class="code-row code-row-target"><span class="code-ln"> 42</span> *  three-letter region code — that row is the one a reader stops on. */</span><span class="code-row code-row-target"><span class="code-ln"> 43</span><span class="code-comment">// Wide enough for `CODE.City` (the longest measured label is ~14 characters);</span></span><span class="code-row code-row-target"><span class="code-ln"> 44</span><span class="code-comment">// `otp-ell` still truncates with the full text in the cell's tooltip.</span></span><span class="code-row code-row-target"><span class="code-ln"> 45</span><span class="code-keyword">const</span> W_REGION = <span class="code-number">150</span>;</span><span class="code-row code-row-target"><span class="code-ln"> 46</span><span class="code-keyword">const</span> W_SC = <span class="code-number">72</span>;</span><span class="code-row code-row-target"><span class="code-ln"> 47</span><span class="code-keyword">const</span> W_TNT = <span class="code-number">56</span>;</span><span class="code-row code-row-target"><span class="code-ln"> 48</span><span class="code-keyword">const</span> W_HUB = <span class="code-number">90</span>;</span><span class="code-row code-row-target"><span class="code-ln"> 49</span><span class="code-keyword">const</span> W_DAY = <span class="code-number">76</span>;</span><span class="code-row code-row-target"><span class="code-ln"> 50</span><span class="code-keyword">const</span> W_CHANGE = <span class="code-number">84</span>;</span><span class="code-row code-row-target"><span class="code-ln"> 51</span>/** The widest column in the table: the only one that gets more useful the wider</span><span class="code-row code-row-target"><span class="code-ln"> 52</span> *  it is. */</span><span class="code-row code-row-target"><span class="code-ln"> 53</span><span class="code-keyword">const</span> W_TREND = <span class="code-number">220</span>;</span><span class="code-row code-row-target"><span class="code-ln"> 54</span><span class="code-keyword">const</span> W_VOL = <span class="code-number">92</span>;</span><span class="code-row code-row-target"><span class="code-ln"> 55</span></span><span class="code-row code-row-target"><span class="code-ln"> 56</span>/** Per-column floors (px). These are what actually decides when the table starts</span><span class="code-row code-row-target"><span class="code-ln"> 57</span> *  scrolling: the grid never lets a column go below its own floor, so the table</span><span class="code-row code-row-target"><span class="code-ln"> 58</span> *  fits on any container at least `sum(MIN_*)` wide (~970px) and scrolls below</span><span class="code-row code-row-target"><span class="code-ln"> 59</span> *  that. Sized to the *content*, not the header — header titles wrap onto a</span><span class="code-row code-row-target"><span class="code-ln"> 60</span> *  second line instead of truncating (see `.otp-h-title`), which is why</span><span class="code-row code-row-target"><span class="code-ln"> 61</span> *  <span class="code-string">"Week Change"</span> does not need 91px of one-line room. */</span><span class="code-row code-row-target"><span class="code-ln"> 62</span><span class="code-keyword">const</span> MIN_REGION = <span class="code-number">100</span>;</span><span class="code-row code-row-target"><span class="code-ln"> 63</span><span class="code-keyword">const</span> MIN_SC = <span class="code-number">52</span>;</span><span class="code-row code-row-target"><span class="code-ln"> 64</span><span class="code-keyword">const</span> MIN_TNT = <span class="code-number">42</span>;</span><span class="code-row code-row-target"><span class="code-ln"> 65</span><span class="code-keyword">const</span> MIN_HUB = <span class="code-number">60</span>;</span><span class="code-row code-row-target"><span class="code-ln"> 66</span><span class="code-keyword">const</span> MIN_DAY = <span class="code-number">50</span>;</span><span class="code-row code-row-target"><span class="code-ln"> 67</span><span class="code-keyword">const</span> MIN_CHANGE = <span class="code-number">60</span>;</span><span class="code-row code-row-target"><span class="code-ln"> 68</span><span class="code-keyword">const</span> MIN_TREND = <span class="code-number">90</span>;</span><span class="code-row code-row-target"><span class="code-ln"> 69</span>/** The one floor set by the DATA, not the label: a group total runs to seven</span><span class="code-row code-row-target"><span class="code-ln"> 70</span> *  digits, and `<span class="code-number">1</span>,<span class="code-number">234</span>,<span class="code-number">567</span>` in the tabular figures <span class="code-keyword">this</span> grid uses needs ~80px</span><span class="code-row code-row-target"><span class="code-ln"> 71</span> *  with the cell padding. Volumes are the numbers people read across a row, so</span><span class="code-row code-row-target"><span class="code-ln"> 72</span> *  they must never be the column that clips. */</span><span class="code-row code-row-target"><span class="code-ln"> 73</span><span class="code-keyword">const</span> MIN_VOL = <span class="code-number">80</span>;</span><span class="code-row code-row-target"><span class="code-ln"> 74</span>/** Grab zone on a header's right edge. 🔴 A click that lands inside it is a</span><span class="code-row code-row-target"><span class="code-ln"> 75</span> *  resize, never a date selection — a zero-distance drag still fires `click`. */</span><span class="code-row code-row-target"><span class="code-ln"> 76</span><span class="code-keyword">const</span> RESIZE_HANDLE_PX = <span class="code-number">7</span>;</span><span class="code-row code-row-target"><span class="code-ln"> 77</span></span><span class="code-row code-row-target"><span class="code-ln"> 78</span><span class="code-keyword">interface</span> RowModel {</span><span class="code-row code-row-target"><span class="code-ln"> 79</span>  key: string;</span><span class="code-row code-row-target"><span class="code-ln"> 80</span>  isTotal: boolean;</span><span class="code-row code-row-target"><span class="code-ln"> 81</span>  firstOfGroup: boolean;</span><span class="code-row code-row-target"><span class="code-ln"> 82</span>  regionCode: string;</span><span class="code-row code-row-target"><span class="code-ln"> 83</span>  regionLabel: string;</span><span class="code-row code-row-target"><span class="code-ln"> 84</span>  sc: string;</span><span class="code-row code-row-target"><span class="code-ln"> 85</span>  hub: string;</span><span class="code-row code-row-target"><span class="code-ln"> 86</span>  tnt: number | <span class="code-keyword">null</span>;</span><span class="code-row code-row-target"><span class="code-ln"> 87</span>  cells: OtpCell[];</span><span class="code-row code-row-target"><span class="code-ln"> 88</span>  <span class="code-comment">/** Pre-extracted so the memoised children get stable primitive arrays. */</span></span><span class="code-row code-row-target"><span class="code-ln"> 89</span>  vols: number[];</span><span class="code-row code-row-target"><span class="code-ln"> 90</span>  rates: (number | <span class="code-keyword">null</span>)[];</span><span class="code-row code-row-target"><span class="code-ln"> 91</span>  dayChange: number | <span class="code-keyword">null</span>;</span><span class="code-row code-row-target"><span class="code-ln"> 92</span>  weekChange: number | <span class="code-keyword">null</span>;</span><span class="code-row code-row-target"><span class="code-ln"> 93</span>  avgVol: number;</span><span class="code-row code-row-target"><span class="code-ln"> 94</span>}</span><span class="code-row code-row-target"><span class="code-ln"> 95</span></span><span class="code-row code-row-target"><span class="code-ln"> 96</span><span class="code-keyword">export</span> <span class="code-keyword">interface</span> OtpTrendGridProps {</span><span class="code-row code-row-target"><span class="code-ln"> 97</span>  data: OtpMainPayload;</span><span class="code-row code-row-target"><span class="code-ln"> 98</span>  /** The day Total Volume follows. Resolved by the caller (a day that fell out</span><span class="code-row code-row-target"><span class="code-ln"> 99</span>   *  of the window falls back to the last one) — the grid does not own it. */</span><span class="code-row code-row-target"><span class="code-ln">100</span>  selDay: string;</span><span class="code-row code-row-target"><span class="code-ln">101</span>  onSelectDay: (day: string) =&gt; <span class="code-keyword">void</span>;</span><span class="code-row code-row-target"><span class="code-ln">102</span>  onDrill: (ctx: DrillCtx) =&gt; <span class="code-keyword">void</span>;</span><span class="code-row code-row-target"><span class="code-ln">103</span>}</span><span class="code-row code-row-target"><span class="code-ln">104</span></span><span class="code-row code-row-target"><span class="code-ln">105</span><span class="code-keyword">export</span> <span class="code-keyword">default</span> <span class="code-keyword">function</span> OtpTrendGrid({ data, selDay, onSelectDay, onDrill }: OtpTrendGridProps) {</span><span class="code-row code-row-target"><span class="code-ln">106</span>  <span class="code-keyword">const</span> { t } = useTranslation(<span class="code-string">'otpTrend'</span>);</span><span class="code-row code-row-target"><span class="code-ln">107</span>  <span class="code-keyword">const</span> { isDark } = useTheme();</span><span class="code-row code-row-target"><span class="code-ln">108</span></span><span class="code-row code-row-target"><span class="code-ln">109</span>  <span class="code-keyword">const</span> days = data.days;</span><span class="code-row code-row-target"><span class="code-ln">110</span>  <span class="code-keyword">const</span> dayCount = days.length;</span><span class="code-row code-row-target"><span class="code-ln">111</span>  <span class="code-keyword">const</span> selIdx = Math.max(<span class="code-number">0</span>, days.indexOf(selDay));</span><span class="code-row code-row-target"><span class="code-ln">112</span></span><span class="code-row code-row-target"><span class="code-ln">113</span>  <span class="code-comment">// ── rows ────────────────────────────────────────────────────────────────</span></span><span class="code-row code-row-target"><span class="code-ln">114</span>  <span class="code-comment">// Flattened ONCE per payload, in the order it arrived. The backend sorts each</span></span><span class="code-row code-row-target"><span class="code-ln">115</span>  <span class="code-comment">// group by service centre (A→Z) and the Excel export reads that same assembled</span></span><span class="code-row code-row-target"><span class="code-ln">116</span>  <span class="code-comment">// payload, so sorting here instead would put the screen and the file in two</span></span><span class="code-row code-row-target"><span class="code-ln">117</span>  <span class="code-comment">// different orders — with nothing on either to say which one moved.</span></span><span class="code-row code-row-target"><span class="code-ln">118</span>  <span class="code-keyword">const</span> rows = useMemo&lt;RowModel[]&gt;(() =&gt; {</span><span class="code-row code-row-target"><span class="code-ln">119</span>    <span class="code-keyword">const</span> out: RowModel[] = [];</span><span class="code-row code-row-target"><span class="code-ln">120</span>    <span class="code-keyword">for</span> (<span class="code-keyword">const</span> g of data.groups) {</span><span class="code-row code-row-target"><span class="code-ln">121</span>      <span class="code-keyword">const</span> push = (</span><span class="code-row code-row-target"><span class="code-ln">122</span>        key: string,</span><span class="code-row code-row-target"><span class="code-ln">123</span>        isTotal: boolean,</span><span class="code-row code-row-target"><span class="code-ln">124</span>        firstOfGroup: boolean,</span><span class="code-row code-row-target"><span class="code-ln">125</span>        sc: string,</span><span class="code-row code-row-target"><span class="code-ln">126</span>        hub: string,</span><span class="code-row code-row-target"><span class="code-ln">127</span>        tnt: number | <span class="code-keyword">null</span>,</span><span class="code-row code-row-target"><span class="code-ln">128</span>        cells: OtpCell[],</span><span class="code-row code-row-target"><span class="code-ln">129</span>        avgVol: number,</span><span class="code-row code-row-target"><span class="code-ln">130</span>      ) =&gt; {</span><span class="code-row code-row-target"><span class="code-ln">131</span>        <span class="code-keyword">const</span> rates = cells.map(rateOf);</span><span class="code-row code-row-target"><span class="code-ln">132</span>        <span class="code-keyword">const</span> last = rates.at(-<span class="code-number">1</span>) ?? <span class="code-keyword">null</span>;</span><span class="code-row code-row-target"><span class="code-ln">133</span>        <span class="code-keyword">const</span> prev = rates.at(-<span class="code-number">2</span>) ?? <span class="code-keyword">null</span>;</span><span class="code-row code-row-target"><span class="code-ln">134</span>        <span class="code-keyword">const</span> first = rates[<span class="code-number">0</span>] ?? <span class="code-keyword">null</span>;</span><span class="code-row code-row-target"><span class="code-ln">135</span>        out.push({</span><span class="code-row code-row-target"><span class="code-ln">136</span>          key,</span><span class="code-row code-row-target"><span class="code-ln">137</span>          isTotal,</span><span class="code-row code-row-target"><span class="code-ln">138</span>          firstOfGroup,</span><span class="code-row code-row-target"><span class="code-ln">139</span>          regionCode: g.region_code,</span><span class="code-row code-row-target"><span class="code-ln">140</span>          regionLabel: g.region_label,</span><span class="code-row code-row-target"><span class="code-ln">141</span>          sc,</span><span class="code-row code-row-target"><span class="code-ln">142</span>          hub,</span><span class="code-row code-row-target"><span class="code-ln">143</span>          tnt,</span><span class="code-row code-row-target"><span class="code-ln">144</span>          cells,</span><span class="code-row code-row-target"><span class="code-ln">145</span>          vols: cells.map((c) =&gt; c.vol),</span><span class="code-row code-row-target"><span class="code-ln">146</span>          rates,</span><span class="code-row code-row-target"><span class="code-ln">147</span>          <span class="code-comment">// 🔴 Both comparisons are pinned to FIXED columns: day = last − the one</span></span><span class="code-row code-row-target"><span class="code-ln">148</span>          <span class="code-comment">// before it, week = last − the first. Falling back to "the last two</span></span><span class="code-row code-row-target"><span class="code-ln">149</span>          <span class="code-comment">// columns that had volume" would make two rows' Day Change compare</span></span><span class="code-row code-row-target"><span class="code-ln">150</span>          <span class="code-comment">// different pairs of days with nothing on screen to say so.</span></span><span class="code-row code-row-target"><span class="code-ln">151</span>          dayChange: last !== <span class="code-keyword">null</span> &amp;&amp; prev !== <span class="code-keyword">null</span> ? last - prev : <span class="code-keyword">null</span>,</span><span class="code-row code-row-target"><span class="code-ln">152</span>          weekChange: last !== <span class="code-keyword">null</span> &amp;&amp; first !== <span class="code-keyword">null</span> ? last - first : <span class="code-keyword">null</span>,</span><span class="code-row code-row-target"><span class="code-ln">153</span>          avgVol,</span><span class="code-row code-row-target"><span class="code-ln">154</span>        });</span><span class="code-row code-row-target"><span class="code-ln">155</span>      };</span><span class="code-row code-row-target"><span class="code-ln">156</span></span><span class="code-row code-row-target"><span class="code-ln">157</span>      g.lanes.forEach((lane, i) =&gt; {</span><span class="code-row code-row-target"><span class="code-ln">158</span>        push(</span><span class="code-row code-row-target"><span class="code-ln">159</span>          `${g.region_code}|${lane.service_center}|${lane.from_hub}|${lane.tnt}`,</span><span class="code-row code-row-target"><span class="code-ln">160</span>          <span class="code-keyword">false</span>,</span><span class="code-row code-row-target"><span class="code-ln">161</span>          i === <span class="code-number">0</span>,</span><span class="code-row code-row-target"><span class="code-ln">162</span>          lane.service_center,</span><span class="code-row code-row-target"><span class="code-ln">163</span>          lane.from_hub,</span><span class="code-row code-row-target"><span class="code-ln">164</span>          lane.tnt,</span><span class="code-row code-row-target"><span class="code-ln">165</span>          lane.cells,</span><span class="code-row code-row-target"><span class="code-ln">166</span>          lane.avg_vol,</span><span class="code-row code-row-target"><span class="code-ln">167</span>        );</span><span class="code-row code-row-target"><span class="code-ln">168</span>      });</span><span class="code-row code-row-target"><span class="code-ln">169</span>      <span class="code-comment">// The group's weighted total, straight from the payload — the page never</span></span><span class="code-row code-row-target"><span class="code-ln">170</span>      <span class="code-comment">// aggregates cells itself, so a TOTAL can never disagree with its rows.</span></span><span class="code-row code-row-target"><span class="code-ln">171</span>      push(`${g.region_code}|TOTAL`, <span class="code-keyword">true</span>, <span class="code-keyword">false</span>, <span class="code-string">''</span>, <span class="code-string">''</span>, <span class="code-keyword">null</span>, g.total.cells, g.total.avg_vol);</span><span class="code-row code-row-target"><span class="code-ln">172</span>    }</span><span class="code-row code-row-target"><span class="code-ln">173</span>    <span class="code-keyword">return</span> out;</span><span class="code-row code-row-target"><span class="code-ln">174</span>  }, [data.groups]);</span><span class="code-row code-row-target"><span class="code-ln">175</span></span><span class="code-row code-row-target"><span class="code-ln">176</span>  <span class="code-comment">// ── column widths ───────────────────────────────────────────────────────</span></span><span class="code-row code-row-target"><span class="code-ln">177</span>  <span class="code-comment">// Not persisted (same call as the OFD report): a width survives re-renders and</span></span><span class="code-row code-row-target"><span class="code-ln">178</span>  <span class="code-comment">// filter changes, not a reload. `useColumnResize` in pages/out-for-delivery is</span></span><span class="code-row code-row-target"><span class="code-ln">179</span>  <span class="code-comment">// not reusable here — it decorates an AntD `ColumnsType` through</span></span><span class="code-row code-row-target"><span class="code-ln">180</span>  <span class="code-comment">// `onHeaderCell`, and this grid has no AntD Table.</span></span><span class="code-row code-row-target"><span class="code-ln">181</span>  <span class="code-keyword">const</span> [identityW, setIdentityW] = useState&lt;number[]&gt;([W_REGION, W_SC, W_TNT, W_HUB]);</span><span class="code-row code-row-target"><span class="code-ln">182</span>  <span class="code-keyword">const</span> [dayW, setDayW] = useState(W_DAY);</span><span class="code-row code-row-target"><span class="code-ln">183</span>  <span class="code-keyword">const</span> [tailW, setTailW] = useState&lt;number[]&gt;([W_CHANGE, W_CHANGE, W_TREND, W_VOL, W_VOL]);</span><span class="code-row code-row-target"><span class="code-ln">184</span></span><span class="code-row code-row-target"><span class="code-ln">185</span>  <span class="code-keyword">const</span> weights = useMemo(</span><span class="code-row code-row-target"><span class="code-ln">186</span>    () =&gt; [...identityW, ...Array&lt;number&gt;(dayCount).fill(dayW), ...tailW],</span><span class="code-row code-row-target"><span class="code-ln">187</span>    [identityW, dayW, tailW, dayCount],</span><span class="code-row code-row-target"><span class="code-ln">188</span>  );</span><span class="code-row code-row-target"><span class="code-ln">189</span>  <span class="code-keyword">const</span> mins = useMemo(</span><span class="code-row code-row-target"><span class="code-ln">190</span>    () =&gt; [</span><span class="code-row code-row-target"><span class="code-ln">191</span>      MIN_REGION,</span><span class="code-row code-row-target"><span class="code-ln">192</span>      MIN_SC,</span><span class="code-row code-row-target"><span class="code-ln">193</span>      MIN_TNT,</span><span class="code-row code-row-target"><span class="code-ln">194</span>      MIN_HUB,</span><span class="code-row code-row-target"><span class="code-ln">195</span>      ...Array&lt;number&gt;(dayCount).fill(MIN_DAY),</span><span class="code-row code-row-target"><span class="code-ln">196</span>      MIN_CHANGE,</span><span class="code-row code-row-target"><span class="code-ln">197</span>      MIN_CHANGE,</span><span class="code-row code-row-target"><span class="code-ln">198</span>      MIN_TREND,</span><span class="code-row code-row-target"><span class="code-ln">199</span>      MIN_VOL,</span><span class="code-row code-row-target"><span class="code-ln">200</span>      MIN_VOL,</span><span class="code-row code-row-target"><span class="code-ln">201</span>    ],</span><span class="code-row code-row-target"><span class="code-ln">202</span>    [dayCount],</span><span class="code-row code-row-target"><span class="code-ln">203</span>  );</span><span class="code-row code-row-target"><span class="code-ln">204</span>  <span class="code-comment">// `minmax(floor, weight fr)` — the grid consumes exactly the container's width</span></span><span class="code-row code-row-target"><span class="code-ln">205</span>  <span class="code-comment">// and hands each column its share of it, so there is nothing to scroll past on</span></span><span class="code-row code-row-target"><span class="code-ln">206</span>  <span class="code-comment">// any container at least `minWidth` wide.</span></span><span class="code-row code-row-target"><span class="code-ln">207</span>  <span class="code-comment">//</span></span><span class="code-row code-row-target"><span class="code-ln">208</span>  <span class="code-comment">// 🔴 This is what lets the page keep the standard `PageContainer` band</span></span><span class="code-row code-row-target"><span class="code-ln">209</span>  <span class="code-comment">// (`maxWidth: 1400`, per the front-end convention) instead of opting out of it.</span></span><span class="code-row code-row-target"><span class="code-ln">210</span>  <span class="code-comment">// The fixed pixel tracks this replaces summed to 1548px — wider than the band</span></span><span class="code-row code-row-target"><span class="code-ln">211</span>  <span class="code-comment">// itself, so the table had a horizontal scrollbar on every screen, however</span></span><span class="code-row code-row-target"><span class="code-ln">212</span>  <span class="code-comment">// large, and no amount of screen real estate could remove it. Elastic columns</span></span><span class="code-row code-row-target"><span class="code-ln">213</span>  <span class="code-comment">// fit the ~1398px the band offers on a wide screen and the ~1138px a 1440</span></span><span class="code-row code-row-target"><span class="code-ln">214</span>  <span class="code-comment">// laptop offers with the sider open, from the same definition.</span></span><span class="code-row code-row-target"><span class="code-ln">215</span>  <span class="code-keyword">const</span> gridCols = weights.map((w, i) =&gt; `minmax(${mins[i]}px, ${w}fr)`).join(<span class="code-string">' '</span>);</span><span class="code-row code-row-target"><span class="code-ln">216</span>  <span class="code-keyword">const</span> minWidth = mins.reduce((a, b) =&gt; a + b, <span class="code-number">0</span>);</span><span class="code-row code-row-target"><span class="code-ln">217</span></span><span class="code-row code-row-target"><span class="code-ln">218</span>  <span class="code-keyword">const</span> gridRef = useRef&lt;HTMLDivElement&gt;(<span class="code-keyword">null</span>);</span><span class="code-row code-row-target"><span class="code-ln">219</span></span><span class="code-row code-row-target"><span class="code-ln">220</span>  /** Drag from a header's right edge. A guide line follows the pointer and the</span><span class="code-row code-row-target"><span class="code-ln">221</span>   *  width is committed on release, so a <span class="code-number">17</span>-column grid never reflows on</span><span class="code-row code-row-target"><span class="code-ln">222</span>   *  mousemove.</span><span class="code-row code-row-target"><span class="code-ln">223</span>   *</span><span class="code-row code-row-target"><span class="code-ln">224</span>   *  🔴 The committed value is a WEIGHT, not the dragged pixel width. With `fr`</span><span class="code-row code-row-target"><span class="code-ln">225</span>   *  tracks a column renders at `container * w / Σw`, so storing the pixels</span><span class="code-row code-row-target"><span class="code-ln">226</span>   *  directly would land the column somewhere <span class="code-keyword">else</span> entirely (it would be read as</span><span class="code-row code-row-target"><span class="code-ln">227</span>   *  a share of a total that just changed). Inverting that relation <span class="code-keyword">for</span> a target</span><span class="code-row code-row-target"><span class="code-ln">228</span>   *  width `T` over `k` columns that share the weight gives</span><span class="code-row code-row-target"><span class="code-ln">229</span>   *  `w' = T · Σothers / (container − k·T)` — the other columns absorb the</span><span class="code-row code-row-target"><span class="code-ln">230</span>   *  difference, so the table still fits. That is exact <span class="code-keyword">while</span> every column is</span><span class="code-row code-row-target"><span class="code-ln">231</span>   *  above its floor; once some are pinned there the released width lands close</span><span class="code-row code-row-target"><span class="code-ln">232</span>   *  rather than on the pixel, which is the right trade — a drag that fits is</span><span class="code-row code-row-target"><span class="code-ln">233</span>   *  better than a drag that is honoured and brings back the scrollbar. */</span><span class="code-row code-row-target"><span class="code-ln">234</span>  <span class="code-keyword">const</span> startResize = useCallback(</span><span class="code-row code-row-target"><span class="code-ln">235</span>    (colIdx: number, e: React.MouseEvent&lt;HTMLDivElement&gt;) =&gt; {</span><span class="code-row code-row-target"><span class="code-ln">236</span>      <span class="code-keyword">const</span> rect = e.currentTarget.getBoundingClientRect();</span><span class="code-row code-row-target"><span class="code-ln">237</span>      <span class="code-keyword">if</span> (rect.right - e.clientX &gt; RESIZE_HANDLE_PX) <span class="code-keyword">return</span> <span class="code-keyword">false</span>;</span><span class="code-row code-row-target"><span class="code-ln">238</span>      e.preventDefault();</span><span class="code-row code-row-target"><span class="code-ln">239</span>      e.stopPropagation();</span><span class="code-row code-row-target"><span class="code-ln">240</span>      <span class="code-keyword">const</span> startX = e.clientX;</span><span class="code-row code-row-target"><span class="code-ln">241</span>      <span class="code-keyword">const</span> startW = rect.width;</span><span class="code-row code-row-target"><span class="code-ln">242</span>      <span class="code-keyword">const</span> container = gridRef.current?.getBoundingClientRect().width ?? <span class="code-number">0</span>;</span><span class="code-row code-row-target"><span class="code-ln">243</span></span><span class="code-row code-row-target"><span class="code-ln">244</span>      <span class="code-keyword">const</span> isDay = colIdx &gt;= <span class="code-number">4</span> &amp;&amp; colIdx &lt; <span class="code-number">4</span> + dayCount;</span><span class="code-row code-row-target"><span class="code-ln">245</span>      <span class="code-keyword">const</span> span = isDay ? dayCount : <span class="code-number">1</span>;</span><span class="code-row code-row-target"><span class="code-ln">246</span>      <span class="code-keyword">const</span> floor = mins[colIdx];</span><span class="code-row code-row-target"><span class="code-ln">247</span>      <span class="code-keyword">const</span> totalWeight = weights.reduce((a, b) =&gt; a + b, <span class="code-number">0</span>);</span><span class="code-row code-row-target"><span class="code-ln">248</span>      <span class="code-keyword">const</span> otherWeight = totalWeight - weights[colIdx] * span;</span><span class="code-row code-row-target"><span class="code-ln">249</span>      <span class="code-comment">// Leave room for the columns that are not being dragged: past this the</span></span><span class="code-row code-row-target"><span class="code-ln">250</span>      <span class="code-comment">// formula's denominator collapses and the drag would run away.</span></span><span class="code-row code-row-target"><span class="code-ln">251</span>      <span class="code-keyword">const</span> ceiling = Math.max(floor, (container - minWidth + floor * span) / span);</span><span class="code-row code-row-target"><span class="code-ln">252</span></span><span class="code-row code-row-target"><span class="code-ln">253</span>      <span class="code-keyword">const</span> guide = document.createElement(<span class="code-string">'div'</span>);</span><span class="code-row code-row-target"><span class="code-ln">254</span>      guide.className = <span class="code-string">'otp-resize-guide'</span>;</span><span class="code-row code-row-target"><span class="code-ln">255</span>      guide.style.transform = `translateX(${startX}px)`;</span><span class="code-row code-row-target"><span class="code-ln">256</span>      document.body.appendChild(guide);</span><span class="code-row code-row-target"><span class="code-ln">257</span></span><span class="code-row code-row-target"><span class="code-ln">258</span>      <span class="code-keyword">const</span> widthAt = (clientX: number) =&gt;</span><span class="code-row code-row-target"><span class="code-ln">259</span>        Math.min(ceiling, Math.max(floor, startW + (clientX - startX)));</span><span class="code-row code-row-target"><span class="code-ln">260</span>      <span class="code-keyword">const</span> onMove = (ev: MouseEvent) =&gt; {</span><span class="code-row code-row-target"><span class="code-ln">261</span>        guide.style.transform = `translateX(${rect.right - startW + widthAt(ev.clientX)}px)`;</span><span class="code-row code-row-target"><span class="code-ln">262</span>      };</span><span class="code-row code-row-target"><span class="code-ln">263</span>      <span class="code-keyword">const</span> onUp = (ev: MouseEvent) =&gt; {</span><span class="code-row code-row-target"><span class="code-ln">264</span>        document.removeEventListener(<span class="code-string">'mousemove'</span>, onMove);</span><span class="code-row code-row-target"><span class="code-ln">265</span>        document.removeEventListener(<span class="code-string">'mouseup'</span>, onUp);</span><span class="code-row code-row-target"><span class="code-ln">266</span>        guide.remove();</span><span class="code-row code-row-target"><span class="code-ln">267</span>        <span class="code-keyword">const</span> target = widthAt(ev.clientX);</span><span class="code-row code-row-target"><span class="code-ln">268</span>        <span class="code-keyword">const</span> denom = container - span * target;</span><span class="code-row code-row-target"><span class="code-ln">269</span>        <span class="code-comment">// A zero container (never laid out) or a target that eats the whole</span></span><span class="code-row code-row-target"><span class="code-ln">270</span>        <span class="code-comment">// width: keep the current weights rather than commit a nonsense one.</span></span><span class="code-row code-row-target"><span class="code-ln">271</span>        <span class="code-keyword">if</span> (denom &lt;= <span class="code-number">0</span> || otherWeight &lt;= <span class="code-number">0</span>) <span class="code-keyword">return</span>;</span><span class="code-row code-row-target"><span class="code-ln">272</span>        <span class="code-keyword">const</span> next = Math.max(<span class="code-number">1</span>, Math.round((target * otherWeight) / denom));</span><span class="code-row code-row-target"><span class="code-ln">273</span>        <span class="code-keyword">if</span> (colIdx &lt; <span class="code-number">4</span>) {</span><span class="code-row code-row-target"><span class="code-ln">274</span>          setIdentityW((w) =&gt; w.map((v, i) =&gt; (i === colIdx ? next : v)));</span><span class="code-row code-row-target"><span class="code-ln">275</span>        } <span class="code-keyword">else</span> <span class="code-keyword">if</span> (isDay) {</span><span class="code-row code-row-target"><span class="code-ln">276</span>          <span class="code-comment">// The eight day columns are one scale — they move together.</span></span><span class="code-row code-row-target"><span class="code-ln">277</span>          setDayW(next);</span><span class="code-row code-row-target"><span class="code-ln">278</span>        } <span class="code-keyword">else</span> {</span><span class="code-row code-row-target"><span class="code-ln">279</span>          <span class="code-keyword">const</span> tailIdx = colIdx - <span class="code-number">4</span> - dayCount;</span><span class="code-row code-row-target"><span class="code-ln">280</span>          setTailW((w) =&gt; w.map((v, i) =&gt; (i === tailIdx ? next : v)));</span><span class="code-row code-row-target"><span class="code-ln">281</span>        }</span><span class="code-row code-row-target"><span class="code-ln">282</span>      };</span><span class="code-row code-row-target"><span class="code-ln">283</span>      document.addEventListener(<span class="code-string">'mousemove'</span>, onMove);</span><span class="code-row code-row-target"><span class="code-ln">284</span>      document.addEventListener(<span class="code-string">'mouseup'</span>, onUp);</span><span class="code-row code-row-target"><span class="code-ln">285</span>      <span class="code-keyword">return</span> <span class="code-keyword">true</span>;</span><span class="code-row code-row-target"><span class="code-ln">286</span>    },</span><span class="code-row code-row-target"><span class="code-ln">287</span>    [dayCount, minWidth, mins, weights],</span><span class="code-row code-row-target"><span class="code-ln">288</span>  );</span><span class="code-row code-row-target"><span class="code-ln">289</span></span><span class="code-row code-row-target"><span class="code-ln">290</span>  <span class="code-comment">// ── shared tooltip + delegated events ───────────────────────────────────</span></span><span class="code-row code-row-target"><span class="code-ln">291</span>  <span class="code-keyword">const</span> tipApiRef = useRef&lt;TipApi&gt;({ show: () =&gt; {}, hide: () =&gt; {} });</span><span class="code-row code-row-target"><span class="code-ln">292</span></span><span class="code-row code-row-target"><span class="code-ln">293</span>  <span class="code-keyword">const</span> onGridClick = useCallback(</span><span class="code-row code-row-target"><span class="code-ln">294</span>    (e: React.MouseEvent&lt;HTMLDivElement&gt;) =&gt; {</span><span class="code-row code-row-target"><span class="code-ln">295</span>      <span class="code-keyword">const</span> cell = (e.target as HTMLElement).closest&lt;HTMLElement&gt;(<span class="code-string">'[data-r][data-d]'</span>);</span><span class="code-row code-row-target"><span class="code-ln">296</span>      <span class="code-keyword">if</span> (!cell) <span class="code-keyword">return</span>;</span><span class="code-row code-row-target"><span class="code-ln">297</span>      <span class="code-keyword">const</span> row = rows[Number(cell.dataset.r)];</span><span class="code-row code-row-target"><span class="code-ln">298</span>      <span class="code-keyword">const</span> day = days[Number(cell.dataset.d)];</span><span class="code-row code-row-target"><span class="code-ln">299</span>      <span class="code-keyword">if</span> (!row || !day) <span class="code-keyword">return</span>;</span><span class="code-row code-row-target"><span class="code-ln">300</span>      onDrill(</span><span class="code-row code-row-target"><span class="code-ln">301</span>        row.isTotal</span><span class="code-row code-row-target"><span class="code-ln">302</span>          ? { day, scope: <span class="code-string">'region'</span>, regionCode: row.regionCode, regionLabel: row.regionLabel }</span><span class="code-row code-row-target"><span class="code-ln">303</span>          : {</span><span class="code-row code-row-target"><span class="code-ln">304</span>              day,</span><span class="code-row code-row-target"><span class="code-ln">305</span>              scope: <span class="code-string">'lane'</span>,</span><span class="code-row code-row-target"><span class="code-ln">306</span>              regionCode: row.regionCode,</span><span class="code-row code-row-target"><span class="code-ln">307</span>              regionLabel: row.regionLabel,</span><span class="code-row code-row-target"><span class="code-ln">308</span>              serviceCenter: row.sc,</span><span class="code-row code-row-target"><span class="code-ln">309</span>              fromHub: row.hub,</span><span class="code-row code-row-target"><span class="code-ln">310</span>              tnt: row.tnt ?? undefined,</span><span class="code-row code-row-target"><span class="code-ln">311</span>            },</span><span class="code-row code-row-target"><span class="code-ln">312</span>      );</span><span class="code-row code-row-target"><span class="code-ln">313</span>    },</span><span class="code-row code-row-target"><span class="code-ln">314</span>    [days, onDrill, rows],</span><span class="code-row code-row-target"><span class="code-ln">315</span>  );</span><span class="code-row code-row-target"><span class="code-ln">316</span></span><span class="code-row code-row-target"><span class="code-ln">317</span>  /** One hover handler <span class="code-keyword">for</span> the whole grid; the cell carries its text in</span><span class="code-row code-row-target"><span class="code-ln">318</span>   *  `data-tip`. Shown through the isolated tooltip layer, so hovering never</span><span class="code-row code-row-target"><span class="code-ln">319</span>   *  re-renders the grid. */</span><span class="code-row code-row-target"><span class="code-ln">320</span>  <span class="code-keyword">const</span> onGridOver = useCallback((e: React.MouseEvent&lt;HTMLDivElement&gt;) =&gt; {</span><span class="code-row code-row-target"><span class="code-ln">321</span>    <span class="code-keyword">const</span> cell = (e.target as HTMLElement).closest&lt;HTMLElement&gt;(<span class="code-string">'[data-tip]'</span>);</span><span class="code-row code-row-target"><span class="code-ln">322</span>    <span class="code-keyword">if</span> (!cell) {</span><span class="code-row code-row-target"><span class="code-ln">323</span>      tipApiRef.current.hide();</span><span class="code-row code-row-target"><span class="code-ln">324</span>      <span class="code-keyword">return</span>;</span><span class="code-row code-row-target"><span class="code-ln">325</span>    }</span><span class="code-row code-row-target"><span class="code-ln">326</span>    <span class="code-keyword">const</span> r = cell.getBoundingClientRect();</span><span class="code-row code-row-target"><span class="code-ln">327</span>    tipApiRef.current.show(</span><span class="code-row code-row-target"><span class="code-ln">328</span>      cell.dataset.tip ?? <span class="code-string">''</span>,</span><span class="code-row code-row-target"><span class="code-ln">329</span>      Math.max(<span class="code-number">8</span>, Math.min(r.left, window.innerWidth - <span class="code-number">260</span>)),</span><span class="code-row code-row-target"><span class="code-ln">330</span>      Math.min(r.bottom + <span class="code-number">4</span>, window.innerHeight - <span class="code-number">8</span>),</span><span class="code-row code-row-target"><span class="code-ln">331</span>    );</span><span class="code-row code-row-target"><span class="code-ln">332</span>  }, []);</span><span class="code-row code-row-target"><span class="code-ln">333</span></span><span class="code-row code-row-target"><span class="code-ln">334</span>  <span class="code-keyword">const</span> onGridLeave = useCallback(() =&gt; tipApiRef.current.hide(), []);</span><span class="code-row code-row-target"><span class="code-ln">335</span></span><span class="code-row code-row-target"><span class="code-ln">336</span>  <span class="code-comment">// ── header ──────────────────────────────────────────────────────────────</span></span><span class="code-row code-row-target"><span class="code-ln">337</span>  <span class="code-keyword">const</span> headerCell = (colIdx: number, title: ReactNode, unit: ReactNode, extraCls = <span class="code-string">''</span>) =&gt; (</span><span class="code-row code-row-target"><span class="code-ln">338</span>    &lt;div</span><span class="code-row code-row-target"><span class="code-ln">339</span>      key={`h${colIdx}`}</span><span class="code-row code-row-target"><span class="code-ln">340</span>      className={`otp-c otp-h ${colIdx === <span class="code-number">0</span> ? <span class="code-string">'otp-c0'</span> : <span class="code-string">''</span>} ${extraCls}`}</span><span class="code-row code-row-target"><span class="code-ln">341</span>      style={{ gridColumn: colIdx + <span class="code-number">1</span>, gridRow: <span class="code-number">1</span> }}</span><span class="code-row code-row-target"><span class="code-ln">342</span>      onMouseDown={(e) =&gt; startResize(colIdx, e)}</span><span class="code-row code-row-target"><span class="code-ln">343</span>    &gt;</span><span class="code-row code-row-target"><span class="code-ln">344</span>      &lt;span className=<span class="code-string">"otp-h-title"</span>&gt;{title}&lt;/span&gt;</span><span class="code-row code-row-target"><span class="code-ln">345</span>      {/* The unit lives on its OWN line, never appended to the title as</span><span class="code-row code-row-target"><span class="code-ln">346</span>          <span class="code-string">"Day Change (pp)"</span> — a 125px header cannot hold both, and the width</span><span class="code-row code-row-target"><span class="code-ln">347</span>          <span class="code-keyword">this</span> table has to spare belongs to the trend column. */}</span><span class="code-row code-row-target"><span class="code-ln">348</span>      &lt;span className=<span class="code-string">"otp-unit"</span>&gt;{unit ?? <span class="code-string">' '</span>}&lt;/span&gt;</span><span class="code-row code-row-target"><span class="code-ln">349</span>    &lt;/div&gt;</span><span class="code-row code-row-target"><span class="code-ln">350</span>  );</span><span class="code-row code-row-target"><span class="code-ln">351</span></span><span class="code-row code-row-target"><span class="code-ln">352</span>  <span class="code-keyword">const</span> header = (</span><span class="code-row code-row-target"><span class="code-ln">353</span>    &lt;&gt;</span><span class="code-row code-row-target"><span class="code-ln">354</span>      {headerCell(<span class="code-number">0</span>, t(<span class="code-string">'col.region'</span>), <span class="code-string">' '</span>)}</span><span class="code-row code-row-target"><span class="code-ln">355</span>      {headerCell(<span class="code-number">1</span>, t(<span class="code-string">'col.sc'</span>), <span class="code-string">' '</span>)}</span><span class="code-row code-row-target"><span class="code-ln">356</span>      {headerCell(<span class="code-number">2</span>, t(<span class="code-string">'col.tnt'</span>), <span class="code-string">' '</span>, <span class="code-string">'otp-mid'</span>)}</span><span class="code-row code-row-target"><span class="code-ln">357</span>      {headerCell(<span class="code-number">3</span>, t(<span class="code-string">'col.fromHub'</span>), <span class="code-string">' '</span>)}</span><span class="code-row code-row-target"><span class="code-ln">358</span>      {days.map((day, i) =&gt; (</span><span class="code-row code-row-target"><span class="code-ln">359</span>        &lt;div</span><span class="code-row code-row-target"><span class="code-ln">360</span>          key={`hd${day}`}</span><span class="code-row code-row-target"><span class="code-ln">361</span>          className={`otp-c otp-h otp-day ${day === selDay ? <span class="code-string">'otp-day-sel'</span> : <span class="code-string">''</span>}`}</span><span class="code-row code-row-target"><span class="code-ln">362</span>          style={{ gridColumn: <span class="code-number">4</span> + i + <span class="code-number">1</span>, gridRow: <span class="code-number">1</span> }}</span><span class="code-row code-row-target"><span class="code-ln">363</span>          onMouseDown={(e) =&gt; startResize(<span class="code-number">4</span> + i, e)}</span><span class="code-row code-row-target"><span class="code-ln">364</span>          onClick={(e) =&gt; {</span><span class="code-row code-row-target"><span class="code-ln">365</span>            <span class="code-comment">// The rightmost 7px is the resize grab zone: a drag that starts and</span></span><span class="code-row code-row-target"><span class="code-ln">366</span>            <span class="code-comment">// ends in place still fires a click, and it must not quietly move</span></span><span class="code-row code-row-target"><span class="code-ln">367</span>            <span class="code-comment">// the Total Volume column to another day.</span></span><span class="code-row code-row-target"><span class="code-ln">368</span>            <span class="code-keyword">if</span> (e.currentTarget.getBoundingClientRect().right - e.clientX &lt;= RESIZE_HANDLE_PX)</span><span class="code-row code-row-target"><span class="code-ln">369</span>              <span class="code-keyword">return</span>;</span><span class="code-row code-row-target"><span class="code-ln">370</span>            onSelectDay(day);</span><span class="code-row code-row-target"><span class="code-ln">371</span>          }}</span><span class="code-row code-row-target"><span class="code-ln">372</span>          title={day}</span><span class="code-row code-row-target"><span class="code-ln">373</span>        &gt;</span><span class="code-row code-row-target"><span class="code-ln">374</span>          &lt;span className=<span class="code-string">"otp-h-title"</span>&gt;{mmdd(day)}&lt;/span&gt;</span><span class="code-row code-row-target"><span class="code-ln">375</span>          {/* Deliberately blank: the date IS the title, and a second line of</span><span class="code-row code-row-target"><span class="code-ln">376</span>              anything here would just repeat it. */}</span><span class="code-row code-row-target"><span class="code-ln">377</span>          &lt;span className=<span class="code-string">"otp-unit"</span>&gt;{<span class="code-string">' '</span>}&lt;/span&gt;</span><span class="code-row code-row-target"><span class="code-ln">378</span>        &lt;/div&gt;</span><span class="code-row code-row-target"><span class="code-ln">379</span>      ))}</span><span class="code-row code-row-target"><span class="code-ln">380</span>      {headerCell(<span class="code-number">4</span> + dayCount, t(<span class="code-string">'col.dayChange'</span>), t(<span class="code-string">'unit.pp'</span>), <span class="code-string">'otp-mid'</span>)}</span><span class="code-row code-row-target"><span class="code-ln">381</span>      {headerCell(<span class="code-number">5</span> + dayCount, t(<span class="code-string">'col.weekChange'</span>), t(<span class="code-string">'unit.pp'</span>), <span class="code-string">'otp-mid'</span>)}</span><span class="code-row code-row-target"><span class="code-ln">382</span>      {headerCell(<span class="code-number">6</span> + dayCount, t(<span class="code-string">'col.trend'</span>), <span class="code-string">' '</span>, <span class="code-string">'otp-mid'</span>)}</span><span class="code-row code-row-target"><span class="code-ln">383</span>      {/* Total Volume is the only column that follows the selected date, so its</span><span class="code-row code-row-target"><span class="code-ln">384</span>          unit line is that date. */}</span><span class="code-row code-row-target"><span class="code-ln">385</span>      {headerCell(<span class="code-number">7</span> + dayCount, t(<span class="code-string">'col.totalVolume'</span>), mmdd(selDay), <span class="code-string">'otp-mid'</span>)}</span><span class="code-row code-row-target"><span class="code-ln">386</span>      {/* 🔴 `7D`, and the arithmetic behind it is seven days: columns <span class="code-number">2</span>–<span class="code-number">8</span>. The</span><span class="code-row code-row-target"><span class="code-ln">387</span>          first column exists only as the Week Change baseline. */}</span><span class="code-row code-row-target"><span class="code-ln">388</span>      {headerCell(<span class="code-number">8</span> + dayCount, t(<span class="code-string">'col.avgVolume'</span>), t(<span class="code-string">'unit.sevenDay'</span>), <span class="code-string">'otp-mid'</span>)}</span><span class="code-row code-row-target"><span class="code-ln">389</span>    &lt;/&gt;</span><span class="code-row code-row-target"><span class="code-ln">390</span>  );</span><span class="code-row code-row-target"><span class="code-ln">391</span></span><span class="code-row code-row-target"><span class="code-ln">392</span>  <span class="code-keyword">return</span> (</span><span class="code-row code-row-target"><span class="code-ln">393</span>    &lt;div className={`otp-wrap ${isDark ? <span class="code-string">'otp-dark'</span> : <span class="code-string">''</span>}`}&gt;</span><span class="code-row code-row-target"><span class="code-ln">394</span>      &lt;style&gt;{GRID_CSS}&lt;/style&gt;</span><span class="code-row code-row-target"><span class="code-ln">395</span>      &lt;div</span><span class="code-row code-row-target"><span class="code-ln">396</span>        ref={gridRef}</span><span class="code-row code-row-target"><span class="code-ln">397</span>        className=<span class="code-string">"otp-grid"</span></span><span class="code-row code-row-target"><span class="code-ln">398</span>        style={{ gridTemplateColumns: gridCols, minWidth }}</span><span class="code-row code-row-target"><span class="code-ln">399</span>        onClick={onGridClick}</span><span class="code-row code-row-target"><span class="code-ln">400</span>        onMouseOver={onGridOver}</span><span class="code-row code-row-target"><span class="code-ln">401</span>        onMouseLeave={onGridLeave}</span><span class="code-row code-row-target"><span class="code-ln">402</span>      &gt;</span><span class="code-row code-row-target"><span class="code-ln">403</span>        {header}</span><span class="code-row code-row-target"><span class="code-ln">404</span>        {rows.map((row, i) =&gt; (</span><span class="code-row code-row-target"><span class="code-ln">405</span>          &lt;GridRow</span><span class="code-row code-row-target"><span class="code-ln">406</span>            key={row.key}</span><span class="code-row code-row-target"><span class="code-ln">407</span>            row={row}</span><span class="code-row code-row-target"><span class="code-ln">408</span>            rowIndex={i}</span><span class="code-row code-row-target"><span class="code-ln">409</span>            days={days}</span><span class="code-row code-row-target"><span class="code-ln">410</span>            target={data.target}</span><span class="code-row code-row-target"><span class="code-ln">411</span>            totalLabel={t(<span class="code-string">'row.total'</span>)}</span><span class="code-row code-row-target"><span class="code-ln">412</span>            unclassifiedLabel={t(<span class="code-string">'region.unclassified'</span>)}</span><span class="code-row code-row-target"><span class="code-ln">413</span>          /&gt;</span><span class="code-row code-row-target"><span class="code-ln">414</span>        ))}</span><span class="code-row code-row-target"><span class="code-ln">415</span>        {rows.map((row, i) =&gt; (</span><span class="code-row code-row-target"><span class="code-ln">416</span>          &lt;VolumeCell</span><span class="code-row code-row-target"><span class="code-ln">417</span>            key={`v${row.key}`}</span><span class="code-row code-row-target"><span class="code-ln">418</span>            vols={row.vols}</span><span class="code-row code-row-target"><span class="code-ln">419</span>            selIdx={selIdx}</span><span class="code-row code-row-target"><span class="code-ln">420</span>            rowIndex={i}</span><span class="code-row code-row-target"><span class="code-ln">421</span>            colIndex={<span class="code-number">7</span> + dayCount}</span><span class="code-row code-row-target"><span class="code-ln">422</span>            isTotal={row.isTotal}</span><span class="code-row code-row-target"><span class="code-ln">423</span>          /&gt;</span><span class="code-row code-row-target"><span class="code-ln">424</span>        ))}</span><span class="code-row code-row-target"><span class="code-ln">425</span>      &lt;/div&gt;</span><span class="code-row code-row-target"><span class="code-ln">426</span>      &lt;GridTooltip apiRef={tipApiRef} /&gt;</span><span class="code-row code-row-target"><span class="code-ln">427</span>    &lt;/div&gt;</span><span class="code-row code-row-target"><span class="code-ln">428</span>  );</span><span class="code-row code-row-target"><span class="code-ln">429</span>}</span><span class="code-row code-row-target"><span class="code-ln">430</span></span><span class="code-row code-row-target"><span class="code-ln">431</span><span class="code-comment">// ---------------------------------------------------------------------------</span></span><span class="code-row code-row-target"><span class="code-ln">432</span><span class="code-comment">// Rows</span></span><span class="code-row code-row-target"><span class="code-ln">433</span><span class="code-comment">// ---------------------------------------------------------------------------</span></span><span class="code-row code-row-target"><span class="code-ln">434</span></span><span class="code-row code-row-target"><span class="code-ln">435</span>/** Every cell of one row EXCEPT Total Volume. Placed explicitly on the grid, so</span><span class="code-row code-row-target"><span class="code-ln">436</span> *  the split with {<span class="code-annotation">@link</span> VolumeCell} costs nothing in layout terms — DOM order</span><span class="code-row code-row-target"><span class="code-ln">437</span> *  is irrelevant when every cell names its own row and column. */</span><span class="code-row code-row-target"><span class="code-ln">438</span><span class="code-keyword">const</span> GridRow = memo(<span class="code-keyword">function</span> GridRow({</span><span class="code-row code-row-target"><span class="code-ln">439</span>  row,</span><span class="code-row code-row-target"><span class="code-ln">440</span>  rowIndex,</span><span class="code-row code-row-target"><span class="code-ln">441</span>  days,</span><span class="code-row code-row-target"><span class="code-ln">442</span>  target,</span><span class="code-row code-row-target"><span class="code-ln">443</span>  totalLabel,</span><span class="code-row code-row-target"><span class="code-ln">444</span>  unclassifiedLabel,</span><span class="code-row code-row-target"><span class="code-ln">445</span>}: {</span><span class="code-row code-row-target"><span class="code-ln">446</span>  row: RowModel;</span><span class="code-row code-row-target"><span class="code-ln">447</span>  rowIndex: number;</span><span class="code-row code-row-target"><span class="code-ln">448</span>  days: string[];</span><span class="code-row code-row-target"><span class="code-ln">449</span>  target: number;</span><span class="code-row code-row-target"><span class="code-ln">450</span>  totalLabel: string;</span><span class="code-row code-row-target"><span class="code-ln">451</span>  unclassifiedLabel: string;</span><span class="code-row code-row-target"><span class="code-ln">452</span>}) {</span><span class="code-row code-row-target"><span class="code-ln">453</span>  <span class="code-keyword">const</span> gridRow = rowIndex + <span class="code-number">2</span>;</span><span class="code-row code-row-target"><span class="code-ln">454</span>  <span class="code-keyword">const</span> base = `otp-c${row.isTotal ? <span class="code-string">' otp-total'</span> : <span class="code-string">''</span>}${row.firstOfGroup ? <span class="code-string">' otp-gstart'</span> : <span class="code-string">''</span>}`;</span><span class="code-row code-row-target"><span class="code-ln">455</span>  <span class="code-keyword">const</span> dayCount = days.length;</span><span class="code-row code-row-target"><span class="code-ln">456</span></span><span class="code-row code-row-target"><span class="code-ln">457</span>  <span class="code-keyword">const</span> day = fmtChange(row.dayChange);</span><span class="code-row code-row-target"><span class="code-ln">458</span>  <span class="code-keyword">const</span> week = fmtChange(row.weekChange);</span><span class="code-row code-row-target"><span class="code-ln">459</span></span><span class="code-row code-row-target"><span class="code-ln">460</span>  <span class="code-keyword">return</span> (</span><span class="code-row code-row-target"><span class="code-ln">461</span>    &lt;&gt;</span><span class="code-row code-row-target"><span class="code-ln">462</span>      {/* Region repeats on every row and is NOT merged: Excel's merged cells</span><span class="code-row code-row-target"><span class="code-ln">463</span>          break filtering and pivots, so the <span class="code-keyword">export</span> has to repeat it — and a page</span><span class="code-row code-row-target"><span class="code-ln">464</span>          that merged would then disagree with its own <span class="code-keyword">export</span>. The repeats used to</span><span class="code-row code-row-target"><span class="code-ln">465</span>          be dimmed to read as <span class="code-string">"same as above"</span>; at <span class="code-keyword">this</span> row height it just looked</span><span class="code-row code-row-target"><span class="code-ln">466</span>          like two kinds of region (requester <span class="code-number">2026</span>-<span class="code-number">09</span>-<span class="code-number">01</span>), so every row now prints</span><span class="code-row code-row-target"><span class="code-ln">467</span>          in the normal ink and the group's first row carries a heavier top rule</span><span class="code-row code-row-target"><span class="code-ln">468</span>          on its own. */}</span><span class="code-row code-row-target"><span class="code-ln">469</span>      &lt;div</span><span class="code-row code-row-target"><span class="code-ln">470</span>        className={`${base} otp-c0`}</span><span class="code-row code-row-target"><span class="code-ln">471</span>        style={{ gridColumn: <span class="code-number">1</span>, gridRow }}</span><span class="code-row code-row-target"><span class="code-ln">472</span>        title={fmtRegion(row.regionLabel, unclassifiedLabel)}</span><span class="code-row code-row-target"><span class="code-ln">473</span>      &gt;</span><span class="code-row code-row-target"><span class="code-ln">474</span>        {/* `CODE.City`, the same string every other report on the site prints <span class="code-keyword">for</span></span><span class="code-row code-row-target"><span class="code-ln">475</span>            a region (Operations, the drill's own Region column, the Excel</span><span class="code-row code-row-target"><span class="code-ln">476</span>            <span class="code-keyword">export</span>). It used to be the bare CODE here, which made <span class="code-keyword">this</span> the one</span><span class="code-row code-row-target"><span class="code-ln">477</span>            page where a region was named differently from everywhere <span class="code-keyword">else</span>. The</span><span class="code-row code-row-target"><span class="code-ln">478</span>            label is what the drill and the <span class="code-keyword">export</span> already carried, so nothing</span><span class="code-row code-row-target"><span class="code-ln">479</span>            downstream changes. */}</span><span class="code-row code-row-target"><span class="code-ln">480</span>        &lt;span className=<span class="code-string">"otp-ell"</span>&gt;{fmtRegion(row.regionLabel, unclassifiedLabel)}&lt;/span&gt;</span><span class="code-row code-row-target"><span class="code-ln">481</span>      &lt;/div&gt;</span><span class="code-row code-row-target"><span class="code-ln">482</span>      &lt;div className={base} style={{ gridColumn: <span class="code-number">2</span>, gridRow }} title={row.sc || undefined}&gt;</span><span class="code-row code-row-target"><span class="code-ln">483</span>        &lt;span className=<span class="code-string">"otp-ell"</span>&gt;{row.isTotal ? totalLabel : na(row.sc)}&lt;/span&gt;</span><span class="code-row code-row-target"><span class="code-ln">484</span>      &lt;/div&gt;</span><span class="code-row code-row-target"><span class="code-ln">485</span>      &lt;div className={`${base} otp-mid`} style={{ gridColumn: <span class="code-number">3</span>, gridRow }}&gt;</span><span class="code-row code-row-target"><span class="code-ln">486</span>        {row.tnt ?? <span class="code-string">''</span>}</span><span class="code-row code-row-target"><span class="code-ln">487</span>      &lt;/div&gt;</span><span class="code-row code-row-target"><span class="code-ln">488</span>      &lt;div className={base} style={{ gridColumn: <span class="code-number">4</span>, gridRow }} title={row.hub || undefined}&gt;</span><span class="code-row code-row-target"><span class="code-ln">489</span>        &lt;span className=<span class="code-string">"otp-ell"</span>&gt;{row.isTotal ? <span class="code-string">''</span> : na(row.hub)}&lt;/span&gt;</span><span class="code-row code-row-target"><span class="code-ln">490</span>      &lt;/div&gt;</span><span class="code-row code-row-target"><span class="code-ln">491</span></span><span class="code-row code-row-target"><span class="code-ln">492</span>      {row.cells.map((c, i) =&gt; {</span><span class="code-row code-row-target"><span class="code-ln">493</span>        <span class="code-keyword">const</span> r = renderRate(c, target);</span><span class="code-row code-row-target"><span class="code-ln">494</span>        <span class="code-keyword">return</span> (</span><span class="code-row code-row-target"><span class="code-ln">495</span>          &lt;div</span><span class="code-row code-row-target"><span class="code-ln">496</span>            key={days[i]}</span><span class="code-row code-row-target"><span class="code-ln">497</span>            className={`${base} otp-num ${r.cls}${r.clickable ? <span class="code-string">' otp-drill'</span> : <span class="code-string">''</span>}`}</span><span class="code-row code-row-target"><span class="code-ln">498</span>            style={{ gridColumn: <span class="code-number">5</span> + i, gridRow }}</span><span class="code-row code-row-target"><span class="code-ln">499</span>            data-r={r.clickable ? rowIndex : undefined}</span><span class="code-row code-row-target"><span class="code-ln">500</span>            data-d={r.clickable ? i : undefined}</span><span class="code-row code-row-target"><span class="code-ln">501</span>            data-tip={c.vol === <span class="code-number">0</span> ? undefined : `${fmtInt(c.ok)} / ${fmtInt(c.vol)}`}</span><span class="code-row code-row-target"><span class="code-ln">502</span>          &gt;</span><span class="code-row code-row-target"><span class="code-ln">503</span>            {r.text}</span><span class="code-row code-row-target"><span class="code-ln">504</span>          &lt;/div&gt;</span><span class="code-row code-row-target"><span class="code-ln">505</span>        );</span><span class="code-row code-row-target"><span class="code-ln">506</span>      })}</span><span class="code-row code-row-target"><span class="code-ln">507</span></span><span class="code-row code-row-target"><span class="code-ln">508</span>      {/* The two change columns are the ONLY place in the table where colour</span><span class="code-row code-row-target"><span class="code-ln">509</span>          carries a verdict through the TEXT — they have no target to be measured</span><span class="code-row code-row-target"><span class="code-ln">510</span>          against, so a background fill here would fight the rate columns. */}</span><span class="code-row code-row-target"><span class="code-ln">511</span>      &lt;div className={`${base} otp-num ${day.cls}`} style={{ gridColumn: <span class="code-number">5</span> + dayCount, gridRow }}&gt;</span><span class="code-row code-row-target"><span class="code-ln">512</span>        {day.text}</span><span class="code-row code-row-target"><span class="code-ln">513</span>      &lt;/div&gt;</span><span class="code-row code-row-target"><span class="code-ln">514</span>      &lt;div className={`${base} otp-num ${week.cls}`} style={{ gridColumn: <span class="code-number">6</span> + dayCount, gridRow }}&gt;</span><span class="code-row code-row-target"><span class="code-ln">515</span>        {week.text}</span><span class="code-row code-row-target"><span class="code-ln">516</span>      &lt;/div&gt;</span><span class="code-row code-row-target"><span class="code-ln">517</span>      &lt;div className={`${base} otp-spark-cell`} style={{ gridColumn: <span class="code-number">7</span> + dayCount, gridRow }}&gt;</span><span class="code-row code-row-target"><span class="code-ln">518</span>        &lt;Sparkline values={row.rates} /&gt;</span><span class="code-row code-row-target"><span class="code-ln">519</span>      &lt;/div&gt;</span><span class="code-row code-row-target"><span class="code-ln">520</span>      &lt;div className={`${base} otp-num`} style={{ gridColumn: <span class="code-number">9</span> + dayCount, gridRow }}&gt;</span><span class="code-row code-row-target"><span class="code-ln">521</span>        {fmtInt(row.avgVol)}</span><span class="code-row code-row-target"><span class="code-ln">522</span>      &lt;/div&gt;</span><span class="code-row code-row-target"><span class="code-ln">523</span>    &lt;/&gt;</span><span class="code-row code-row-target"><span class="code-ln">524</span>  );</span><span class="code-row code-row-target"><span class="code-ln">525</span>});</span><span class="code-row code-row-target"><span class="code-ln">526</span></span><span class="code-row code-row-target"><span class="code-ln">527</span>/** Total Volume, split out so switching the selected date re-renders ~<span class="code-number">100</span> small</span><span class="code-row code-row-target"><span class="code-ln">528</span> *  cells instead of the whole grid. */</span><span class="code-row code-row-target"><span class="code-ln">529</span><span class="code-keyword">const</span> VolumeCell = memo(<span class="code-keyword">function</span> VolumeCell({</span><span class="code-row code-row-target"><span class="code-ln">530</span>  vols,</span><span class="code-row code-row-target"><span class="code-ln">531</span>  selIdx,</span><span class="code-row code-row-target"><span class="code-ln">532</span>  rowIndex,</span><span class="code-row code-row-target"><span class="code-ln">533</span>  colIndex,</span><span class="code-row code-row-target"><span class="code-ln">534</span>  isTotal,</span><span class="code-row code-row-target"><span class="code-ln">535</span>}: {</span><span class="code-row code-row-target"><span class="code-ln">536</span>  vols: number[];</span><span class="code-row code-row-target"><span class="code-ln">537</span>  selIdx: number;</span><span class="code-row code-row-target"><span class="code-ln">538</span>  rowIndex: number;</span><span class="code-row code-row-target"><span class="code-ln">539</span>  colIndex: number;</span><span class="code-row code-row-target"><span class="code-ln">540</span>  isTotal: boolean;</span><span class="code-row code-row-target"><span class="code-ln">541</span>}) {</span><span class="code-row code-row-target"><span class="code-ln">542</span>  <span class="code-keyword">return</span> (</span><span class="code-row code-row-target"><span class="code-ln">543</span>    &lt;div</span><span class="code-row code-row-target"><span class="code-ln">544</span>      className={`otp-c otp-num${isTotal ? <span class="code-string">' otp-total'</span> : <span class="code-string">''</span>}`}</span><span class="code-row code-row-target"><span class="code-ln">545</span>      style={{ gridColumn: colIndex + <span class="code-number">1</span>, gridRow: rowIndex + <span class="code-number">2</span> }}</span><span class="code-row code-row-target"><span class="code-ln">546</span>    &gt;</span><span class="code-row code-row-target"><span class="code-ln">547</span>      {fmtInt(vols[selIdx] ?? <span class="code-number">0</span>)}</span><span class="code-row code-row-target"><span class="code-ln">548</span>    &lt;/div&gt;</span><span class="code-row code-row-target"><span class="code-ln">549</span>  );</span><span class="code-row code-row-target"><span class="code-ln">550</span>});</span><span class="code-row code-row-target"><span class="code-ln">551</span></span><span class="code-row code-row-target"><span class="code-ln">552</span><span class="code-comment">// ---------------------------------------------------------------------------</span></span><span class="code-row code-row-target"><span class="code-ln">553</span><span class="code-comment">// Shared tooltip layer</span></span><span class="code-row code-row-target"><span class="code-ln">554</span><span class="code-comment">// ---------------------------------------------------------------------------</span></span><span class="code-row code-row-target"><span class="code-ln">555</span></span><span class="code-row code-row-target"><span class="code-ln">556</span><span class="code-keyword">interface</span> TipApi {</span><span class="code-row code-row-target"><span class="code-ln">557</span>  show: (content: string, x: number, y: number) =&gt; <span class="code-keyword">void</span>;</span><span class="code-row code-row-target"><span class="code-ln">558</span>  hide: () =&gt; <span class="code-keyword">void</span>;</span><span class="code-row code-row-target"><span class="code-ln">559</span>}</span><span class="code-row code-row-target"><span class="code-ln">560</span></span><span class="code-row code-row-target"><span class="code-ln">561</span>/** Owns its own state so a hover updates ONE portal instead of re-rendering a</span><span class="code-row code-row-target"><span class="code-ln">562</span> *  <span class="code-number">1700</span>-cell grid. (The same reason DhePivotGrid has one.) */</span><span class="code-row code-row-target"><span class="code-ln">563</span><span class="code-keyword">function</span> GridTooltip({ apiRef }: { apiRef: React.MutableRefObject&lt;TipApi&gt; }) {</span><span class="code-row code-row-target"><span class="code-ln">564</span>  <span class="code-keyword">const</span> [tip, setTip] = useState&lt;{ content: string; x: number; y: number } | <span class="code-keyword">null</span>&gt;(<span class="code-keyword">null</span>);</span><span class="code-row code-row-target"><span class="code-ln">565</span>  useEffect(() =&gt; {</span><span class="code-row code-row-target"><span class="code-ln">566</span>    apiRef.current = {</span><span class="code-row code-row-target"><span class="code-ln">567</span>      show: (content, x, y) =&gt; setTip(content ? { content, x, y } : <span class="code-keyword">null</span>),</span><span class="code-row code-row-target"><span class="code-ln">568</span>      hide: () =&gt; setTip(<span class="code-keyword">null</span>),</span><span class="code-row code-row-target"><span class="code-ln">569</span>    };</span><span class="code-row code-row-target"><span class="code-ln">570</span>    <span class="code-keyword">return</span> () =&gt; {</span><span class="code-row code-row-target"><span class="code-ln">571</span>      apiRef.current = { show: () =&gt; {}, hide: () =&gt; {} };</span><span class="code-row code-row-target"><span class="code-ln">572</span>    };</span><span class="code-row code-row-target"><span class="code-ln">573</span>  }, [apiRef]);</span><span class="code-row code-row-target"><span class="code-ln">574</span>  <span class="code-keyword">if</span> (!tip) <span class="code-keyword">return</span> <span class="code-keyword">null</span>;</span><span class="code-row code-row-target"><span class="code-ln">575</span>  <span class="code-keyword">return</span> createPortal(</span><span class="code-row code-row-target"><span class="code-ln">576</span>    &lt;div className=<span class="code-string">"otp-tip"</span> style={{ left: tip.x, top: tip.y }}&gt;</span><span class="code-row code-row-target"><span class="code-ln">577</span>      {tip.content}</span><span class="code-row code-row-target"><span class="code-ln">578</span>    &lt;/div&gt;,</span><span class="code-row code-row-target"><span class="code-ln">579</span>    document.body,</span><span class="code-row code-row-target"><span class="code-ln">580</span>  );</span><span class="code-row code-row-target"><span class="code-ln">581</span>}</span><span class="code-row code-row-target"><span class="code-ln">582</span></span><span class="code-row code-row-target"><span class="code-ln">583</span><span class="code-comment">// ---------------------------------------------------------------------------</span></span><span class="code-row code-row-target"><span class="code-ln">584</span><span class="code-comment">// Styles</span></span><span class="code-row code-row-target"><span class="code-ln">585</span><span class="code-comment">//</span></span><span class="code-row code-row-target"><span class="code-ln">586</span><span class="code-comment">// One &lt;style&gt; element instead of ~1700 inline style objects: the palette is the</span></span><span class="code-row code-row-target"><span class="code-ln">587</span><span class="code-comment">// product mock's (designUI/qc/otp-trend-design.html), which already carries a</span></span><span class="code-row code-row-target"><span class="code-ln">588</span><span class="code-comment">// dark variant, and the cell classes then cost nothing per render.</span></span><span class="code-row code-row-target"><span class="code-ln">589</span><span class="code-comment">//</span></span><span class="code-row code-row-target"><span class="code-ln">590</span><span class="code-comment">// 🔴 The mock's `.unsettled` / `.partial` rules are NOT ported. This report has</span></span><span class="code-row code-row-target"><span class="code-ln">591</span><span class="code-comment">// no unsettled cell — every column is final — and a hatched grey cell would say</span></span><span class="code-row code-row-target"><span class="code-ln">592</span><span class="code-comment">// "the data has not arrived" about a lane that genuinely ran at 60%.</span></span><span class="code-row code-row-target"><span class="code-ln">593</span><span class="code-comment">// ---------------------------------------------------------------------------</span></span><span class="code-row code-row-target"><span class="code-ln">594</span><span class="code-keyword">const</span> GRID_CSS = `</span><span class="code-row code-row-target"><span class="code-ln">595</span>.otp-wrap {</span><span class="code-row code-row-target"><span class="code-ln">596</span>  --otp-surface: #ffffff;</span><span class="code-row code-row-target"><span class="code-ln">597</span>  --otp-surface-<span class="code-number">2</span>: #fafbfc;</span><span class="code-row code-row-target"><span class="code-ln">598</span>  --otp-ink: #1a2332;</span><span class="code-row code-row-target"><span class="code-ln">599</span>  --otp-ink-<span class="code-number">3</span>: #8a94a6;</span><span class="code-row code-row-target"><span class="code-ln">600</span>  --otp-line: #e6e9ef;</span><span class="code-row code-row-target"><span class="code-ln">601</span>  --otp-line-<span class="code-number">2</span>: #d7dce4;</span><span class="code-row code-row-target"><span class="code-ln">602</span>  --otp-accent: #1677ff;</span><span class="code-row code-row-target"><span class="code-ln">603</span>  --otp-good: #1a7f4b;</span><span class="code-row code-row-target"><span class="code-ln">604</span>  --otp-good-bg: #e5f5ec;</span><span class="code-row code-row-target"><span class="code-ln">605</span>  --otp-bad: #c23b3b;</span><span class="code-row code-row-target"><span class="code-ln">606</span>  --otp-bad-bg: #fdecec;</span><span class="code-row code-row-target"><span class="code-ln">607</span>  --otp-navy: #1a2872;</span><span class="code-row code-row-target"><span class="code-ln">608</span>  --otp-thead: #e7ecf7;</span><span class="code-row code-row-target"><span class="code-ln">609</span>  --otp-thead-text: #24304f;</span><span class="code-row code-row-target"><span class="code-ln">610</span>  --otp-thead-line: #c6d0e6;</span><span class="code-row code-row-target"><span class="code-ln">611</span>  --otp-spark-line: #5b8def;</span><span class="code-row code-row-target"><span class="code-ln">612</span>  --otp-spark-dot: #1a2872;</span><span class="code-row code-row-target"><span class="code-ln">613</span>  height: <span class="code-number">100</span>%;</span><span class="code-row code-row-target"><span class="code-ln">614</span>  overflow: auto;</span><span class="code-row code-row-target"><span class="code-ln">615</span>  border: 1px solid <span class="code-keyword">var</span>(--otp-line);</span><span class="code-row code-row-target"><span class="code-ln">616</span>  border-radius: 8px;</span><span class="code-row code-row-target"><span class="code-ln">617</span>  background: <span class="code-keyword">var</span>(--otp-surface);</span><span class="code-row code-row-target"><span class="code-ln">618</span>  position: relative;</span><span class="code-row code-row-target"><span class="code-ln">619</span>}</span><span class="code-row code-row-target"><span class="code-ln">620</span>.otp-wrap.otp-dark {</span><span class="code-row code-row-target"><span class="code-ln">621</span>  --otp-surface: #161c28;</span><span class="code-row code-row-target"><span class="code-ln">622</span>  --otp-surface-<span class="code-number">2</span>: #1b2230;</span><span class="code-row code-row-target"><span class="code-ln">623</span>  --otp-ink: #e6edf5;</span><span class="code-row code-row-target"><span class="code-ln">624</span>  --otp-ink-<span class="code-number">3</span>: #6b7688;</span><span class="code-row code-row-target"><span class="code-ln">625</span>  --otp-line: #262f3e;</span><span class="code-row code-row-target"><span class="code-ln">626</span>  --otp-line-<span class="code-number">2</span>: #333e50;</span><span class="code-row code-row-target"><span class="code-ln">627</span>  --otp-accent: #3b93ff;</span><span class="code-row code-row-target"><span class="code-ln">628</span>  --otp-good: #4ec98a;</span><span class="code-row code-row-target"><span class="code-ln">629</span>  --otp-good-bg: #14271d;</span><span class="code-row code-row-target"><span class="code-ln">630</span>  --otp-bad: #f07a7a;</span><span class="code-row code-row-target"><span class="code-ln">631</span>  --otp-bad-bg: #2a1719;</span><span class="code-row code-row-target"><span class="code-ln">632</span>  --otp-thead: #1d2740;</span><span class="code-row code-row-target"><span class="code-ln">633</span>  --otp-thead-text: #c8d4ee;</span><span class="code-row code-row-target"><span class="code-ln">634</span>  --otp-thead-line: #2d3a56;</span><span class="code-row code-row-target"><span class="code-ln">635</span>  --otp-spark-line: #6ea0ff;</span><span class="code-row code-row-target"><span class="code-ln">636</span>  --otp-spark-dot: #a9c4ff;</span><span class="code-row code-row-target"><span class="code-ln">637</span>}</span><span class="code-row code-row-target"><span class="code-ln">638</span>.otp-grid {</span><span class="code-row code-row-target"><span class="code-ln">639</span>  display: grid;</span><span class="code-row code-row-target"><span class="code-ln">640</span>  font-size: <span class="code-number">12</span>.5px;</span><span class="code-row code-row-target"><span class="code-ln">641</span>  color: <span class="code-keyword">var</span>(--otp-ink);</span><span class="code-row code-row-target"><span class="code-ln">642</span>  /* Exactly the parent's width, never more: the whole table is visible without</span><span class="code-row code-row-target"><span class="code-ln">643</span>     a horizontal drag, and the width the columns share is whatever the page</span><span class="code-row code-row-target"><span class="code-ln">644</span>     band actually has. The inline min-width (the sum of the per-column floors)</span><span class="code-row code-row-target"><span class="code-ln">645</span>     is the one thing allowed to exceed the parent — that is what turns the</span><span class="code-row code-row-target"><span class="code-ln">646</span>     scrollbar back on when the viewport really is too narrow to hold the table.</span><span class="code-row code-row-target"><span class="code-ln">647</span>     🔴 No backticks anywhere in <span class="code-keyword">this</span> stylesheet: it is a template literal, and</span><span class="code-row code-row-target"><span class="code-ln">648</span>     one would end the string mid-CSS. */</span><span class="code-row code-row-target"><span class="code-ln">649</span>  width: <span class="code-number">100</span>%;</span><span class="code-row code-row-target"><span class="code-ln">650</span>  max-width: <span class="code-number">100</span>%;</span><span class="code-row code-row-target"><span class="code-ln">651</span>}</span><span class="code-row code-row-target"><span class="code-ln">652</span>.otp-c {</span><span class="code-row code-row-target"><span class="code-ln">653</span>  box-sizing: border-box;</span><span class="code-row code-row-target"><span class="code-ln">654</span>  display: flex;</span><span class="code-row code-row-target"><span class="code-ln">655</span>  align-items: center;</span><span class="code-row code-row-target"><span class="code-ln">656</span>  padding: 5px 8px;</span><span class="code-row code-row-target"><span class="code-ln">657</span>  border-bottom: 1px solid <span class="code-keyword">var</span>(--otp-line);</span><span class="code-row code-row-target"><span class="code-ln">658</span>  background: <span class="code-keyword">var</span>(--otp-surface);</span><span class="code-row code-row-target"><span class="code-ln">659</span>  white-space: nowrap;</span><span class="code-row code-row-target"><span class="code-ln">660</span>  overflow: hidden;</span><span class="code-row code-row-target"><span class="code-ln">661</span>  text-overflow: ellipsis;</span><span class="code-row code-row-target"><span class="code-ln">662</span>}</span><span class="code-row code-row-target"><span class="code-ln">663</span>.otp-c &gt; * { min-width: <span class="code-number">0</span>; }</span><span class="code-row code-row-target"><span class="code-ln">664</span>/* Ellipsis needs a BLOCK box: a bare text node inside a flex container becomes</span><span class="code-row code-row-target"><span class="code-ln">665</span>   an anonymous flex item, which text-overflow does not apply to. The identity</span><span class="code-row code-row-target"><span class="code-ln">666</span>   columns hold facility codes that are normally <span class="code-number">3</span>–<span class="code-number">4</span> characters but are not</span><span class="code-row code-row-target"><span class="code-ln">667</span>   guaranteed to be (the master data can carry a full facility name), so they</span><span class="code-row code-row-target"><span class="code-ln">668</span>   clip with a hover title rather than blowing the column open. */</span><span class="code-row code-row-target"><span class="code-ln">669</span>.otp-ell {</span><span class="code-row code-row-target"><span class="code-ln">670</span>  display: block;</span><span class="code-row code-row-target"><span class="code-ln">671</span>  width: <span class="code-number">100</span>%;</span><span class="code-row code-row-target"><span class="code-ln">672</span>  overflow: hidden;</span><span class="code-row code-row-target"><span class="code-ln">673</span>  text-overflow: ellipsis;</span><span class="code-row code-row-target"><span class="code-ln">674</span>  white-space: nowrap;</span><span class="code-row code-row-target"><span class="code-ln">675</span>}</span><span class="code-row code-row-target"><span class="code-ln">676</span>.otp-h {</span><span class="code-row code-row-target"><span class="code-ln">677</span>  position: sticky;</span><span class="code-row code-row-target"><span class="code-ln">678</span>  top: <span class="code-number">0</span>;</span><span class="code-row code-row-target"><span class="code-ln">679</span>  z-index: <span class="code-number">3</span>;</span><span class="code-row code-row-target"><span class="code-ln">680</span>  flex-direction: column;</span><span class="code-row code-row-target"><span class="code-ln">681</span>  align-items: center;</span><span class="code-row code-row-target"><span class="code-ln">682</span>  justify-content: center;</span><span class="code-row code-row-target"><span class="code-ln">683</span>  gap: <span class="code-number">0</span>;</span><span class="code-row code-row-target"><span class="code-ln">684</span>  padding: 4px 8px;</span><span class="code-row code-row-target"><span class="code-ln">685</span>  background: <span class="code-keyword">var</span>(--otp-thead);</span><span class="code-row code-row-target"><span class="code-ln">686</span>  color: <span class="code-keyword">var</span>(--otp-thead-text);</span><span class="code-row code-row-target"><span class="code-ln">687</span>  font-weight: <span class="code-number">600</span>;</span><span class="code-row code-row-target"><span class="code-ln">688</span>  border-bottom: 1px solid <span class="code-keyword">var</span>(--otp-thead-line);</span><span class="code-row code-row-target"><span class="code-ln">689</span>  text-align: center;</span><span class="code-row code-row-target"><span class="code-ln">690</span>  cursor: <span class="code-keyword">default</span>;</span><span class="code-row code-row-target"><span class="code-ln">691</span>}</span><span class="code-row code-row-target"><span class="code-ln">692</span>/* Wraps rather than truncating — the columns are elastic now, so a narrow</span><span class="code-row code-row-target"><span class="code-ln">693</span>   viewport must be allowed to turn <span class="code-string">"Week Change"</span> into two lines. The nowrap on</span><span class="code-row code-row-target"><span class="code-ln">694</span>   .otp-c is still right <span class="code-keyword">for</span> the data cells (a clipped facility code keeps its</span><span class="code-row code-row-target"><span class="code-ln">695</span>   tooltip); the header is the one place where the full words have to survive.</span><span class="code-row code-row-target"><span class="code-ln">696</span>   Every header cell shares the row's height, so one wrapped title just makes</span><span class="code-row code-row-target"><span class="code-ln">697</span>   the whole header row two lines tall. */</span><span class="code-row code-row-target"><span class="code-ln">698</span>.otp-h-title { display: block; line-height: <span class="code-number">1.3</span>; white-space: normal; }</span><span class="code-row code-row-target"><span class="code-ln">699</span>.otp-unit {</span><span class="code-row code-row-target"><span class="code-ln">700</span>  display: block;</span><span class="code-row code-row-target"><span class="code-ln">701</span>  font-size: 10px;</span><span class="code-row code-row-target"><span class="code-ln">702</span>  font-weight: <span class="code-number">500</span>;</span><span class="code-row code-row-target"><span class="code-ln">703</span>  color: <span class="code-keyword">var</span>(--otp-ink-<span class="code-number">3</span>);</span><span class="code-row code-row-target"><span class="code-ln">704</span>  letter-spacing: <span class="code-number">0</span>.4px;</span><span class="code-row code-row-target"><span class="code-ln">705</span>  line-height: <span class="code-number">1.2</span>;</span><span class="code-row code-row-target"><span class="code-ln">706</span>}</span><span class="code-row code-row-target"><span class="code-ln">707</span>.otp-h.otp-c0 { z-index: <span class="code-number">5</span>; align-items: flex-start; }</span><span class="code-row code-row-target"><span class="code-ln">708</span>.otp-c0 {</span><span class="code-row code-row-target"><span class="code-ln">709</span>  position: sticky;</span><span class="code-row code-row-target"><span class="code-ln">710</span>  left: <span class="code-number">0</span>;</span><span class="code-row code-row-target"><span class="code-ln">711</span>  z-index: <span class="code-number">2</span>;</span><span class="code-row code-row-target"><span class="code-ln">712</span>  border-right: 1px solid <span class="code-keyword">var</span>(--otp-line);</span><span class="code-row code-row-target"><span class="code-ln">713</span>}</span><span class="code-row code-row-target"><span class="code-ln">714</span>.otp-num { justify-content: flex-end; font-variant-numeric: tabular-nums; }</span><span class="code-row code-row-target"><span class="code-ln">715</span>.otp-mid { justify-content: center; }</span><span class="code-row code-row-target"><span class="code-ln">716</span>.otp-gstart { border-top: 2px solid <span class="code-keyword">var</span>(--otp-line-<span class="code-number">2</span>); }</span><span class="code-row"><span class="code-ln">717</span>.otp-hit { background: <span class="code-keyword">var</span>(--otp-good-bg); }</span><span class="code-row"><span class="code-ln">718</span>.otp-miss { background: <span class="code-keyword">var</span>(--otp-bad-bg); }</span><span class="code-row"><span class="code-ln">719</span>.otp-na { color: <span class="code-keyword">var</span>(--otp-ink-<span class="code-number">3</span>); }</span><span class="code-row"><span class="code-ln">720</span>.otp-drill { cursor: pointer; text-decoration: underline dotted transparent; }</span><span class="code-row"><span class="code-ln">721</span>.otp-drill:hover { text-decoration-color: currentColor; }</span></code></pre></details></div></div></details></div></div></details>
+    </div>
+
+    <div id="panel-dp" class="report-panel" role="tabpanel" aria-labelledby="tab-dp">
+      <div class="dp-shell"><div class="dp-header">
+  <h1>数据权限分析报告</h1>
+  <p class="subtitle">AI Code Review · 接口级别数据权限审计</p>
+  <div class="meta-row"><div class="meta-item">项目 <strong>spx-reporting</strong></div><div class="meta-item">涉及接口路径（自动汇总） <strong>服务 spx-reporting · 本次无可聚合路径的权限类接口（请检查 path_pattern）</strong></div><div class="meta-item">报告日期 <strong>2026-09-04 12:51:09</strong></div><div class="meta-item">涉及角色标签 <strong>见 role_data / findings</strong></div></div>
+</div>
+
+<div class="dp-body">
+
+  <div class="dp-stats">
+    
+  <div class="summary-grid">
+    <div class="summary-card critical"><div class="count">0</div><div class="label">Critical</div></div>
+    <div class="summary-card high"><div class="count">0</div><div class="label">Major</div></div>
+    <div class="summary-card medium"><div class="count">0</div><div class="label">Minor</div></div>
+    <div class="summary-card info"><div class="count">0</div><div class="label">Info</div></div>
+  </div>
+  <p style="margin:8px 0 0;font-size:.8rem;color:#718096;">Total 0 条权限类问题 · 涉及 0 个接口（已解析路径）</p>
+
+  </div>
+
+  <div class="dp-section">
+    <div class="dp-section-title">角色权限定义</div>
+    <div class="dp-roles"><div class="role-box"><div class="role-icon">&#128100;</div><div class="role-info"><h3>项目级环境事实（审查时须知）</h3><div class="role-md">- <strong>driver</strong>：司机；仅自身用户与当前路线/包裹相关数据。<br/>
+- <strong>driver-leader / fleet leader</strong>：车队队长；仅本 <code>fleetId</code> 范围内数据。<br/>
+- <strong>operator / dispatcher</strong>：运营/调度；按 <code>facilityCode</code>、DSP 等约定收敛列表与详情。<br/>
+- <strong>admin</strong>：管理员；可访问全量（若代码中另有细分需写明）。<br/>
+<br/>
+<br/>
+- 管理端接口通常需 <code>@PreAuthorize</code> 或项目统一 <code>AuthUtil</code> 校验。<br/>
+- 列表/导出须注入当前用户的数据范围（如 <code>fleetId</code>、<code>dspId</code>），禁止仅靠前端传参筛选。<br/>
+<br/>
+<br/>
+- 运行时配置以 Nacos 配置中心为准，本地 application.yml 的开关值不代表生产实际值。<br/>
+- 各服务大量使用自带池化的 starter（IBM MQ / Druid / Lettuce / Kafka）；自定义 @Primary 基础设施 Bean 会使 starter 自动装配让位，池化/缓存包装随之失效。<br/>
+- 海关链路（ACAS/AMS/ABI）存在 MAWB→数千小包的批量放大特征（一次 MAWB 级操作可触发 4000+ 次逐条发送），发送路径上任何 per-call 开销都会被放大三个数量级。</div></div></div></div>
+  </div>
+
+  <div class="dp-gate"></div>
+
+  <div class="dp-section">
+    <div class="dp-section-title">接口权限审计总览</div>
+    <div class="empty">暂无可解析路径的「权限与访问控制」条目；请检查 path_pattern 与 HTTP 清单。</div>
+  </div>
+
+  
+
+  <div class="dp-section">
+    <div class="dp-section-title">端点详情</div>
+    <div class="dp-folds"></div>
+  </div>
+
+  
+
+  
+
+  <div class="dp-footer"><p>本报告由 AI Code Review 生成（data_permission 模式）。权限类 finding 涉及文件：<strong>（无）</strong></p><p style="margin-top:4px;">生成时间：2026-09-04 12:51:09 · 项目：spx-reporting</p></div>
+
+</div>
+</div>
+    </div>
+  </div>
+  <script>
+    function escHtml(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function formatSummaryInner(rawBlock) {
+      var lines = rawBlock.split(/\r?\n/);
+      var html = '';
+      var listType = null;
+
+      function closeList() {
+        if (listType) { html += '</' + listType + '>'; listType = null; }
+      }
+
+      function renderInline(text) {
+        var st = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        st = st.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        st = st.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+        return st;
+      }
+
+      lines.forEach(function(line) {
+        var trimmed = line.trim();
+        if (!trimmed) { closeList(); return; }
+
+        if (/^#{1,3}\s+/.test(trimmed)) {
+          closeList();
+          var title = trimmed.replace(/^#{1,3}\s+/, '');
+          html += '<p class="summary-section-title">' + renderInline(title) + '</p>';
+          return;
+        }
+
+        if (/^\*\*[^*]+\*\*[：:。]?$/.test(trimmed)) {
+          closeList();
+          var title2 = trimmed.replace(/^\*\*|\*\*[：:。]?$/g, '');
+          html += '<p class="summary-section-title">' + renderInline(title2) + '</p>';
+          return;
+        }
+
+        if (/^[【「『].*[】」』]$/.test(trimmed) ||
+            (trimmed.length <= 30 && /[：:]$/.test(trimmed) && !/^\d/.test(trimmed))) {
+          closeList();
+          var title3 = trimmed.replace(/^[【「『]|[】」』]$/g, '').replace(/[：:]$/, '');
+          html += '<p class="summary-section-title">' + renderInline(title3) + '</p>';
+          return;
+        }
+
+        if (/^[-*]\s+/.test(trimmed)) {
+          if (listType !== 'ul') { closeList(); html += '<ul>'; listType = 'ul'; }
+          var content = trimmed.replace(/^[-*]\s+/, '');
+          html += '<li>' + renderInline(content) + '</li>';
+          return;
+        }
+
+        if (/^[\(（]?\d+[\)）.\、]\s*/.test(trimmed)) {
+          if (listType !== 'ol') { closeList(); html += '<ol>'; listType = 'ol'; }
+          var content2 = trimmed.replace(/^[\(（]?\d+[\)）.\、]\s*/, '');
+          html += '<li>' + renderInline(content2) + '</li>';
+          return;
+        }
+
+        closeList();
+        if (trimmed.length > 280 && /[。！？][\s\u3000]/.test(trimmed)) {
+          var chunks = trimmed.split(/(?<=[。！？])[\s\u3000]+/).filter(function (c) { return c.trim(); });
+          if (chunks.length > 1) {
+            chunks.forEach(function (c) {
+              html += '<p>' + renderInline(c.trim()) + '</p>';
+            });
+            return;
+          }
+        }
+        html += '<p>' + renderInline(trimmed) + '</p>';
+      });
+
+      closeList();
+      return html;
+    }
+
+    function formatSummary() {
+      var el = document.getElementById('summary-text');
+      if (!el) return;
+      if (el.classList.contains('summary-preformatted')) return;
+      var raw = el.textContent || '';
+      raw = raw.replace(/\s+(?=本分片)/g, '\n---SHARD---\n');
+      var shards = raw.split(/\n---SHARD---\n/).map(function(s) { return s.trim(); }).filter(Boolean);
+      if (!shards.length) shards = [raw.trim()].filter(Boolean);
+
+      if (shards.length <= 1) {
+        var inner = formatSummaryInner(shards[0] || '');
+        if (inner) el.innerHTML = inner;
+        return;
+      }
+
+      var htmlShards = [];
+      for (var i = 0; i < shards.length; i++) {
+        var blockHtml = formatSummaryInner(shards[i]);
+        if (blockHtml) htmlShards.push('<div class="summary-shard">' + blockHtml + '</div>');
+      }
+      var head = htmlShards.slice(0, 3).join('');
+      var tail = htmlShards.slice(3).join('');
+      var moreBtn = '';
+      if (tail) {
+        moreBtn = '<button type="button" class="summary-toggle" id="summary-toggle-btn" aria-expanded="false">展开全部分片结论 (' + (htmlShards.length - 3) + ')</button>';
+      }
+      el.innerHTML = '<div class="summary-shards-wrap">' + head +
+        (tail ? '<div class="summary-more" id="summary-more-block" hidden>' + tail + '</div>' : '') +
+        moreBtn + '</div>';
+
+      var btn = document.getElementById('summary-toggle-btn');
+      var more = document.getElementById('summary-more-block');
+      if (btn && more) {
+        btn.addEventListener('click', function() {
+          var ex = btn.getAttribute('aria-expanded') === 'true';
+          more.hidden = ex;
+          btn.setAttribute('aria-expanded', ex ? 'false' : 'true');
+          btn.textContent = ex
+            ? ('展开全部分片结论 (' + (htmlShards.length - 3) + ')')
+            : '收起分片结论';
+        });
+      }
+    }
+
+    function switchReportTab(which) {
+      var panels = ['panel-general', 'panel-dp'];
+      var tabs = ['tab-general', 'tab-dp'];
+      var activePanel = which === 'dp' ? 'panel-dp' : 'panel-general';
+      var activeTab = which === 'dp' ? 'tab-dp' : 'tab-general';
+      panels.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) { el.classList.toggle('is-active', id === activePanel); }
+      });
+      tabs.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) { el.setAttribute('aria-selected', id === activeTab ? 'true' : 'false'); }
+      });
+    }
+
+    var activeFilter = null;
+
+    function getSearchQuery() {
+      var inp = document.getElementById('findings-search');
+      return inp ? String(inp.value || '').trim().toLowerCase() : '';
+    }
+
+    function applyFindingsFilter() {
+      var hint = document.getElementById('filter-hint');
+      var hintLabel = document.getElementById('filter-hint-label');
+
+      if (activeFilter) {
+        hintLabel.textContent = activeFilter.toUpperCase();
+        hint.style.display = 'block';
+      } else {
+        hint.style.display = 'none';
+      }
+
+      var q = getSearchQuery();
+
+      document.querySelectorAll('.findings-file-group').forEach(function(group) {
+        var visible = 0;
+        group.querySelectorAll('.finding-card').forEach(function(card) {
+          var sev = card.getAttribute('data-severity') || 'info';
+          var sevOk = !activeFilter || sev === activeFilter;
+          var textOk = !q || card.textContent.toLowerCase().indexOf(q) !== -1;
+          var show = sevOk && textOk;
+          card.style.display = show ? '' : 'none';
+          if (show) visible++;
+        });
+        group.style.display = visible === 0 ? 'none' : '';
+        // 任务115续作：finding 现在可能嵌套在 <details class="action-group"> 里，
+        // 该祖先关闭时子元素无论 style.display 如何都不会渲染，命中过滤结果时须一并展开。
+        if (visible > 0) {
+          var actionGroup = group.closest('.action-group');
+          if (actionGroup) actionGroup.open = true;
+        }
+      });
+
+      document.querySelectorAll('.file-block').forEach(function(block) {
+        if (block.classList.contains('findings-file-group')) return;
+        var rows = block.querySelectorAll('tbody tr');
+        if (!rows.length) return;
+        var vis = 0;
+        rows.forEach(function(row) {
+          if (!activeFilter || row.querySelector('.chip.' + activeFilter)) {
+            row.style.display = '';
+            vis++;
+          } else {
+            row.style.display = 'none';
+          }
+        });
+        block.style.display = vis === 0 ? 'none' : '';
+      });
+
+      // 顶部 Critical/Major 计数把「牵连影响」的 RISK/NEEDS_HUMAN 也并了进去
+      // （用户拍板口径），但这些卡片不是 .finding-card，之前点 Critical 只会
+      // 过滤上面两段、对牵连影响毫无反应，数字和实际看到的东西对不上
+      // （build TEST_pus-exchange-api/222 反馈）。按同一套口径把牵连影响的卡
+      // 也纳入过滤：RISK 对应 critical，NEEDS_HUMAN 对应 major；筛 minor/info
+      // 时牵连影响没有对应桶，全部隐藏是符合口径的。
+      var impactLevelMap = { critical: 'RISK', major: 'NEEDS_HUMAN' };
+      document.querySelectorAll('.impact-card[data-impact-level]').forEach(function(card) {
+        var level = card.getAttribute('data-impact-level');
+        var show = !activeFilter || impactLevelMap[activeFilter] === level;
+        card.style.display = show ? '' : 'none';
+        if (show && activeFilter) {
+          var d = card.closest('details');
+          if (d) d.open = true;
+        }
+      });
+    }
+
+    function filterBySeverity(chip) {
+      var filter = chip.dataset.filter;
+      if (activeFilter === filter) {
+        clearFilter();
+        return;
+      }
+      activeFilter = filter;
+      document.querySelectorAll('.filter-chip').forEach(function(c) {
+        if (c.dataset.filter === filter) {
+          c.classList.add('active');
+          c.classList.remove('dimmed');
+        } else {
+          c.classList.remove('active');
+          c.classList.add('dimmed');
+        }
+      });
+      applyFindingsFilter();
+    }
+
+    function clearFilter() {
+      activeFilter = null;
+      document.querySelectorAll('.filter-chip').forEach(function(c) {
+        c.classList.remove('active', 'dimmed');
+      });
+      applyFindingsFilter();
+    }
+
+    function initFindingsToolbar() {
+      var tb = document.getElementById('findings-toolbar');
+      if (!tb) return;
+      var groups = document.querySelectorAll('#panel-general .findings-file-group');
+      tb.style.display = groups.length ? '' : 'none';
+    }
+
+    (function () {
+      var chips = document.querySelectorAll('table .chip');
+      for (var i = 0; i < chips.length; i++) {
+        chips[i].textContent = chips[i].textContent.toUpperCase();
+      }
+
+      formatSummary();
+
+      initFindingsToolbar();
+
+      var ex = document.getElementById('expand-all-files');
+      var cl = document.getElementById('collapse-all-files');
+      if (ex) ex.addEventListener('click', function() {
+        document.querySelectorAll('.findings-file-group').forEach(function(d) { d.open = true; });
+        document.querySelectorAll('.action-group').forEach(function(d) { d.open = true; });
+      });
+      if (cl) cl.addEventListener('click', function() {
+        document.querySelectorAll('.findings-file-group').forEach(function(d) { d.open = false; });
+        document.querySelectorAll('.action-group').forEach(function(d) { d.open = false; });
+      });
+
+      var search = document.getElementById('findings-search');
+      if (search) {
+        search.addEventListener('input', function() { applyFindingsFilter(); });
+      }
+    })();
+
+    // Chart.js initialization
+    function renderCategoryChart(categoryData) {
+      var ctx = document.getElementById('categoryChart');
+      if (!ctx) return;
+      ctx = ctx.getContext('2d');
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: Object.keys(categoryData),
+          datasets: [{
+            label: '问题数量',
+            data: Object.values(categoryData),
+            // 跟报告主色（teal 系）协调的低饱和度调色板，替换 Chart.js 默认的
+            // 高饱和度七彩配色（用户反馈报告"不好看"，实测截图确认默认色彩
+            // 花哨刺眼、跟品牌色不搭）；18 色覆盖 VALID_CATEGORIES 全量枚举，
+            // 保证再多分类同时出现也不会因为数组不够长而退化成无色
+            backgroundColor: [
+              '#0f766e', '#b5651d', '#4a6fa5', '#8e6c96',
+              '#6b8f71', '#b58a3d', '#b56576', '#5c7a89',
+              '#3d8a8a', '#a3703f', '#5f7a9d', '#7a6b9d',
+              '#7fa17f', '#c29b5c', '#9d6b7a', '#6b8a9d',
+              '#8a9d6b', '#9d7a5f'
+            ]
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: true } }
+        }
+      });
+    }
+
+    // 这个短列表只是一句话摘要，不值得把 markdown 代码块渲染进一个 <li> 里——
+    // 直接去掉标记符本身，露出裸文本即可（跟 _render_markdown_lite 的完整
+    // 渲染不同，这里要的是"别露出字面 ** 和 ``` "，不是"渲染出富文本"）
+    function stripMdLite(text) {
+      return (text || '')
+        .replace(/```[a-zA-Z]*\n?/g, '')
+        .replace(/```/g, '')
+        .replace(/\*\*([^*]+)\*\*/g, '$1')
+        .replace(/`([^`]+)`/g, '$1');
+    }
+
+    function renderTopCriticals(topCriticals) {
+      var list = document.getElementById('top-criticals-list');
+      var box = document.getElementById('top-criticals');
+      if (!list) return;
+      // 一条都没有时整块收起，不留「标题 + 暂无 Critical 问题」空框占首屏
+      if (!topCriticals || !topCriticals.length) {
+        if (box) box.hidden = true;
+        list.innerHTML = '';
+        return;
+      }
+      if (box) box.hidden = false;
+      list.innerHTML = topCriticals.map(function(c) {
+        var desc = stripMdLite(c.description || '');
+        if (desc.length > 120) desc = desc.substring(0, 120) + '…';
+        // source 只有牵连影响条目才带：不标来源的话，读者会把"改动波及到的
+        // 其他调用点"当成"这段代码本身写错了"，两者要采取的动作不一样
+        var tag = c.source
+          ? '<span class="tc-source">' + escHtml(c.source) + '</span>'
+          : '';
+        return '<li>' + tag + '<strong>' + escHtml(c.file + (c.line ? ':' + c.line : '')) +
+               '</strong><span class="tc-desc">' + escHtml(desc) + '</span></li>';
+      }).join('');
+    }
+
+    // Export stubs (implemented in Task 5)
+    function exportJira() { alert('导出为 Jira 功能待实现'); }
+    function exportExcel() { alert('导出为 Excel 功能待实现'); }
+    function exportCsv() { alert('导出为 CSV 功能待实现'); }
+
+    // Inject summary data (Task 5)
+    if (typeof renderCategoryChart === 'function') renderCategoryChart({"\u9700\u6c42\u5916\u52a8\u4f5c": 1});
+if (typeof renderTopCriticals === 'function') renderTopCriticals([]);
+
+    // Export dropdown toggle
+    (function() {
+      var btn = document.getElementById('export-btn');
+      var menu = document.getElementById('export-menu');
+      if (!btn || !menu) return;
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var shown = menu.style.display === 'block';
+        menu.style.display = shown ? 'none' : 'block';
+      });
+      document.addEventListener('click', function() {
+        menu.style.display = 'none';
+      });
+    })();
+  </script>
+</body>
+</html>
