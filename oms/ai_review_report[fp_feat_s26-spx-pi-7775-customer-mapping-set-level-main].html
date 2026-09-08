@@ -1,0 +1,2404 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Code Review Report</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      /* 重新设计（用户反馈"前端样式不好看"）：底色/正文/次要文字/边框/标题
+         此前全部带一层绿色调（跟 --accent 撞在一起，显得到处都是同一种绿），
+         改成中性板岩灰基调 + 一个teal 强调色，层次更清楚，也更耐看。 */
+      --bg: #f3f4f7;
+      --card: #ffffff;
+      --text: #1c2333;
+      --muted: #667085;
+      --border: #e3e6ec;
+      --heading: #0f1420;
+      --accent: #0f766e;
+      --accent-dark: #0b5850;
+      --accent-soft: #e6f4f2;
+
+      --critical-bg: #fdeceb;
+      --critical-text: #b3261e;
+      --critical-border: #f3b7b2;
+      --critical-strong: #d1291f;
+
+      --major-bg: #fdf1e3;
+      --major-text: #a85311;
+      --major-border: #f4d19d;
+      --major-strong: #d5720f;
+
+      --minor-bg: #fdf7e0;
+      --minor-text: #8a6208;
+      --minor-border: #f1e096;
+      --minor-strong: #a37d0a;
+
+      --info-bg: #eaf1fd;
+      --info-text: #23509c;
+      --info-border: #c0d6f6;
+      --info-strong: #2f66c9;
+
+      --safe-bg: #e8f6ee;
+      --safe-text: #1a7a4c;
+      --safe-border: #aee3c4;
+
+      --chip-bg: #eef0f5;
+      --code-bg: #10182b;
+      --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+      --shadow: 0 8px 24px rgba(16, 24, 40, 0.08);
+      --shadow-lg: 0 20px 44px rgba(16, 24, 40, 0.14);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans SC", Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .page {
+      max-width: 1180px;
+      margin: 28px auto 48px;
+      padding: 0 20px;
+    }
+
+    /* 重新设计：原来是一大片高饱和绿色渐变斜切块，视觉上很"闹"；
+       改成深板岩底色 + 顶部一条细 teal 强调线，克制一些，也更像专业
+       研发工具的报告头，而不是营销落地页banner。 */
+    .hero {
+      position: relative;
+      background: linear-gradient(165deg, #0b1220 0%, #121a2c 55%, #0e2422 100%);
+      color: #f4f7fb;
+      border-radius: 18px;
+      padding: 26px 28px 24px;
+      box-shadow: var(--shadow-lg);
+      margin-bottom: 18px;
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 3px;
+      background: linear-gradient(90deg, #14b8a6, #22d3ee 45%, #14b8a6 100%);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -60px;
+      top: -60px;
+      width: 220px;
+      height: 220px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(20, 184, 166, 0.22), transparent 70%);
+      pointer-events: none;
+    }
+
+    .hero h1 {
+      margin: 0 0 10px;
+      font-size: 24px;
+      font-weight: 700;
+      line-height: 1.25;
+      letter-spacing: 0.1px;
+    }
+
+    .hero-meta {
+      margin: 0;
+      font-size: 13.5px;
+      color: #aab4c8;
+      letter-spacing: 0.01em;
+    }
+
+    .summary {
+      background: var(--card);
+      padding: 16px 18px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      margin-bottom: 20px;
+    }
+
+    .summary h2,
+    .section-title {
+      margin: 0 0 12px;
+      font-size: 18px;
+      color: var(--heading);
+    }
+
+    .subsection-title {
+      margin-top: 28px;
+    }
+
+    .api-permission-block code {
+      font-size: 12px;
+      word-break: break-all;
+    }
+
+    .api-surface-sub {
+      margin: 18px 0 8px;
+      font-size: 16px;
+      color: var(--heading);
+    }
+
+    .inferred-hint {
+      margin: 0 0 12px;
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    /* 总体结论正文区 */
+    .summary-body {
+      margin: 0 0 16px;
+      font-size: 14px;
+      color: var(--text);
+      line-height: 1.75;
+    }
+
+    .summary-body p {
+      margin: 0 0 10px;
+    }
+
+    .summary-body p:last-child {
+      margin-bottom: 0;
+    }
+
+    .summary-body ol,
+    .summary-body ul {
+      margin: 4px 0 12px;
+      padding-left: 22px;
+    }
+
+    .summary-body ol li,
+    .summary-body ul li {
+      margin-bottom: 6px;
+      line-height: 1.65;
+    }
+
+    .summary-body .summary-section-title {
+      font-weight: 700;
+      color: var(--heading);
+      margin: 16px 0 6px;
+      font-size: 13px;
+      letter-spacing: 0.3px;
+      padding-left: 8px;
+      border-left: 3px solid var(--accent);
+    }
+
+    .summary-body .summary-section-title:first-child {
+      margin-top: 0;
+    }
+
+    .summary-body strong {
+      color: var(--heading);
+      font-weight: 700;
+    }
+
+    /* 严重级别筛选区 */
+    .filter-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-top: 6px;
+    }
+
+    .filter-label {
+      font-size: 12px;
+      color: var(--muted);
+      margin-right: 2px;
+    }
+
+    .chips-impact-note {
+      width: 100%;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 5px 13px;
+      border-radius: 9px;
+      font-size: 12.5px;
+      font-weight: 700;
+      background: var(--chip-bg);
+      color: var(--heading);
+      border: 1px solid transparent;
+    }
+
+    .filter-chip {
+      cursor: pointer;
+      transition: transform 0.12s, box-shadow 0.12s, opacity 0.12s;
+      user-select: none;
+    }
+
+    .filter-chip:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 3px 8px rgba(0,0,0,0.12);
+    }
+
+    .filter-chip.active {
+      box-shadow: 0 0 0 2.5px currentColor;
+      transform: translateY(-1px);
+    }
+
+    .filter-chip.dimmed {
+      opacity: 0.4;
+    }
+
+    .critical { background: var(--critical-bg); color: var(--critical-text); border-color: var(--critical-border); }
+    .major { background: var(--major-bg); color: var(--major-text); border-color: var(--major-border); }
+    .minor { background: var(--minor-bg); color: var(--minor-text); border-color: var(--minor-border); }
+    .info { background: var(--info-bg); color: var(--info-text); border-color: var(--info-border); }
+
+    /* 筛选状态提示条 */
+    #filter-hint {
+      display: none;
+      margin: -10px 0 14px;
+      padding: 8px 14px;
+      background: var(--accent-soft);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    #filter-hint .clear-filter {
+      margin-left: 8px;
+      color: var(--accent);
+      cursor: pointer;
+      font-weight: 600;
+      text-decoration: underline;
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    /* 工具栏：搜索 + 展开折叠 */
+    .findings-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+      padding: 12px 14px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+    }
+
+    .findings-search {
+      flex: 1 1 220px;
+      min-width: 0;
+      padding: 10px 14px;
+      font: inherit;
+      font-size: 14px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+      color: var(--text);
+    }
+
+    .findings-search:focus {
+      outline: none;
+      box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.35);
+      border-color: var(--accent);
+    }
+
+    .findings-toolbar-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .toolbar-btn {
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--chip-bg);
+      color: var(--heading);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .toolbar-btn:hover {
+      background: #e3e6ec;
+    }
+
+    /* 文件 TOC */
+    .findings-toc {
+      margin-bottom: 16px;
+      padding: 10px 12px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+    }
+
+    .toc-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 8px;
+      letter-spacing: 0.04em;
+    }
+
+    .toc-pill-wrap {
+      display: flex;
+      flex-wrap: nowrap;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .toc-pill {
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      text-decoration: none;
+      color: var(--heading);
+      background: var(--chip-bg);
+      border: 1px solid var(--border);
+      transition: transform 0.12s, box-shadow 0.12s;
+    }
+
+    .toc-pill:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+
+    .toc-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .toc-dot.sev-critical { background: var(--critical-text); }
+    .toc-dot.sev-major { background: var(--major-text); }
+    .toc-dot.sev-minor { background: var(--minor-text); }
+    .toc-dot.sev-info { background: var(--info-text); }
+
+    /* 总体结论：多分片 */
+    .summary-shards-wrap {
+      margin-bottom: 4px;
+    }
+
+    .summary-shard {
+      margin-bottom: 14px;
+      padding: 12px 14px;
+      background: #fafbfd;
+      border-radius: 10px;
+      border-left: 4px solid var(--accent);
+    }
+
+    .summary-shard:last-of-type {
+      margin-bottom: 10px;
+    }
+
+    .summary-more[hidden] {
+      display: none !important;
+    }
+
+    .summary-toggle {
+      display: inline-block;
+      margin-top: 4px;
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 16px;
+      border-radius: 8px;
+      border: 1px solid var(--accent);
+      background: #fff;
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .summary-toggle:hover {
+      background: #eef8f5;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details {
+      margin-top: 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0 12px 10px;
+      background: #fafbfc;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details summary {
+      cursor: pointer;
+      padding: 10px 0;
+      font-weight: 600;
+      color: var(--accent);
+      list-style: none;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .summary-raw-pre {
+      margin: 0;
+      max-height: 420px;
+      overflow: auto;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* 按文件 findings：可折叠组 + 卡片 */
+    .findings-list-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    details.file-group.findings-file-group {
+      margin: 0;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .file-group-summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 14px;
+      padding: 14px 16px;
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .file-group-summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .file-group-title {
+      display: inline-flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 14px;
+      color: var(--heading);
+      flex: 1 1 200px;
+      min-width: 0;
+    }
+
+    .file-path-text {
+      word-break: break-all;
+      line-height: 1.45;
+    }
+
+    .sev-indicator {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      margin-top: 4px;
+    }
+
+    .sev-indicator.sev-critical { background: var(--critical-text); box-shadow: 0 0 0 2px var(--critical-bg); }
+    .sev-indicator.sev-major { background: var(--major-text); box-shadow: 0 0 0 2px var(--major-bg); }
+    .sev-indicator.sev-minor { background: var(--minor-text); box-shadow: 0 0 0 2px var(--minor-bg); }
+    .sev-indicator.sev-info { background: var(--info-text); box-shadow: 0 0 0 2px var(--info-bg); }
+
+    .file-group-stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .stat-chip {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 999px;
+    }
+
+    .stat-chip.stat-critical { background: var(--critical-bg); color: var(--critical-text); }
+    .stat-chip.stat-major { background: var(--major-bg); color: var(--major-text); }
+    .stat-chip.stat-minor { background: var(--minor-bg); color: var(--minor-text); }
+    .stat-chip.stat-info { background: var(--info-bg); color: var(--info-text); }
+
+    .file-group-count {
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .file-group-body {
+      padding: 12px 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .finding-card {
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: #fff;
+      padding: 15px 17px;
+      border-left-width: 4px;
+      border-left-style: solid;
+      box-shadow: var(--shadow-sm);
+      transition: box-shadow 0.15s;
+    }
+
+    .finding-card:hover { box-shadow: var(--shadow); }
+
+    .finding-card.severity-critical { border-left-color: var(--critical-strong); background: linear-gradient(90deg, var(--critical-bg) 0%, #fff 14px); }
+    .finding-card.severity-major { border-left-color: var(--major-strong); background: linear-gradient(90deg, var(--major-bg) 0%, #fff 14px); }
+    .finding-card.severity-minor { border-left-color: var(--minor-strong); background: linear-gradient(90deg, var(--minor-bg) 0%, #fff 14px); }
+    .finding-card.severity-info { border-left-color: var(--info-strong); background: linear-gradient(90deg, var(--info-bg) 0%, #fff 14px); }
+
+    .finding-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .sev-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 4px 12px;
+      border-radius: 7px;
+      font-size: 11.5px;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .sev-badge.critical { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .sev-badge.major { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .sev-badge.minor { background: var(--minor-bg); color: var(--minor-text); border: 1px solid var(--minor-border); }
+    .sev-badge.info { background: var(--info-bg); color: var(--info-text); border: 1px solid var(--info-border); }
+
+    .finding-line {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      background: var(--chip-bg);
+      padding: 4px 8px;
+      border-radius: 6px;
+    }
+
+    .finding-cat {
+      font-size: 12.5px;
+      font-weight: 700;
+      color: var(--accent-dark);
+      background: var(--accent-soft);
+      padding: 3px 9px;
+      border-radius: 6px;
+    }
+
+    /* 需求对账三类（需求未实现/需求矛盾/需求外动作）用色块徽章而非纯文字，
+       跟严重级别徽章一样醒目——用户反馈普通文字分类容易在列表里被漏看，
+       尤其"需求未实现"现在总是 Critical。*/
+    .finding-cat-requirement {
+      background: var(--critical-bg);
+      color: var(--critical-text);
+      border: 1px solid var(--critical-border);
+      border-radius: 6px;
+      padding: 3px 10px;
+    }
+
+    /* ── 接口审查覆盖清单 ── */
+    .endpoint-coverage {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px 18px;
+      box-shadow: var(--shadow);
+      margin-bottom: 20px;
+    }
+
+    .ec-note {
+      margin: 0 0 10px;
+      font-size: 13px;
+      line-height: 1.7;
+      color: var(--muted);
+    }
+
+    .ec-note-warn {
+      padding: 9px 12px;
+      border-radius: 8px;
+      background: var(--major-bg);
+      border-left: 4px solid var(--major-strong);
+      color: var(--major-text);
+    }
+
+    .ec-note-warn strong { color: var(--major-strong); }
+
+    .ec-table-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid var(--border); }
+
+    .ec-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .ec-table th {
+      text-align: left;
+      padding: 9px 12px;
+      background: #fafbfd;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .ec-table td {
+      padding: 10px 12px;
+      border-top: 1px solid var(--border);
+      vertical-align: top;
+      line-height: 1.65;
+    }
+
+    .ec-table tbody tr:first-child td { border-top: none; }
+
+    .ec-table .ec-method,
+    .ec-table .ec-verdict { white-space: nowrap; }
+
+    .ec-table .ec-path code {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+      word-break: break-all;
+    }
+
+    .ec-table .ec-reason { color: var(--muted); }
+
+    .ec-badge {
+      display: inline-block;
+      padding: 2px 9px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .ec-badge.ec-risk { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .ec-badge.ec-pending { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .ec-badge.ec-safe { background: var(--safe-bg); color: var(--safe-text); border: 1px solid var(--safe-border); }
+
+    tr.ec-risk td { background: #fffbfa; }
+    tr.ec-pending td { background: #fffdf9; }
+
+    /* 分片没审成时的披露条：必须比正文更抢眼，否则读者会把
+       「报告里没写」误当成「这里没问题」 */
+    .shard-health-alert {
+      margin: 0 0 12px;
+      padding: 12px 15px;
+      border-radius: 10px;
+      background: var(--critical-bg);
+      border: 1px solid var(--critical-border);
+      border-left: 4px solid var(--critical-strong);
+      color: var(--critical-text);
+      font-size: 13.5px;
+      line-height: 1.7;
+    }
+
+    .shard-health-alert strong { color: var(--critical-strong); }
+
+    .finding-desc {
+      font-size: 14px;
+      line-height: 1.65;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* finding 卡片正文的四行结构（问题 / 后果 / 怎么改 / 怎么验）。
+       用户反馈（build 532）"文案挤在一团，难以阅读"：此前正文是一整段
+       `原因：…影响：…` 靠 white-space:pre-wrap 原样糊上去，修复建议和测试
+       场景又被折叠藏起来。改成左标签 + 右正文的两列网格，每行一个语义单元，
+       段落之间有明确留白，长句由 Python 侧按句末标点拆成多个 <p>。 */
+    .finding-body {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      font-size: 14px;
+      line-height: 1.7;
+      color: var(--text);
+    }
+
+    .fb-row {
+      display: grid;
+      grid-template-columns: 68px minmax(0, 1fr);
+      gap: 2px 14px;
+      padding: 10px 0;
+      border-top: 1px dashed var(--border);
+    }
+
+    .fb-row:first-child {
+      border-top: none;
+      padding-top: 2px;
+    }
+
+    /* 重新设计：标签从"一段带颜色的纯文字"改成小色块标签（跟 sev-badge/
+       finding-cat 同一套视觉语言），扫一眼列表就能靠色块分辨这行是"问题"
+       还是"怎么改"，比单靠文字颜色更容易一眼分辨。 */
+    .fb-label {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1.6;
+      letter-spacing: 0.03em;
+      white-space: nowrap;
+      padding: 2px 8px;
+      border-radius: 6px;
+      margin-top: 1px;
+    }
+
+    .fb-problem .fb-label { color: var(--major-text); background: var(--major-bg); }
+    .fb-impact .fb-label { color: var(--critical-text); background: var(--critical-bg); }
+    .fb-fix .fb-label { color: var(--accent-dark); background: var(--accent-soft); }
+    .fb-test .fb-label { color: var(--info-text); background: var(--info-bg); }
+
+    .fb-text {
+      min-width: 0;
+      word-break: break-word;
+    }
+
+    .fb-text > p {
+      margin: 0 0 7px;
+    }
+
+    .fb-text > p:last-child {
+      margin-bottom: 0;
+    }
+
+    .fb-text .rt-list {
+      margin: 2px 0 6px;
+      padding-left: 20px;
+    }
+
+    .fb-text .rt-list li {
+      margin-bottom: 4px;
+    }
+
+    .fb-text .code-block {
+      margin: 8px 0 4px;
+      font-size: 12.5px;
+    }
+
+    .fb-text code {
+      background: var(--chip-bg);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+    }
+
+    /* 窄屏（Jenkins 里报告常挤在窗格里看）时标签落到正文上方，不再抢走
+       62px 宽度，避免正文被压成一列细条 */
+    @media (max-width: 720px) {
+      .fb-row {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 2px;
+      }
+    }
+
+    /* 证据代码块从固定 div 改成可折叠 details（默认展开）——一份报告里
+       十几张卡片各带 8-10 行代码，读者需要能收起来快速扫结论 */
+    details.finding-evidence > summary {
+      cursor: pointer;
+      list-style: none;
+    }
+
+    details.finding-evidence > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    details.finding-evidence > summary::before {
+      content: "▾ ";
+      color: var(--muted);
+    }
+
+    details.finding-evidence:not([open]) > summary::before {
+      content: "▸ ";
+    }
+
+    /* 证据代码块（2026-07-19 补）：evidence_quote 的稳定展示位置，不再依赖
+       模型是否顺手把代码写进 description 里；纯 CSS + Python 正则高亮，
+       不引外部 JS 库，内网报告零外部依赖风险。 */
+    .finding-evidence {
+      margin-top: 10px;
+    }
+
+    .finding-evidence .detail-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .code-block {
+      margin: 0;
+      padding: 12px 15px;
+      background: var(--code-bg);
+      color: #e6edf3;
+      border-radius: 9px;
+      overflow-x: auto;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+      line-height: 1.6;
+    }
+
+    .code-block code {
+      white-space: pre;
+      /* 2026-09-02 用户反馈：安全/权限折叠卡里"怎么改"给的整段修复示意代码
+         （``` 代码围栏渲染出来也是 <pre class="code-block"><code>）看不清——
+         根因是 .fb-text code（第 833 行，给"问题/后果/怎么改/怎么验"正文里
+         `existsActive` 这类行内代码片段配的浅灰底色）跟这里选择器优先级/
+         特异性相同，同一个 <code> 标签只要落在 .fb-text 范围内就会被套上
+         浅灰底，而 .code-annotation/.code-keyword 这套语法高亮配色是给
+         .code-block 本来的深色底（--code-bg）设计的，叠在浅灰底上对比度
+         塌陷，几乎看不见字。显式声明透明背景覆盖掉那条通用规则，让
+         .code-block 自己的深色底透出来。 */
+      background: transparent;
+    }
+
+    .code-comment { color: #8b949e; font-style: italic; }
+    .code-string { color: #a5d6ff; }
+    .code-annotation { color: #d2a8ff; }
+    .code-keyword { color: #ff7b72; font-weight: 600; }
+    .code-number { color: #79c0ff; }
+
+    /* 带上下文的证据代码块（逐行渲染，问题行整行高亮）*/
+    .code-row {
+      display: block;
+      padding: 0 6px;
+      border-left: 3px solid transparent;
+    }
+
+    .code-row-target {
+      background: rgba(255, 123, 114, 0.16);
+      border-left-color: #ff7b72;
+    }
+
+    .code-ln {
+      display: inline-block;
+      min-width: 2.5em;
+      margin-right: 12px;
+      color: #6e7681;
+      text-align: right;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    .finding-details {
+      margin-top: 12px;
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+      padding: 0;
+      background: #fafbfd;
+    }
+
+    .finding-details > summary {
+      cursor: pointer;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--heading);
+      list-style: none;
+    }
+
+    .finding-details > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .finding-details-body {
+      padding: 0 14px 14px;
+      border-top: 1px solid var(--border);
+    }
+
+    .detail-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin: 12px 0 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .finding-suggestion p,
+    .finding-test p {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.65;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .file-block {
+      margin: 14px 0 18px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: var(--shadow);
+    }
+
+    .file-block h3 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      color: var(--heading);
+      word-break: break-all;
+    }
+
+    table {
+      border-collapse: separate;
+      border-spacing: 0;
+      width: 100%;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+    }
+
+    th, td {
+      border-bottom: 1px solid var(--border);
+      padding: 10px;
+      vertical-align: top;
+      text-align: left;
+      font-size: 13px;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      background: #fafbfd;
+      color: var(--heading);
+      font-weight: 700;
+      z-index: 1;
+    }
+
+    tbody tr:nth-child(even) { background: #fafbfd; }
+    tbody tr:last-child td { border-bottom: none; }
+
+    .empty {
+      padding: 18px;
+      border: 1px dashed var(--border);
+      border-radius: 14px;
+      color: var(--muted);
+      background: #fafbfd;
+    }
+
+    @media (max-width: 900px) {
+      .hero h1 { font-size: 22px; }
+      .summary,
+      .file-block { padding: 12px; }
+      th, td { padding: 8px; font-size: 12px; }
+      .charts-row { flex-direction: column; }
+    }
+
+    /* ── 报告标签页 ──
+       重新设计：从"按钮选中变绿色渐变块"改成分段控件（segmented control）
+       的样式——浅灰底槽 + 选中项浮成白色药丸，更接近成熟工具（如 GitHub/
+       Linear）里的页签观感，也跟下面卡片的白底形成呼应。 */
+    .report-tabs {
+      display: inline-flex;
+      gap: 2px;
+      padding: 4px;
+      margin-bottom: 18px;
+      background: #e9ebf0;
+      border-radius: 12px;
+      flex-wrap: wrap;
+    }
+    .report-tabs button {
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 18px;
+      border-radius: 9px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 13.5px;
+      transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+    }
+    .report-tabs button:hover {
+      color: var(--heading);
+    }
+    .report-tabs button[aria-selected="true"] {
+      background: #ffffff;
+      color: var(--heading);
+      box-shadow: var(--shadow-sm);
+    }
+    .report-panel { display: none; }
+    .report-panel.is-active { display: block; }
+
+    /* ── 数据权限页（嵌入，与综合页隔离） ── */
+    .dp-shell {
+      font-family: "Avenir Next", "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif;
+      color: #1a2b22;
+      line-height: 1.6;
+    }
+
+    /* 重置全局 table 样式污染 */
+    .dp-shell table {
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+    }
+    .dp-shell th, .dp-shell td {
+      border: none !important;
+      border-bottom: 1px solid #edf2f7 !important;
+      background: transparent !important;
+    }
+
+    .dp-shell .dp-header {
+      position: relative;
+      background: linear-gradient(165deg, #0b1220 0%, #121a2c 55%, #0e2422 100%);
+      color: #f4f7fb;
+      padding: 26px 28px 24px;
+      border-radius: 18px;
+      margin-bottom: 24px;
+      box-shadow: var(--shadow-lg);
+      overflow: hidden;
+    }
+    .dp-shell .dp-header::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 3px;
+      background: linear-gradient(90deg, #14b8a6, #22d3ee 45%, #14b8a6 100%);
+    }
+    .dp-shell .dp-header h1 { font-size: 1.4rem; font-weight: 700; letter-spacing: .01em; margin: 0 0 6px; }
+    .dp-shell .dp-header .subtitle { margin: 0; color: #aab4c8; font-size: .9rem; }
+    .dp-shell .dp-header .meta-row { margin-top: 16px; display: flex; gap: 24px; flex-wrap: wrap; }
+    .dp-shell .dp-header .meta-item { font-size: .8rem; color: #8b95ab; }
+    .dp-shell .dp-header .meta-item strong { color: #8ce8d4; font-weight: 600; }
+
+    .dp-shell .dp-body { padding: 0 0 32px; }
+
+    /* ── dp-shell 内部组件（与 Python 生成的类名严格对齐） ── */
+
+    /* 统计卡片区（Python 生成 .summary-grid / .summary-card） */
+    .dp-shell .dp-stats { margin-bottom: 4px; }
+    .dp-shell .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+    .dp-shell .summary-card {
+      background: #fff;
+      border-radius: 14px;
+      padding: 18px 20px;
+      box-shadow: var(--shadow-sm);
+      border: 1px solid var(--border);
+      border-top: 3px solid transparent;
+    }
+    .dp-shell .summary-card.critical { border-top-color: var(--critical-strong); }
+    .dp-shell .summary-card.high     { border-top-color: var(--major-strong); }
+    .dp-shell .summary-card.medium   { border-top-color: var(--minor-strong); }
+    .dp-shell .summary-card.info     { border-top-color: var(--info-strong); }
+    .dp-shell .summary-card .count   { font-size: 2.1rem; font-weight: 800; line-height: 1; }
+    .dp-shell .summary-card.critical .count { color: var(--critical-text); }
+    .dp-shell .summary-card.high     .count { color: var(--major-text); }
+    .dp-shell .summary-card.medium   .count { color: var(--minor-text); }
+    .dp-shell .summary-card.info     .count { color: var(--info-text); }
+    .dp-shell .summary-card .label   { margin-top: 8px; font-size: .72rem; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .07em; }
+
+    /* 区块标题 */
+    .dp-shell .dp-section { margin-bottom: 24px; }
+    .dp-shell .dp-section-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--heading);
+      margin: 0 0 14px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* 角色定义盒（Python 生成 .role-box / .role-icon / .role-info） */
+    .dp-shell .dp-roles { display: flex; flex-direction: column; gap: 10px; }
+    .dp-shell .role-box {
+      background: #fff;
+      border-radius: 12px;
+      padding: 16px 20px;
+      box-shadow: 0 2px 10px rgba(17,51,38,.07);
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+    }
+    .dp-shell .role-box.muted {
+      background: #f8f9fb;
+      border: 1px solid var(--border);
+      box-shadow: none;
+    }
+    .dp-shell .role-icon { font-size: 1.8rem; line-height: 1; flex-shrink: 0; }
+    .dp-shell .role-info { flex: 1; min-width: 0; }
+    .dp-shell .role-info h3 { font-size: 1rem; font-weight: 700; color: var(--heading); margin: 0 0 4px; }
+    .dp-shell .role-info .role-md { font-size: .88rem; color: #4a5568; margin-top: 8px; line-height: 1.65; word-break: break-word; }
+    .dp-shell .role-info code { background: #edf2f7; padding: 1px 6px; border-radius: 4px; font-size: .85em; }
+
+    /* gate banner */
+    .dp-shell .dp-gate { margin-bottom: 20px; }
+
+    /* 审计表格包装（Python 生成 .table-wrap > table.dp-audit）
+       表头从深绿底改成跟报告其它表格（.ec-table）同一套浅底大写小标签，
+       整份报告的表格风格统一，不再是"深色表头 vs 浅色表头"两套语言。 */
+    .dp-shell .table-wrap {
+      overflow-x: auto;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow-sm);
+    }
+    .dp-shell table.dp-audit {
+      width: 100% !important;
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+      font-size: .84rem;
+    }
+    .dp-shell .dp-audit th {
+      background: #fafbfd !important;
+      color: var(--muted) !important;
+      padding: 11px 14px !important;
+      text-align: left !important;
+      font-size: .68rem !important;
+      font-weight: 700 !important;
+      text-transform: uppercase !important;
+      letter-spacing: .07em !important;
+      white-space: nowrap !important;
+      border-bottom: 1px solid var(--border) !important;
+      position: sticky;
+      top: 0;
+    }
+    .dp-shell .dp-audit td {
+      padding: 11px 14px !important;
+      border-bottom: 1px solid var(--border) !important;
+      vertical-align: top !important;
+      color: var(--text) !important;
+      background: transparent !important;
+    }
+    .dp-shell .dp-audit tr:last-child td { border-bottom: none !important; }
+    .dp-shell .dp-audit tr:hover td { background: #f8f9fb !important; }
+    .dp-shell .dp-audit tr.row-critical td { background: var(--critical-bg) !important; }
+    .dp-shell .dp-audit tr.row-critical:hover td { background: #fbdcda !important; }
+    .dp-shell .dp-audit tr.row-major td { background: var(--major-bg) !important; }
+    .dp-shell .dp-audit tr.row-major:hover td { background: #fbe4c4 !important; }
+
+    /* HTTP 方法 & 严重性徽标（Python 生成 .badge .badge-*） */
+    .dp-shell .badge {
+      display: inline-block; padding: 2px 9px; border-radius: 6px;
+      font-size: .72rem; font-weight: 700; letter-spacing: .04em; white-space: nowrap;
+    }
+    .dp-shell .badge-get    { background: var(--info-bg); color: var(--info-text); }
+    .dp-shell .badge-post   { background: var(--safe-bg); color: var(--safe-text); }
+    .dp-shell .badge-put    { background: var(--minor-bg); color: var(--minor-text); }
+    .dp-shell .badge-delete { background: var(--critical-bg); color: var(--critical-text); }
+    .dp-shell .badge-patch  { background: #f4f0fd; color: #6b46c1; }
+    .dp-shell .badge-critical { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .dp-shell .badge-high     { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .dp-shell .badge-medium   { background: var(--minor-bg); color: var(--minor-text); border: 1px solid var(--minor-border); }
+    .dp-shell .badge-info     { background: var(--info-bg); color: var(--info-text); border: 1px solid var(--info-border); }
+
+    /* 风险文字 */
+    .dp-shell .risk-zh { font-size: .82rem; color: var(--text); font-weight: 600; line-height: 1.4; }
+
+    /* Issue 列表（Python 生成 .issue-list） */
+    .dp-shell .issue-list { list-style: none !important; margin: 6px 0 0; padding: 0; }
+    .dp-shell .issue-list li { position: relative; padding: 3px 0 3px 18px; font-size: .84rem; color: #4a5568; line-height: 1.55; }
+    .dp-shell .issue-list li::before { content: "▸"; position: absolute; left: 2px; color: #e53e3e; }
+    .dp-shell .issue-list li strong { color: var(--heading); }
+    .dp-shell .issue-list code { background: #edf2f7; padding: 1px 5px; border-radius: 3px; font-size: .85em; }
+
+    /* 修复建议卡片（Python 生成 .fix-card） */
+    .dp-shell .fix-card {
+      background: #f0faf5;
+      border-left: 4px solid var(--accent);
+      border-radius: 0 10px 10px 0;
+      padding: 13px 16px;
+      margin-top: 10px;
+    }
+    .dp-shell .fix-card h4 { font-size: .84rem; font-weight: 700; color: var(--heading); margin: 0 0 6px; }
+    .dp-shell .fix-card p, .dp-shell .fix-card li { font-size: .83rem; color: #2d4a3d; line-height: 1.6; margin: 0; }
+    .dp-shell .fix-card ul, .dp-shell .fix-card ol { padding-left: 18px; margin: 6px 0; }
+    .dp-shell .fix-card code { background: #d4efe4; padding: 1px 5px; border-radius: 4px; font-size: .85em; }
+
+    /* 代码块（Python 生成 .code-block） */
+    .dp-shell .code-block {
+      background: var(--code-bg); color: #e2e8f0; border-radius: 9px;
+      padding: 12px 16px; margin-top: 8px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: .78rem; line-height: 1.55; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+    }
+
+    /* 端点详情折叠（Python 生成 details.issue-fold） */
+    .dp-shell details.issue-fold {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: var(--shadow-sm);
+      margin-bottom: 12px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .dp-shell details.issue-fold > summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 13px 16px;
+      font-weight: 600;
+      font-size: .9rem;
+      color: var(--heading);
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid transparent;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transition: background .15s;
+    }
+    .dp-shell details.issue-fold > summary::-webkit-details-marker { display: none; }
+    .dp-shell details.issue-fold > summary::before { content: "▸"; font-size: 11px; color: var(--accent); transition: transform .15s; }
+    .dp-shell details.issue-fold[open] > summary::before { transform: rotate(90deg); }
+    .dp-shell details.issue-fold[open] > summary { border-bottom-color: var(--border); background: var(--accent-soft); }
+    .dp-shell .issue-fold-body { padding: 16px 20px; font-size: .85rem; color: #4a5568; }
+    .dp-shell .issue-fold-body p { margin: 6px 0; line-height: 1.65; }
+    .dp-shell .issue-fold-body strong { color: var(--heading); }
+
+    /* dp-fold（端点详情另一种渲染，Python 生成 details.dp-fold） */
+    .dp-shell .dp-folds { display: flex; flex-direction: column; gap: 10px; }
+    .dp-shell .dp-fold {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
+    }
+    .dp-shell .dp-fold > summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 13px 16px;
+      font-weight: 600;
+      font-size: .9rem;
+      color: var(--heading);
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .dp-shell .dp-fold > summary::-webkit-details-marker { display: none; }
+    .dp-shell .dp-fold > summary::before { content: "▸"; font-size: 11px; color: var(--accent); transition: transform .15s; }
+    .dp-shell .dp-fold[open] > summary::before { transform: rotate(90deg); }
+    .dp-shell .dp-fold-body { padding: 16px; font-size: .85rem; color: #4a5568; }
+
+    /* issue list（dp-fold 内部用） */
+    .dp-shell .dp-issue-list { list-style: none; margin: 8px 0 0; padding: 0; }
+    .dp-shell .dp-issue-list li { position: relative; padding: 3px 0 3px 18px; font-size: .84rem; color: #4a5568; }
+    .dp-shell .dp-issue-list li::before { content: "▸"; position: absolute; left: 2px; color: #e53e3e; }
+
+    /* dp-fix（dp-fold 内部修复建议） */
+    .dp-shell .dp-fix {
+      background: #f0faf5;
+      border-left: 4px solid var(--accent);
+      border-radius: 0 10px 10px 0;
+      padding: 12px 16px;
+      margin-top: 10px;
+    }
+    .dp-shell .dp-fix h4 { font-size: .84rem; font-weight: 700; color: var(--heading); margin: 0 0 6px; }
+    .dp-shell .dp-fix p, .dp-shell .dp-fix li { font-size: .83rem; color: #2d4a3d; line-height: 1.6; margin: 0; }
+    .dp-shell .dp-fix code { background: #d4efe4; padding: 1px 5px; border-radius: 4px; font-size: .85em; }
+
+    /* dp-code（dp-fold 内部代码块） */
+    .dp-shell .dp-code {
+      background: var(--code-bg); color: #e2e8f0; border-radius: 9px;
+      padding: 12px 16px; margin-top: 8px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: .78rem; line-height: 1.55; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+    }
+
+    /* 存量越权风险区块（dp-shell 内，全文扫描）*/
+    .dp-shell .legacy-privilege-block {
+      background: var(--minor-bg);
+      border: 1px solid var(--minor-border);
+      border-left: 4px solid var(--minor-strong);
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin-bottom: 16px;
+    }
+    .dp-shell .legacy-privilege-block .lp-title { font-size: 14px; font-weight: 700; color: var(--minor-strong); margin: 0 0 4px; }
+    .dp-shell .legacy-privilege-block .lp-subtitle { font-size: 12px; color: var(--minor-text); margin: 0 0 14px; }
+
+    .dp-shell .dp-footer {
+      text-align: center; font-size: .78rem; color: #a0aec0;
+      margin-top: 36px; padding-top: 20px; border-top: 1px solid var(--border);
+    }
+
+    /* ── 综合审查 Tab 权限接口表（privilege_endpoints 模式，在 dp-shell 外） ── */
+    .perm-table-wrap {
+      overflow-x: auto;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow-sm);
+    }
+    .perm-table {
+      width: 100%;
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+      font-size: .84rem;
+    }
+    .perm-table th {
+      background: #fafbfd !important;
+      color: var(--muted) !important;
+      padding: 10px 14px !important;
+      text-align: left !important;
+      font-size: .68rem !important;
+      font-weight: 700 !important;
+      text-transform: uppercase !important;
+      letter-spacing: .07em !important;
+      white-space: nowrap !important;
+      border-bottom: 1px solid var(--border) !important;
+    }
+    .perm-table td {
+      padding: 10px 14px !important;
+      border-bottom: 1px solid var(--border) !important;
+      vertical-align: top !important;
+      color: var(--text) !important;
+      background: transparent !important;
+    }
+    .perm-table tr:last-child td { border-bottom: none !important; }
+    .perm-table tr:hover td { background: #f8f9fb !important; }
+    .api-permission-block { overflow-x: auto; }
+
+    /* 存量越权风险区块（综合审查 Tab，全文扫描） */
+    .legacy-privilege-block {
+      background: var(--minor-bg);
+      border: 1px solid var(--minor-border);
+      border-left: 4px solid var(--minor-strong);
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin-bottom: 16px;
+    }
+    .legacy-privilege-block .lp-title { font-size: 14px; font-weight: 700; color: var(--minor-strong); margin: 0 0 4px; }
+    .legacy-privilege-block .lp-subtitle { font-size: 12px; color: var(--minor-text); margin: 0 0 14px; }
+    /* 根因聚合卡片 */
+    .cluster-card { border-left: 4px solid #6366f1; }
+    .cluster-badge {
+      background: #6366f1; color: #fff;
+      font-size: 11px; padding: 2px 8px;
+      border-radius: 10px; margin-left: 8px;
+      font-weight: 600; letter-spacing: .02em;
+    }
+    .cluster-locations { margin: 8px 0 4px; }
+    .cluster-locations > summary {
+      cursor: pointer; color: #6366f1;
+      font-size: 13px; font-weight: 500;
+    }
+    .cluster-locations > summary:hover { text-decoration: underline; }
+    .loc-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+    .loc-table th, .loc-table td {
+      padding: 4px 8px; border: 1px solid #e5e7eb; text-align: left;
+    }
+    .loc-table th { background: #f9fafb; font-weight: 600; }
+    .loc-file { font-family: monospace; color: #374151; }
+    .loc-line { text-align: center; color: #6b7280; white-space: nowrap; }
+    .loc-snippet { color: #4b5563; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* ── Charts Row (并列布局) ── */
+    .charts-row {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    /* ── Chart Section ── */
+    .chart-section {
+      flex: 1 1 0;
+      min-width: 0;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .chart-container {
+      position: relative;
+      height: 260px;
+    }
+
+    /* ── Top 3 Criticals in Hero ── */
+    .top-criticals {
+      position: relative;
+      margin-top: 18px;
+      padding-top: 16px;
+      border-top: 1px solid rgba(255,255,255,0.12);
+    }
+
+    .top-criticals h3 {
+      margin: 0 0 10px;
+      font-size: 13px;
+      font-weight: 700;
+      color: #ff9d94;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .top-criticals ul {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .top-criticals li {
+      font-size: 13px;
+      color: #d6dcea;
+      line-height: 1.5;
+      padding: 9px 12px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.09);
+      border-left: 3px solid #f2645a;
+      border-radius: 0 8px 8px 0;
+    }
+
+    .top-criticals li strong {
+      color: #ffe1dc;
+      font-weight: 700;
+      display: block;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12px;
+    }
+
+    .top-criticals[hidden] { display: none !important; }
+
+    .top-criticals .tc-desc {
+      display: block;
+      margin-top: 3px;
+    }
+
+    .top-criticals .tc-source {
+      display: inline-block;
+      margin-bottom: 4px;
+      padding: 1px 7px;
+      border-radius: 5px;
+      background: rgba(255,255,255,0.14);
+      color: #f4f7fb;
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    /* ── Export Dropdown ── */
+    .export-dropdown {
+      position: relative;
+    }
+
+    .export-menu {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 4px);
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+      min-width: 160px;
+      z-index: 100;
+      overflow: hidden;
+    }
+
+    .export-menu a {
+      display: block;
+      padding: 10px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--heading);
+      text-decoration: none;
+      transition: background 0.12s;
+    }
+
+    .export-menu a:hover {
+      background: #eef5f1;
+    }
+
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <h1>AI Code Review 报告</h1>
+      <p class="hero-meta">服务: oms | 生成时间: 2026-09-08 17:08:27</p>
+      <div class="top-criticals" id="top-criticals" hidden>
+        <h3>最需要先看的问题（Critical）</h3>
+        <ul id="top-criticals-list"></ul>
+      </div>
+    </header>
+
+    <div class="report-tabs" role="tablist" aria-label="报告视图">
+      <button type="button" role="tab" id="tab-general" aria-controls="panel-general" aria-selected="true" onclick="switchReportTab('general')">综合审查</button>
+      <button type="button" role="tab" id="tab-dp" aria-controls="panel-dp" aria-selected="false" onclick="switchReportTab('dp')">权限与业务规则</button>
+    </div>
+
+    <div id="panel-general" class="report-panel is-active" role="tabpanel" aria-labelledby="tab-general">
+    <section class="summary">
+      <h2>总体结论</h2>
+      <div id="summary-text" class="summary-body summary-preformatted"><div class="summary-condensed"><p>合并 <strong>9</strong> 个分片审查，共 <strong>21</strong> 条发现 （Critical 4 · Major 12 · Minor 5 · Info 0）。</p><p>其中 Critical 1 条、Major 2 条来自「牵连影响」（改动波及到的其他调用点），在下方「牵连影响」一节展开。</p><p>逐条明细见下方「按文件的审查发现」；接口与数据权限维度见顶部「权限与业务规则」页签。</p><details class="summary-raw-details"><summary>展开各分片原文结论</summary><pre class="summary-raw-pre"><strong>分片 1</strong>
+
+本分片发现 5 个问题，主要集中在 <code>changeCustomerSetLevel</code> 的并发/事务一致性，以及 <code>ArReceivableCustomerMappingRepositoryImpl</code> 新增原生 SQL 的字符串拼接实现。
+
+<strong>已审查无风险接口</strong>
+- POST <code>/admin/ar/receivable/customer-mapping/set-level/save</code>：新增了 <code>@RequirePermissions(&quot;customer-mapping:save&quot;)</code>，从 diff 可见接口具备显式权限注解，未见新增放开鉴权代码。
+- POST <code>/admin/ar/receivable/customer-mapping/list-by-customer</code>：新增了 <code>@RequirePermissions(&quot;customer-mapping:view&quot;)</code>，从 diff 可见接口具备显式权限注解，未见新增放开鉴权代码。
+
+接口覆盖率：清单共 2 个接口，已审查 2 个，0 个存在权限风险，2 个无风险，0 个待确认
+
+<strong>HTTP 入口清单（方法 + 路径）</strong>
+- POST <code>/admin/ar/receivable/customer-mapping/set-level/save</code>：与现有权限标签 <code>customer-mapping:save</code> 一致，本次 diff 未见新增越权放行；但服务层存在并发与事务一致性风险，可能导致已授权调用写出不一致数据。
+- POST <code>/admin/ar/receivable/customer-mapping/list-by-customer</code>：与现有权限标签 <code>customer-mapping:view</code> 一致，本次 diff 未见新增越权放行；查询逻辑未新增数据范围过滤代码，是否需要更细粒度范围控制从本分片无法进一步断言。
+
+<strong>分片 2</strong>
+
+发现 2 个权限问题，根因集中在新增客户映射接口只做了 <code>@RequirePermissions</code> 功能鉴权，但未把当前登录用户的数据范围约束下推到 <code>customerId</code> 级别；这会让有页面权限的账号直接按请求参数读取或修改任意客户的 AR mapping 配置。另有 1 个事务边界问题，可能在异常场景下造成客户级配置部分提交。
+
+<strong>已审查无风险接口</strong>
+- POST <code>/admin/ar/receivable/customer-mapping/set-level/save</code>：已存在 <code>@RequirePermissions(&quot;customer-mapping:save&quot;)</code>，功能级鉴权未被删除，但新增代码存在数据范围越权风险，已在 findings 报告。
+- POST <code>/admin/ar/receivable/customer-mapping/list-by-customer</code>：已存在 <code>@RequirePermissions(&quot;customer-mapping:view&quot;)</code>，功能级鉴权未被删除，但新增代码存在数据范围越权风险，已在 findings 报告。
+- POST <code>/admin/ar/receivable/customer-mapping/list</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/customer-mapping/save</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/customer-mapping/migrate</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/list</code>：实现未在本分片 diff 内，无法断言权限。
+- GET <code>/admin/ar/receivable/{id}</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/create</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/confirm</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/commercial-confirm</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/commercial-deny</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/cancel</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/paid</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/deduct</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/payment/update</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/payment/delete</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/deduct/update</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/deduct/delete</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/save</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/invoice/update</code>：实现未在本分片 diff 内，无法断言权限。
+- GET <code>/admin/ar/receivable/netSuitCustomer/list</code>：实现未在本分片 diff 内，无法断言权限。
+- GET <code>/admin/ar/receivable/netSuitCustomer/{netSuitCustomerId}/customers</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/data/migrateBalance/all</code>：本分片仅看到 <code>MigrationService</code> 内部新增同步逻辑，未见新增或削弱鉴权代码，需人工结合 <code>DataController</code> 注解确认。
+- POST <code>/admin/data/migrateCustomer</code>：本分片仅看到 <code>MigrationService</code> 内部新增同步逻辑，未见新增或削弱鉴权代码，需人工结合 <code>DataController</code> 注解确认。
+- POST <code>/admin/data/migrateExistingAccountName</code>：本分片仅看到 <code>MigrationService</code> 内部新增同步逻辑，未见新增或削弱鉴权代码，需人工结合 <code>DataController</code> 注解确认。
+- POST <code>/admin/data/migrateRateConfig</code>：本分片仅看到 <code>MigrationService</code> 内部新增同步逻辑，未见新增或削弱鉴权代码，需人工结合 <code>DataController</code> 注解确认。
+
+接口覆盖率：清单共 28 个接口，已审查 28 个，2 个存在权限风险，22 个无风险，4 个待确认。
+
+<strong>HTTP 入口清单（方法 + 路径）</strong>
+- POST <code>/admin/ar/receivable/customer-mapping/set-level/save</code>：存在新增数据范围越权修改风险；虽然有 <code>customer-mapping:save</code>，但本分片代码未校验 <code>customerId</code> 归属。
+- POST <code>/admin/ar/receivable/customer-mapping/list-by-customer</code>：存在新增数据范围越权读取风险；虽然有 <code>customer-mapping:view</code>，但本分片代码未按当前用户限制可见客户范围。
+- POST <code>/admin/ar/receivable/customer-mapping/list</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/customer-mapping/save</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/customer-mapping/migrate</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/list</code>：实现未在本分片 diff 内，无法断言权限。
+- GET <code>/admin/ar/receivable/{id}</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/create</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/confirm</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/commercial-confirm</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/commercial-deny</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/cancel</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/paid</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/deduct</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/payment/update</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/payment/delete</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/deduct/update</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/deduct/delete</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/save</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/invoice/update</code>：实现未在本分片 diff 内，无法断言权限。
+- GET <code>/admin/ar/receivable/netSuitCustomer/list</code>：实现未在本分片 diff 内，无法断言权限。
+- GET <code>/admin/ar/receivable/netSuitCustomer/{netSuitCustomerId}/customers</code>：实现未在本分片 diff 内，无法断言权限。
+- POST <code>/admin/data/migrateBalance/all</code>：本分片未见新增权限放宽代码，需人工结合 Controller 注解确认。
+- POST <code>/admin/data/migrateCustomer</code>：本分片未见新增权限放宽代码，需人工结合 Controller 注解确认。
+- POST <code>/admin/data/migrateExistingAccountName</code>：本分片未见新增权限放宽代码，需人工结合 Controller 注解确认。
+- POST <code>/admin/data/migrateRateConfig</code>：本分片未见新增权限放宽代码，需人工结合 Controller 注解确认。
+
+<strong>分片 3</strong>
+
+本分片新增了 2 个 HTTP 入口，鉴权注解均已存在，未看到新增的未授权访问入口；但服务层存在并发一致性与事务回滚边界风险，可能把客户 Set Level 与映射明细写成不一致状态。
+
+<strong>已审查无风险接口</strong>
+- POST /admin/ar/receivable/customer-mapping/set-level/save：<code>changeCustomerSetLevel()</code> 新增了 <code>@RequirePermissions(&quot;customer-mapping:save&quot;)</code>，从 diff 可见未出现放宽鉴权或移除权限校验的变更；但数据范围是否还需按组织/客户归属限制，当前分片未提供 role_data，需业务侧继续确认。
+- POST /admin/ar/receivable/customer-mapping/list-by-customer：<code>queryCustomerMappingsByCustomer()</code> 新增了 <code>@RequirePermissions(&quot;customer-mapping:view&quot;)</code>，从 diff 可见未出现匿名访问或显式放宽权限的变更；但是否需要额外的数据范围过滤，当前分片无法从 diff 断言。
+
+接口覆盖率：清单共 2 个接口，已审查 2 个，0 个存在权限风险，2 个无风险，0 个待确认
+
+<strong>HTTP 入口清单（方法 + 路径）</strong>
+- POST /admin/ar/receivable/customer-mapping/set-level/save：有 <code>@RequirePermissions(&quot;customer-mapping:save&quot;)</code>，本次 diff 未削弱鉴权，未见新增权限风险；数据范围控制实现未在本分片 diff 中展开，无法进一步断言。
+- POST /admin/ar/receivable/customer-mapping/list-by-customer：有 <code>@RequirePermissions(&quot;customer-mapping:view&quot;)</code>，本次 diff 未削弱鉴权，未见新增权限风险；数据范围控制实现未在本分片 diff 中展开，无法进一步断言。
+
+<strong>分片 4</strong>
+
+本分片仅包含 <code>oms-facade/src/main/java/io/speedx/oms/facade/model/dto/ArReceivableCustomerMappingGroupDto.java</code> 的新增 DTO 定义；从新增行看未引入 SQL 拼接、鉴权放行、敏感日志、反序列化、事务/并发或 API 破坏性安全问题。该 DTO 只是数据承载对象，当前 diff 内也未出现 HTTP 映射或权限注解变更，因此本分片无可确认的新增权限风险。
+
+<strong>分片 5</strong>
+
+本分片仅看到新增枚举 <code>oms-facade/src/main/java/io/speedx/oms/facade/model/enums/SetLevelEnum.java</code>，未出现 HTTP 映射、鉴权注解、SQL、事务、日志、外部调用或持久化写入等安全敏感变更；基于当前 diff，未发现新增安全问题。
+
+HTTP 入口清单（方法 + 路径）
+- 本分片 diff 未出现 <code>@GetMapping</code>、<code>@PostMapping</code>、<code>@PutMapping</code>、<code>@DeleteMapping</code>、<code>@PatchMapping</code> 或带路径的 <code>@RequestMapping</code> 新增/修改行，因此无可在本分片内完成权限断言的新增 HTTP 入口。全局端点清单中涉及 <code>ArReceivableService</code> 与 <code>MigrationService</code> 的接口实现未在本分片 diff 内展开，无法仅依据当前分片对其权限与数据范围行为作新增风险判断。
+
+<strong>分片 6</strong>
+
+本分片仅看到 <code>ChangeCustomerSetLevelReq</code> 新增请求模型，未发现 SQL 注入、鉴权注解放开、敏感信息泄露等直接高危问题；但该请求对象把多个关键字段的必填/忽略规则仅写在 Swagger 文档里，缺少实际参数校验，存在把非法状态放入后续 <code>ArReceivableService.changeCustomerSetLevel()</code> 的输入完整性风险。
+
+HTTP 入口清单（方法 + 路径）
+- POST <code>/admin/ar/receivable/customer-mapping/set-level/save</code>：实现未在本分片/diff 内，无法断言权限；从本分片可确认其新增请求模型 <code>ChangeCustomerSetLevelReq</code> 存在输入约束缺失，需结合 <code>ArReceivableController.changeCustomerSetLevel()</code> 与 <code>ArReceivableService.changeCustomerSetLevel()</code> 继续核查是否有鉴权与数据范围过滤。
+
+<strong>分片 7</strong>
+
+本分片仅看到新增实体 <code>oms-infrastructure/src/main/java/io/speedx/oms/infrastructure/db/finance/po/ArReceivableCustomerSetting.java</code> 的 diff。基于当前可见新增行，未发现可直接落到该 diff 行号上的 SQL 注入、越权放行、敏感信息泄露、事务/并发缺陷或明显 API 契约安全问题；<code>@Where(clause = &quot;deleted = 0&quot;)</code> 与按 <code>id</code> 软删除的 <code>@SQLDelete</code> 组合在当前上下文下未见新增安全风险。
+
+HTTP 入口清单（方法 + 路径）
+- 本分片可参考的全局入口中，<code>ArReceivableService.changeCustomerSetLevel()</code> 对应 <code>POST /admin/ar/receivable/customer-mapping/set-level/save</code>，但其 Controller/Service 实现代码未出现在当前 diff，无法断言权限注解、角色限制或数据范围过滤是否正确。
+- 其余全局列出的 <code>ArReceivableController</code> 与 <code>MigrationService</code> 入口同样未在当前 diff 中出现新增/修改的映射或鉴权代码，按本次审查约束无法对其权限行为下结论，也不存在可据此落地到本分片新增行号的权限 finding。
+
+<strong>分片 8</strong>
+
+本分片新增的主要安全问题集中在 <code>ArReceivableCustomerMappingRepositoryImpl</code>：两处原生 SQL 都采用了字符串拼接构造查询结构，违反禁止 SQL 拼接的基线要求，后续维护时极易演变为真实注入点。其余本分片 diff 未出现新增 HTTP 映射、权限注解变更或数据范围过滤削弱代码，因此无法从本分片直接断言新增越权问题；全局端点清单中涉及 <code>ArReceivableService</code>、<code>MigrationService</code> 的 HTTP 入口实现不在本分片 diff 内，权限行为需在对应分片继续核对。
+
+<strong>分片 9</strong>
+
+本分片提供的 diff 主要是 openspec 文档变更，未包含 <code>ArReceivableController</code>、<code>ArReceivableService</code>、<code>ArReceivableCustomerMappingRepositoryImpl</code> 等 Java 实现新增行的实际代码，因此无法基于“只审查 + 行”的约束，对新增接口实现做可落到具体行号的安全问题判定。就当前可见 diff 而言，未发现可直接定位到新增/修改代码行的安全缺陷。
+
+HTTP 入口清单（方法 + 路径）
+- POST <code>/admin/ar/receivable/customer-mapping/list-by-customer</code>：仅在 <code>proposal.md</code> / <code>tasks.md</code> / <code>spec.md</code> 中声明，控制器实现新增行未出现在本分片 diff 内，无法断言权限注解、数据范围过滤是否正确；当前文档要求复用 <code>customer-mapping:view</code>，但这不是代码证据。
+- POST <code>/admin/ar/receivable/customer-mapping/set-level/save</code>：仅在 <code>proposal.md</code> / <code>tasks.md</code> 中声明，控制器实现新增行未出现在本分片 diff 内，无法断言权限注解、是否存在越权修改风险。
+- POST <code>/admin/ar/receivable/customer-mapping/list</code>：文档明确要求保持不变，但现有实现不在本分片 diff 内，无法断言权限。
+- POST <code>/admin/ar/receivable/customer-mapping/save</code>：文档明确要求保持不变，但现有实现不在本分片 diff 内，无法断言权限。
+- <code>/admin/ar/receivable/customer-mapping/export</code>：文档明确要求保持不变，但现有实现不在本分片 diff 内，无法断言权限。</pre></details></div></div>
+      <div class="filter-row">
+        <span class="filter-label">点击筛选:</span>
+        <div class="chips">
+          <span class="chip critical filter-chip" data-filter="critical" onclick="filterBySeverity(this)">Critical: 4</span>
+          <span class="chip major filter-chip" data-filter="major" onclick="filterBySeverity(this)">Major: 12</span>
+          <span class="chip minor filter-chip" data-filter="minor" onclick="filterBySeverity(this)">Minor: 5</span>
+          <span class="chip info filter-chip" data-filter="info" onclick="filterBySeverity(this)">Info: 0</span>
+          <span class="chip">Total: 21</span>
+        </div>
+        <div class="chips-impact-note">牵连影响另有 156 条判定为安全，不计入以上统计</div>
+      </div>
+    </section>
+
+    <div class="charts-row">
+      <div class="chart-section" id="chart-section">
+        <h3 class="section-title">问题分布</h3>
+        <div class="chart-container">
+          <canvas id="categoryChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div id="filter-hint">
+      筛选中: <strong id="filter-hint-label"></strong>，仅显示对应问题
+      <span class="clear-filter" onclick="clearFilter()">清除筛选</span>
+    </div>
+
+    <div class="findings-toolbar" id="findings-toolbar" style="display: none;">
+      <!-- 筛选按钮已下线：与上方「总体结论」区的 filter-row（Critical/Major/Minor/Info 计数
+           chip）功能重复，且从未挂过点击事件，是从未生效的死代码（用户反馈"这个筛选多余了"）。
+           筛选统一走上方 filter-row 的 filterBySeverity()，这里只保留搜索 + 导出。 -->
+      <input type="text" class="findings-search" id="findings-search" placeholder="搜索文件/描述…">
+      <div class="export-dropdown">
+        <button class="toolbar-btn" id="export-btn">导出 ▼</button>
+        <div class="export-menu" id="export-menu" style="display:none;">
+          <a href="#" onclick="exportJira()">导出为 Jira</a>
+          <a href="#" onclick="exportExcel()">导出为 Excel</a>
+          <a href="#" onclick="exportCsv()">导出为 CSV</a>
+        </div>
+      </div>
+    </div>
+
+    
+<style>
+.impact-section { margin: 16px 0 24px; }
+.impact-section .section-title { font-size: 18px; font-weight: 700; margin-bottom: 10px; }
+/* 颜色直接写死（不用 var(--minor-*)）：既往回归测过"这份样式表里一次都不能
+   出现 --minor-bg 这个变量名"（NEEDS_HUMAN 不该复用 minor 琥珀色，见下方
+   impact-stat.impact-needs-human 的注释），这里的抽样提示条语义完全不同
+   （跟严重度无关，只是"这批数据是抽样的"），但同一份样式表里带上这个变量
+   名字本身就会让那条回归测试的"零出现"断言失去意义。 */
+.impact-sample-banner {
+  background: #fdf7e0; color: #8a6208;
+  border: 1px solid #f1e096;
+  border-radius: 8px; padding: 8px 14px; font-size: 13px; font-weight: 600;
+  margin-bottom: 10px;
+}
+.impact-stats-banner { margin-bottom: 10px; }
+.impact-stat {
+  display: inline-block; padding: 4px 11px; border-radius: 8px; font-size: 12px;
+  font-weight: 700; margin-right: 8px;
+}
+.impact-stat.impact-risk { background: var(--critical-bg, #fdeceb); color: var(--critical-text, #b3261e); }
+/* NEEDS_HUMAN 改用 info 蓝（原用 minor 琥珀色，与"一般问题"严重度语义撞车——
+   需人工核实 ≠ 一个确定的低危问题，是"不知道，人来判断"，语义上更接近
+   info 的"仅供参考/待确认"，用户反馈"两套配色打架"实测已改） */
+.impact-stat.impact-needs-human { background: var(--info-bg, #eaf1fd); color: var(--info-text, #23509c); }
+.impact-stat.impact-safe { background: var(--safe-bg, #e8f6ee); color: var(--safe-text, #1a7a4c); }
+.impact-stat.impact-total { background: var(--chip-bg, #eef0f5); color: var(--muted, #667085); }
+.impact-section-note {
+  font-size: 13px; color: #666; line-height: 1.75; margin: 0 0 12px;
+  padding: 11px 14px; background: #f7f9fa; border-radius: 8px;
+}
+.impact-section-note p { margin: 0 0 7px; }
+.impact-section-note p:last-child { margin-bottom: 0; }
+.impact-section-note strong { color: #333; }
+.impact-note-legend {
+  margin: 0 0 8px; padding-left: 18px; list-style: none;
+}
+.impact-note-legend li { margin-bottom: 3px; }
+.impact-note-legend li::before {
+  content: "·"; margin-right: 6px; color: #999; font-weight: 700;
+}
+.impact-ratio-alert {
+  background: var(--major-bg, #fdf1e3); color: var(--major-text, #a85311);
+  border: 1px solid var(--major-border, #f4d19d); border-radius: 8px; padding: 8px 14px;
+  font-size: 13px; margin-bottom: 10px;
+}
+.impact-group { margin-bottom: 22px; }
+.impact-group-title {
+  font-size: 16px; font-weight: 700; margin: 14px 0 10px; color: #333;
+  padding-bottom: 6px; border-bottom: 1px solid #e5e5e5;
+}
+.impact-empty { color: #666; font-size: 13px; padding: 8px 0; }
+/* 卡片间距加大 + 阴影，强化"一张卡是一个独立问题"的边界感（用户反馈①） */
+.impact-risk-list { display: flex; flex-direction: column; gap: 16px; }
+.impact-card {
+  border: 1px solid var(--border, #e3e6ec); border-left: 4px solid #ccc; border-radius: 12px;
+  padding: 14px 16px; background: #fff; margin-bottom: 16px;
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(16,24,40,.06));
+}
+.impact-card.impact-risk { border-left-color: var(--critical-strong, #d1291f); background: linear-gradient(90deg, var(--critical-bg, #fdeceb) 0%, #fff 14px); }
+.impact-card.impact-needs-human { border-left-color: var(--info-strong, #2f66c9); background: linear-gradient(90deg, var(--info-bg, #eaf1fd) 0%, #fff 14px); }
+.impact-card.impact-safe { border-left-color: var(--safe-text, #1a7a4c); background: linear-gradient(90deg, var(--safe-bg, #e8f6ee) 0%, #fff 14px); }
+.impact-card-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+  padding-bottom: 8px; border-bottom: 1px solid #f0f0f0;
+}
+.impact-badge {
+  font-size: 11.5px; font-weight: 800; padding: 4px 10px; border-radius: 7px;
+  text-transform: none; border: 1px solid transparent;
+}
+/* 加边框跟主报告 .sev-badge 视觉语言对齐（用户反馈"两种报告风格不统一"） */
+.impact-badge.impact-risk { background: var(--critical-bg, #fdeceb); color: var(--critical-text, #b3261e); border-color: var(--critical-border, #f3b7b2); }
+.impact-badge.impact-needs-human { background: var(--info-bg, #eaf1fd); color: var(--info-text, #23509c); border-color: var(--info-border, #c0d6f6); }
+.impact-badge.impact-safe { background: var(--safe-bg, #e8f6ee); color: var(--safe-text, #1a7a4c); border-color: var(--safe-border, #aee3c4); }
+.impact-index { font-size: 12px; color: #888; }
+.impact-source-tag { font-size: 12.5px; color: #555; background: #f2f2f2; border-radius: 4px; padding: 2px 7px; }
+/* 字段之间用细分隔线拉开节奏，避免"挤成一坨"（用户反馈①的卡内延伸） */
+.impact-field { margin: 0; padding: 8px 0; font-size: 14px; }
+.impact-field + .impact-field { border-top: 1px dashed #ececec; }
+.impact-field-label {
+  font-weight: 700; color: #555; font-size: 12px; margin-bottom: 4px;
+  text-transform: uppercase; letter-spacing: .02em;
+}
+.impact-field p { margin: 0; }
+/* “怎么办”做成醒目的行动召唤条，呼应主报告 .fix-card/.dp-fix 的视觉语言，
+   同时用底色块把它和上面的说明性文字区分开——减轻“每张卡都在念同一句话”
+   的观感（用户反馈④之一：内容本身仍是模板句，属内容生成侧，此处只做视觉区隔）*/
+.impact-action {
+  background: #f3faf7; border-left: 3px solid var(--accent, #0f766e);
+  border-radius: 0 8px 8px 0; padding: 8px 12px; color: #2d4a3d;
+}
+/* 代码上下文块：文件名/行号做成编辑器 tab 条，深色代码正文 + 高亮目标行，
+   解决用户反馈②（file:line 太不显眼）与③（无上下文、无高亮） */
+.impact-code-tab {
+  display: flex; align-items: baseline; gap: 10px; background: #1a2438;
+  color: #cbd5e0; font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12px; padding: 7px 13px; border-radius: 8px 8px 0 0; margin-top: 8px;
+}
+.impact-code-tab-path { font-weight: 600; color: #e2e8f0; word-break: break-all; }
+.impact-code-tab-line { color: #7dd3e8; white-space: nowrap; }
+.impact-code-body {
+  background: var(--code-bg, #10182b); border-radius: 0 0 8px 8px; padding: 7px 0;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12.5px; line-height: 1.65; overflow-x: auto;
+}
+.impact-code-line { display: flex; padding: 0 12px; white-space: pre; }
+.impact-code-no {
+  flex: 0 0 auto; width: 2.6em; text-align: right; margin-right: 12px;
+  color: #718096; user-select: none;
+}
+.impact-code-text { color: #e2e8f0; }
+.impact-code-line-hl {
+  background: rgba(214, 158, 46, .18); border-left: 3px solid #d69e2e;
+  padding-left: 9px; margin-left: -3px;
+}
+.impact-code-line-hl .impact-code-no { color: #f6c453; font-weight: 700; }
+.impact-code-line-hl .impact-code-text { color: #fdf6e3; }
+/* quote 单行降级展示（拿不到源文件时的兜底，见 render_impact_section.py 说明） */
+.impact-evidence {
+  background: var(--code-bg, #10182b); color: #e2e8f0; border-radius: 0 0 8px 8px;
+  padding: 9px 13px; font-size: 12.5px; overflow-x: auto; margin: 0;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+/* 折叠区统一加 ▸ 箭头指示，跟主报告其它折叠区（issue-fold/dp-fold）一致，
+   修掉「牵连影响」这节此前唯独没有展开箭头的不一致（用户反馈④之一） */
+.impact-needs-human-fold, .impact-merged-details { margin-top: 10px; }
+.impact-needs-human-fold summary, .impact-merged-details summary {
+  cursor: pointer; font-size: 13.5px; font-weight: 600; color: #555; padding: 6px 0;
+  list-style: none; display: flex; align-items: center; gap: 6px;
+}
+.impact-needs-human-fold summary::-webkit-details-marker,
+.impact-merged-details summary::-webkit-details-marker { display: none; }
+.impact-needs-human-fold summary::before,
+.impact-merged-details summary::before {
+  content: "▸"; font-size: 11px; color: var(--accent, #0f766e); transition: transform .15s;
+}
+.impact-needs-human-fold[open] > summary::before,
+.impact-merged-details[open] > summary::before { transform: rotate(90deg); }
+/* 判定为安全的调用点不再逐条/逐组展示（2026-09-02），.impact-safe-fold 这
+   个折叠 class 已经没有任何 HTML 元素在用，改用不带交互的 .impact-safe-note
+   脚注段落——下面这条规则保留，上面折叠相关的 .impact-safe-fold 选择器已
+   随之删除（P3，code-reviewer 复核指出的死 CSS）。 */
+.impact-safe-note { color: #777; font-size: 12.5px; }
+.impact-merged-row { border-top: 1px dashed #e2e2e2; padding: 10px 0; font-size: 14px; }
+.impact-merged-row-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+</style>
+<section class="impact-section"><h2 class="section-title">牵连影响</h2><div class="impact-section-note"><p><strong>这一节回答的问题：</strong>这次改动被别的代码调用的那些地方，会不会被改坏。跟上面「按文件的审查发现」（这次写的代码本身对不对）是两回事，<strong>两边的数字不能相加</strong>。</p><ul class="impact-note-legend"><li><strong>Critical</strong>＝建议关注，这个调用点可能被改坏了</li><li><strong>Major</strong>＝AI 拿不准，需要人看一眼</li><li><strong>Info</strong>＝已排查，确认没影响</li></ul><p><strong>这次的数字：</strong>一共挖到 159 个调用点，其中 1 个建议关注，来自 1 处真正被改动的方法或字段（同一处改动的每个调用方分开列）。</p></div><div class="impact-stats-banner"><span class="impact-stat impact-risk">Critical · 建议关注 1（1 处改动）</span><span class="impact-stat impact-needs-human">Major · 需人工核实 2（2 处改动）</span><span class="impact-stat impact-safe">Info · 已排查安全 156</span><span class="impact-stat impact-total">Total 159</span></div><div class="impact-group"><h3 class="impact-group-title">接口层功能（Controller）</h3><details class="impact-needs-human-fold" open="open"><summary>Major · 需人工核实 · 2 处</summary><div class="impact-card impact-needs-human" data-impact-level="NEEDS_HUMAN"><div class="impact-card-header"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span class="impact-index">#6</span><span class="impact-source-tag">方法调用链核对</span></div><div class="impact-field"><div class="impact-field-label">场景</div><p>方法 ArReceivableService.migrateCustomerMappings，在 ArReceivableController.migrateCustomerMappings() 中被调用（接口层功能（Controller））</p></div><div class="impact-field"><div class="impact-field-label">代码现状</div><div class="impact-code-tab"><span class="impact-code-tab-path">oms-facade-impl/src/main/java/io/speedx/oms/facade/impl/web/admin/ArReceivableController.java</span><span class="impact-code-tab-line">第 334 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">331</span><span class="impact-code-text">    public BaseResponse&lt;CustomerMappingMigrationResultDto&gt; migrateCustomerMappings(</span></div><div class="impact-code-line"><span class="impact-code-no">332</span><span class="impact-code-text">            @Valid @RequestBody MigrateCustomerMappingReq request) {</span></div><div class="impact-code-line"><span class="impact-code-no">333</span><span class="impact-code-text">        log.info(&quot;Migrating customer mappings with request: {}&quot;, request);</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">334</span><span class="impact-code-text">        return BaseResponse.success(arReceivableService.migrateCustomerMappings(request));</span></div><div class="impact-code-line"><span class="impact-code-no">335</span><span class="impact-code-text">    }</span></div><div class="impact-code-line"><span class="impact-code-no">336</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">337</span><span class="impact-code-text">    @ApiOperation(&quot;Save AR receivable facility mapping&quot;)</span></div></div></div><div class="impact-field"><div class="impact-field-label">判定依据</div><p>改动实体命中了“同表多入口事实”：ArReceivableService.migrateCustomerMappings 写 ar_receivable_customer_mapping，而全仓还有 ArReceivableService.saveCustomerMapping、ArReceivableService.syncSoldToMappingRows、MigrationService.initializeCustomerMapping 等其它写同表入口；仅凭给定 diff 与这个控制器转调代码，无法确认 migrateCustomerMappings 是否需要与这些入口同步保持 sold-to / pickup 分层语义一致，需人工结合需求与数据迁移设计确认。</p></div><div class="impact-field"><div class="impact-field-label">会出什么事</div><p>（未说明业务后果）</p></div><div class="impact-field"><div class="impact-field-label">怎么办</div><p class="impact-action">需人工核实：判定依据里的假设是否成立</p></div></div><div class="impact-card impact-needs-human" data-impact-level="NEEDS_HUMAN"><div class="impact-card-header"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span class="impact-index">#12</span><span class="impact-source-tag">方法调用链核对</span></div><div class="impact-field"><div class="impact-field-label">场景</div><p>方法 MigrationService.migrateExistingAccountName，在 DataController.migrateExistingAccountName() 中被调用（接口层功能（Controller））</p></div><div class="impact-field"><div class="impact-field-label">代码现状</div><div class="impact-code-tab"><span class="impact-code-tab-path">oms-domain/src/main/java/io/speedx/oms/domain/service/comparetool/DataController.java</span><span class="impact-code-tab-line">第 114 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">111</span><span class="impact-code-text">    @PostMapping(&quot;migrateExistingAccountName&quot;)</span></div><div class="impact-code-line"><span class="impact-code-no">112</span><span class="impact-code-text">    public String migrateExistingAccountName() {</span></div><div class="impact-code-line"><span class="impact-code-no">113</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">114</span><span class="impact-code-text">        migrationService.migrateExistingAccountName();</span></div><div class="impact-code-line"><span class="impact-code-no">115</span><span class="impact-code-text">        return &quot;ok&quot;;</span></div><div class="impact-code-line"><span class="impact-code-no">116</span><span class="impact-code-text">    }</span></div><div class="impact-code-line"><span class="impact-code-no">117</span><span class="impact-code-text">&nbsp;</span></div></div></div><div class="impact-field"><div class="impact-field-label">判定依据</div><p>改动方法新增了创建 ArReceivableCustomerMapping 时按 ArReceivableCustomerSetting.setLevel 区分 SOLD_TO/PICKUP 的继承逻辑；该行为是否会影响这个 DataController 入口，取决于 migrateExistingAccountName 的方法体里是否实际走到这段创建 mapping 的路径，以及运行时 customer 的 ArReceivableCustomerSetting 数据。题目未提供 migrateExistingAccountName 方法体，且改动实体附带“同表多入口事实”，无法仅凭给定片段确认这个入口是否需要同步调整或是否正是需求预期变更。</p></div><div class="impact-field"><div class="impact-field-label">会出什么事</div><p>（未说明业务后果）</p></div><div class="impact-field"><div class="impact-field-label">怎么办</div><p class="impact-action">需人工核实：判定依据里的假设是否成立</p></div></div></details><p class="impact-safe-note">另有 3 处已排查判定安全，不在此列出；完整判定记录见同目录下的 <a href="impact_judgements.json" target="_blank">impact_judgements.json</a>（构建产物原始数据）。</p></div><div class="impact-group"><h3 class="impact-group-title">未归类</h3><div class="impact-risk-list"><div class="impact-card impact-merged-card impact-risk" data-impact-level="RISK"><div class="impact-card-header"><span class="impact-badge impact-risk">Critical · 有风险</span><span class="impact-index">#22</span><span class="impact-source-tag">字段对账 · 同名归并</span></div><div class="impact-field"><div class="impact-field-label">场景</div><p>字段 customerProjectNamingCode（2 个同名候选类）——该符号名在多个类中重复声明，无法确定某条消费具体对应哪一个，候选类：ArReceivableCustomerMappingGroupDto、ChangeCustomerSetLevelReq</p></div><details class="impact-merged-details" open="open"><summary>展开查看全部 16 个消费点判定</summary><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-risk">Critical · 有风险</span><span>在 ArReceivableService.migrateCustomerMappings() 中被读取（未归类）</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">oms-domain/src/main/java/io/speedx/oms/domain/service/ArReceivableService.java</span><span class="impact-code-tab-line">第 2415 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">2412</span><span class="impact-code-text">                    newMapping.setPickupAccountId(account.getId());</span></div><div class="impact-code-line"><span class="impact-code-no">2413</span><span class="impact-code-text">                    newMapping.setNetSuitCustomerId(originalMapping.getNetSuitCustomerId());</span></div><div class="impact-code-line"><span class="impact-code-no">2414</span><span class="impact-code-text">                    newMapping.setNetSuitCustomerCode(originalMapping.getNetSuitCustomerCode());</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">2415</span><span class="impact-code-text">                    newMapping.setCustomerProjectNamingCode(originalMapping.getNetSuitCustomerCode());</span></div><div class="impact-code-line"><span class="impact-code-no">2416</span><span class="impact-code-text">                    newMapping.setRemark(originalMapping.getRemark());</span></div><div class="impact-code-line"><span class="impact-code-no">2417</span><span class="impact-code-text">                    // Use original settlementType if present, otherwise default to A_SCAN</span></div><div class="impact-code-line"><span class="impact-code-no">2418</span><span class="impact-code-text">                    newMapping.setSettlementType(originalMapping.getSettlementType() != null </span></div></div><p><span class="impact-field-label">判定依据</span>改动实体最可能关联到 customerProjectNamingCode 语义本身；该处静态代码直接把 customerProjectNamingCode 赋值为 originalMapping.getNetSuitCustomerCode()，与字段语义不一致，且未见同步适配。</p><p><span class="impact-field-label">会出什么事</span>执行 migrateCustomerMappings 时，新生成的 pickup mapping 会把 Customer Project Naming Code 错写成 NetSuite Customer Code，导致后续依赖正确 Customer Project Naming Code 的校验或下游业务拿到错误项目命名编码。</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需评估此改动对『字段 customerProjectNamingCode（2 个同名候选类）』的影响，建议实际验证消费点行为后再上线</span></p></div><p class="impact-safe-note">另有 15 处已排查判定安全，不在此列出；完整判定记录见同目录下的 <a href="impact_judgements.json" target="_blank">impact_judgements.json</a>（构建产物原始数据）。</p></details></div></div><p class="impact-safe-note">另有 20 处已排查判定安全，不在此列出；完整判定记录见同目录下的 <a href="impact_judgements.json" target="_blank">impact_judgements.json</a>（构建产物原始数据）。</p></div></section><section class="endpoint-coverage"><h2 class="section-title">接口审查覆盖清单</h2><p class="ec-note">本次改动涉及 26 个接口，其中 2 个有风险、24 个没敢下结论、0 个已确认没问题。这张表是把各段审查结论逐个接口对账后汇总的，原文见「总体结论」里的折叠框。</p><p class="ec-note ec-note-warn">其中 <strong>24 个接口所有分片都没敢下结论</strong>（多为该接口实现没进本次改动、AI 看不到完整代码）。这几个接口的权限问题<strong>不会</strong>出现在上面的问题列表里，需要人工过一遍。</p><div class="ec-table-wrap"><table class="ec-table"><thead><tr><th>方法</th><th>接口</th><th>结论</th><th>依据</th></tr></thead><tbody><tr class="ec-risk"><td class="ec-method">POST</td><td class="ec-path"><code>/admin/ar/receivable/customer-mapping/list-by-customer</code></td><td class="ec-verdict"><span class="ec-badge ec-risk">有风险</span></td><td class="ec-reason">存在新增数据范围越权读取风险；虽然有 <code>customer-mapping:view</code>，但本段代码未按当前用户限制可见客户范围。</td></tr><tr class="ec-risk"><td class="ec-method">POST</td><td class="ec-path"><code>/admin/ar/receivable/customer-mapping/set-level/save</code></td><td class="ec-verdict"><span class="ec-badge ec-risk">有风险</span></td><td class="ec-reason">存在新增数据范围越权修改风险；虽然有 <code>customer-mapping:save</code>，但本段代码未校验 <code>customerId</code> 归属。</td></tr><tr class="ec-pending"><td class="ec-method">POST</td><td class="ec-path"><code>/admin/ar/receivable/cancel</code></td><td class="ec-verdict"><span class="ec-badge ec-pending">没敢下结论</span></td><td class="ec-reason">实现未在本段 diff 内，无法断言权限。</td></tr><tr class="ec-pending"><td class="ec-method">POST</td><td class="ec-path"><code>/admin/ar/receivable/commercial-confirm</code></td><td class="ec-verdict"><span class="ec-badge ec-pending">没敢下结论</span></td><td class="ec-reason">实现未在本段 diff 内，无法断言权限。</td></tr><tr class="ec-pending"><td class="ec-method">POST</td><td class="ec-path"><code>/admin/ar/receivable/commercial-deny</code></td><td class="ec-verdict"><span class="ec-badge ec-pending">没敢下结论</span></td><td class="ec-reason">实现未在本段 diff 内，无法断言权限。</td></tr><tr class="ec-pending"><td class="ec-method">POST</td><td class="ec-path"><code>/admin/ar/receivable/confirm</code></td><td class="ec-verdict"><span class="ec-badge ec-pending">没敢下结论</span></td><td class="ec-reason">实现未在本段 diff 内，无法断言权限。</td></tr><tr class="ec-pending"><td class="ec-method">POST</td><td class="ec-path"><code>/admin/ar/receivable/create</code></td><td class="ec-verdict"><span class="ec-badge ec-pending">没敢下结论</span></td><td class="ec-reason">实现未在本段 diff 内，无法断言权限。</td></tr><tr class="ec-pending"><td class="ec-method">POST</td><td class="ec-path"><code>/admin/ar/receivable/customer-mapping/list</code></td><td class="ec-verdict"><span class="ec-badge ec-pending">没敢下结论</span></td><td class="ec-reason">文档明确要求保持不变，但现有实现不在本段 diff 内，无法断言权限。</td></tr><tr class="ec-pending"><td class="ec-method">POST</td><td class="ec-path"><code>/admin/ar/receivable/customer-mapping/migrate</code></td><td class="ec-verdict"><span class="ec-badge ec-pending">没敢下结论</span></td><td class="ec-reason">实现未在本段 diff 内，无法断言权限。</td></tr><tr class="ec-pending"><td class="ec-method">POST</td><td class="ec-path"><code>/admin/ar/receivable/customer-mapping/save</code></td><td class="ec-verdict"><span class="ec-badge ec-pending">没敢下结论</span></td><td class="ec-reason">文档明确要求保持不变，但现有实现不在本段 diff 内，无法断言权限。</td></tr><tr class="ec-pending"><td class="ec-method">POST</td><td class="ec-path"><code>/admin/ar/receivable/deduct</code></td><td class="ec-verdict"><span class="ec-badge ec-pending">没敢下结论</span></td><td class="ec-reason">实现未在本段 diff 内，无法断言权限。</td></tr><tr class="ec-pending"><td class="ec-method">POST</td><td class="ec-path"><code>/admin/ar/receivable/deduct/delete</code></td><td class="ec-verdict"><span class="ec-badge ec-pending">没敢下结论</span></td><td class="ec-reason">实现未在本段 diff 内，无法断言权限。</td></tr><tr class="ec-pending"><td class="ec-method">POST</td><td class="ec-path"><code>/admin/ar/receivable/deduct/update</code></td><td class="ec-verdict"><span class="ec-badge ec-pending">没敢下结论</span></td><td class="ec-reason">实现未在本段 diff 内，无法断言权限。</td></tr><tr class="ec-pending"><td class="ec-method">POST</td><td class="ec-path"><code>/admin/ar/receivable/invoice/update</code></td><td class="ec-verdict"><span class="ec-badge ec-pending">没敢下结论</span></td><td class="ec-reason">实现未在本段 diff 内，无法断言权限。</td></tr><tr class="ec-pending"><td class="ec-method">POST</td><td class="ec-path"><code>/admin/ar/receivable/list</code></td><td class="ec-verdict"><span class="ec-badge ec-pending">没敢下结论</span></td><td class="ec-reason">实现未在本段 diff 内，无法断言权限。</td></tr><tr class="ec-pending"><td class="ec-method">GET</td><td class="ec-path"><code>/admin/ar/receivable/netSuitCustomer/list</code></td><td class="ec-verdict"><span class="ec-badge ec-pending">没敢下结论</span></td><td class="ec-reason">实现未在本段 diff 内，无法断言权限。</td></tr><tr class="ec-pending"><td class="ec-method">GET</td><td class="ec-path"><code>/admin/ar/receivable/netSuitCustomer/{netSuitCustomerId}/customers</code></td><td class="ec-verdict"><span class="ec-badge ec-pending">没敢下结论</span></td><td class="ec-reason">实现未在本段 diff 内，无法断言权限。</td></tr><tr class="ec-pending"><td class="ec-method">POST</td><td class="ec-path"><code>/admin/ar/receivable/paid</code></td><td class="ec-verdict"><span class="ec-badge ec-pending">没敢下结论</span></td><td class="ec-reason">实现未在本段 diff 内，无法断言权限。</td></tr><tr class="ec-pending"><td class="ec-method">POST</td><td class="ec-path"><code>/admin/ar/receivable/payment/delete</code></td><td class="ec-verdict"><span class="ec-badge ec-pending">没敢下结论</span></td><td class="ec-reason">实现未在本段 diff 内，无法断言权限。</td></tr><tr class="ec-pending"><td class="ec-method">POST</td><td class="ec-path"><code>/admin/ar/receivable/payment/update</code></td><td class="ec-verdict"><span class="ec-badge ec-pending">没敢下结论</span></td><td class="ec-reason">实现未在本段 diff 内，无法断言权限。</td></tr><tr class="ec-pending"><td class="ec-method">POST</td><td class="ec-path"><code>/admin/ar/receivable/save</code></td><td class="ec-verdict"><span class="ec-badge ec-pending">没敢下结论</span></td><td class="ec-reason">实现未在本段 diff 内，无法断言权限。</td></tr><tr class="ec-pending"><td class="ec-method">GET</td><td class="ec-path"><code>/admin/ar/receivable/{id}</code></td><td class="ec-verdict"><span class="ec-badge ec-pending">没敢下结论</span></td><td class="ec-reason">实现未在本段 diff 内，无法断言权限。</td></tr><tr class="ec-pending"><td class="ec-method">POST</td><td class="ec-path"><code>/admin/data/migrateBalance/all</code></td><td class="ec-verdict"><span class="ec-badge ec-pending">没敢下结论</span></td><td class="ec-reason">本段仅看到 <code>MigrationService</code> 内部新增同步逻辑，未见新增或削弱鉴权代码，需人工结合 <code>DataController</code> 注解确认。</td></tr><tr class="ec-pending"><td class="ec-method">POST</td><td class="ec-path"><code>/admin/data/migrateCustomer</code></td><td class="ec-verdict"><span class="ec-badge ec-pending">没敢下结论</span></td><td class="ec-reason">本段仅看到 <code>MigrationService</code> 内部新增同步逻辑，未见新增或削弱鉴权代码，需人工结合 <code>DataController</code> 注解确认。</td></tr><tr class="ec-pending"><td class="ec-method">POST</td><td class="ec-path"><code>/admin/data/migrateExistingAccountName</code></td><td class="ec-verdict"><span class="ec-badge ec-pending">没敢下结论</span></td><td class="ec-reason">本段仅看到 <code>MigrationService</code> 内部新增同步逻辑，未见新增或削弱鉴权代码，需人工结合 <code>DataController</code> 注解确认。</td></tr><tr class="ec-pending"><td class="ec-method">POST</td><td class="ec-path"><code>/admin/data/migrateRateConfig</code></td><td class="ec-verdict"><span class="ec-badge ec-pending">没敢下结论</span></td><td class="ec-reason">本段仅看到 <code>MigrationService</code> 内部新增同步逻辑，未见新增或削弱鉴权代码，需人工结合 <code>DataController</code> 注解确认。</td></tr></tbody></table></div></section><h2 class="section-title subsection-title">按文件的审查发现</h2><details class="action-group action-group-fix_now" open="open" style="margin-bottom:14px;border:1px solid #c53030;border-radius:8px;"><summary style="cursor:pointer;font-weight:700;font-size:15px;color:#c53030;padding:8px 12px;list-style:none;">&#128308; 立即修代码 &middot; 12 个问题</summary><div style="padding:0 12px 8px;"><div class="findings-list-wrap"><details class="file-group findings-file-group" open="open" id="fg-329340bb2154" data-file-path="oms-domain/src/main/java/io/speedx/oms/domain/service/ArReceivableService.java" data-short-name="ArReceivableService.java" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">oms-domain/src/main/java/io/speedx/oms/domain/service/ArReceivableService.java</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">1 Critical</span> <span class="stat-chip stat-major">5 Major</span></span><span class="file-group-count">6 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L2288-2295</span><span class="finding-cat finding-cat-requirement">需求未实现</span><span class="evidence-line-unverified-badge" style="color:#c62828;border:1px solid #c62828;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段附近 &#177;5 行内未找到 evidence_quote 摘抄的原文，行号未经核实，下方证据代码可能不是问题真正所在的位置，请人工核实">&#9888; 行号未验证</span></div><div class="finding-feature-highlight" style="background:#fff3e0;border-left:4px solid #e65100;padding:12px 14px;margin:10px 0;border-radius:0 4px 4px 0;"><div class="detail-label" style="color:#e65100;font-weight:600;margin-bottom:4px;">未实现的功能</div><div style="font-size:15px;font-weight:600;">切换到 `SOLD_TO` 时没有保证 `settlementType` 作为统一配置字段被完整同步，允许把该字段批量清空。</div></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>需求文档 <code>proposal.md</code> 与 <code>tasks.md 2.3</code> 都把 <code>changeCustomerSetLevel</code> 的 <code>SOLD_TO</code> 分支定义为：将该客户下所有 pickup 的 mapping 记录同步更新为同一份 NetSuite 字段值；</p><p>而本次实现的 <code>validateSoldToSyncFields</code> 只强制校验 <code>netSuitCustomerId</code>、<code>netSuitCustomerCode</code>、<code>customerProjectNamingCode</code>，没有对 <code>settlementType</code> 做必填校验，随后 <code>syncSoldToMappingRows</code> 又会无条件执行 <code>mapping.setSettlementType(request.getSettlementType());</code>。</p><p>这意味着调用 <code>/customer-mapping/set-level/save</code> 切到 <code>SOLD_TO</code> 时可以把所有 pickup 行的 <code>settlementType</code> 同步写成 <code>null</code>。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>一旦前端或调用方在切换到 <code>SOLD_TO</code> 时未传 <code>settlementType</code>，系统会把原本已有的 <code>settlementType</code> 批量清空，结果不再是需求要求的“同步为同一份配置”，而是把统一配置中的一个字段丢失。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>在 <code>validateSoldToSyncFields</code> 中补充 <code>settlementType</code> 非空校验，或在 <code>syncSoldToMappingRows</code> 中明确保留原值而不是写入 <code>null</code>。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>准备一个客户名下两条 <code>ArReceivableCustomerMapping</code>，两条记录当前都有非空 <code>settlementType</code>；</p><p>调用 <code>/admin/ar/receivable/customer-mapping/set-level/save</code>，请求体设置 <code>setLevel=SOLD_TO</code> 且故意不传 <code>settlementType</code>，验证接口应拒绝请求，且数据库中两条记录的 <code>settlementType</code> 不被清空。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">2283</span></span><span class="code-row"><span class="code-ln">2284</span>    /**</span><span class="code-row"><span class="code-ln">2285</span>     * Syncs the requested NetSuite fields to every pickup mapping row under the customer; <span class="code-keyword">if</span> the customer was</span><span class="code-row"><span class="code-ln">2286</span>     * PICKUP, also soft-deletes the now-obsolete exception record.</span><span class="code-row"><span class="code-ln">2287</span>     */</span><span class="code-row code-row-target"><span class="code-ln">2288</span>    <span class="code-keyword">private</span> <span class="code-keyword">void</span> switchToSoldTo(Long customerId, ChangeCustomerSetLevelReq request, SetLevelEnum currentSetLevel,</span><span class="code-row code-row-target"><span class="code-ln">2289</span>                                 Optional&lt;ArReceivableCustomerSetting&gt; existingSetting) {</span><span class="code-row code-row-target"><span class="code-ln">2290</span>        validateSoldToSyncFields(request);</span><span class="code-row code-row-target"><span class="code-ln">2291</span>        syncSoldToMappingRows(customerId, request);</span><span class="code-row code-row-target"><span class="code-ln">2292</span>        <span class="code-keyword">if</span> (currentSetLevel == SetLevelEnum.PICKUP) {</span><span class="code-row code-row-target"><span class="code-ln">2293</span>            existingSetting.ifPresent(arReceivableCustomerSettingRepository::delete);</span><span class="code-row code-row-target"><span class="code-ln">2294</span>        }</span><span class="code-row code-row-target"><span class="code-ln">2295</span>    }</span><span class="code-row"><span class="code-ln">2296</span></span><span class="code-row"><span class="code-ln">2297</span>    <span class="code-keyword">private</span> <span class="code-keyword">void</span> validateSoldToSyncFields(ChangeCustomerSetLevelReq request) {</span><span class="code-row"><span class="code-ln">2298</span>        <span class="code-keyword">if</span> (request.getNetSuitCustomerId() == <span class="code-keyword">null</span>) {</span><span class="code-row"><span class="code-ln">2299</span>            <span class="code-keyword">throw</span> <span class="code-keyword">new</span> IllegalArgumentException(<span class="code-string">"NetSuite Customer ID cannot be null"</span>);</span><span class="code-row"><span class="code-ln">2300</span>        }</span></code></pre></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L2255</span><span class="finding-cat">异常处理</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>ArReceivableService.changeCustomerSetLevel</code> 新增了 <code>@Transactional</code>，但没有声明 <code>rollbackFor</code>。</p><p>该方法内部既会写 <code>ArReceivableCustomerSetting</code>，也会批量更新 <code>ArReceivableCustomerMapping</code>；如果后续流程抛出受检异常，Spring 默认不会回滚这次事务。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>一旦 <code>changeCustomerSetLevel</code> 在部分写入后遇到受检异常，可能出现 <code>ArReceivableCustomerSetting</code> 已切换但 <code>ArReceivableCustomerMapping</code> 未同步完成，或者反过来的半成功状态，造成客户映射配置不一致。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>将 <code>@Transactional</code> 明确改为 <code>@Transactional(rollbackFor = Exception.class)</code>，确保 <code>changeCustomerSetLevel</code> 的多表更新在所有异常类型下都能整体回滚。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>构造一次 <code>POST /admin/ar/receivable/customer-mapping/set-level/save</code> 调用，在 <code>switchToSoldTo</code> 已更新部分 <code>ArReceivableCustomerMapping</code> 后人为触发一个受检异常；</p><p>验证事务整体回滚，<code>ArReceivableCustomerSetting</code> 与所有 <code>ArReceivableCustomerMapping</code> 都保持调用前状态。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">2250</span>     *   PICKUP exception record.</span><span class="code-row"><span class="code-ln">2251</span>     *</span><span class="code-row"><span class="code-ln">2252</span>     * <span class="code-annotation">@param</span> request The Set Level change request</span><span class="code-row"><span class="code-ln">2253</span>     * <span class="code-annotation">@return</span> The customer's latest aggregated mapping view</span><span class="code-row"><span class="code-ln">2254</span>     */</span><span class="code-row code-row-target"><span class="code-ln">2255</span>    <span class="code-annotation">@Transactional</span></span><span class="code-row"><span class="code-ln">2256</span>    <span class="code-keyword">public</span> ArReceivableCustomerMappingGroupDto changeCustomerSetLevel(ChangeCustomerSetLevelReq request) {</span><span class="code-row"><span class="code-ln">2257</span>        Long customerId = request.getCustomerId();</span><span class="code-row"><span class="code-ln">2258</span>        Optional&lt;ArReceivableCustomerSetting&gt; existingSetting = arReceivableCustomerSettingRepository.findByCustomerId(customerId);</span><span class="code-row"><span class="code-ln">2259</span>        SetLevelEnum currentSetLevel = existingSetting.map(ArReceivableCustomerSetting::getSetLevel).orElse(SetLevelEnum.SOLD_TO);</span><span class="code-row"><span class="code-ln">2260</span></span></code></pre></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L2314-2321</span><span class="finding-cat">业务逻辑</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>syncSoldToMappingRows</code> 直接对 <code>arReceivableCustomerMappingRepository.findAllByCustomerId(customerId)</code> 返回的全部记录执行覆盖更新，但没有校验该 <code>customerId</code> 是否至少存在一条 <code>ArReceivableCustomerMapping</code>。</p><p>当请求传入一个不存在映射行的 <code>customerId</code> 时，<code>validateSoldToSyncFields</code> 通过后会静默执行 <code>saveAll</code> 空集合，并让 <code>changeCustomerSetLevel</code> 返回一个看似成功但 <code>pickupMappings</code> 为空的聚合结果。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>调用方可以把一个没有任何映射基础数据的客户切到 <code>SOLD_TO</code>，接口返回成功却没有真正落地任何 NetSuite 配置，形成“成功响应 + 无实际配置”的假状态，后续依赖该配置的计费或展示逻辑会读取到不完整数据。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>在 <code>syncSoldToMappingRows</code> 中先校验 <code>mappings</code> 非空；若 <code>findAllByCustomerId(customerId)</code> 为空，应抛出明确业务异常而不是继续成功返回。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>准备一个 <code>customerId</code> 在 <code>ar_receivable_customer_mapping</code> 中没有任何记录；</p><p>调用 <code>POST /admin/ar/receivable/customer-mapping/set-level/save</code>，请求体把 <code>setLevel</code> 设为 <code>SOLD_TO</code> 并带上完整的 <code>netSuitCustomerId</code>、<code>netSuitCustomerCode</code>、<code>customerProjectNamingCode</code>。</p><p>期望接口返回明确失败，而不是成功且 <code>pickupMappings</code> 为空。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">2309</span>    /**</span><span class="code-row"><span class="code-ln">2310</span>     * Batch-applies the request's NetSuite mapping fields to every pickup mapping row under the customer.</span><span class="code-row"><span class="code-ln">2311</span>     * ar_receivable_customer_setting is never written here (it only stores PICKUP exceptions).</span><span class="code-row"><span class="code-ln">2312</span>     */</span><span class="code-row"><span class="code-ln">2313</span>    <span class="code-keyword">private</span> <span class="code-keyword">void</span> syncSoldToMappingRows(Long customerId, ChangeCustomerSetLevelReq request) {</span><span class="code-row code-row-target"><span class="code-ln">2314</span>        List&lt;ArReceivableCustomerMapping&gt; mappings = arReceivableCustomerMappingRepository.findAllByCustomerId(customerId);</span><span class="code-row code-row-target"><span class="code-ln">2315</span>        <span class="code-keyword">for</span> (ArReceivableCustomerMapping mapping : mappings) {</span><span class="code-row code-row-target"><span class="code-ln">2316</span>            mapping.setNetSuitCustomerId(request.getNetSuitCustomerId());</span><span class="code-row code-row-target"><span class="code-ln">2317</span>            mapping.setNetSuitCustomerCode(request.getNetSuitCustomerCode());</span><span class="code-row code-row-target"><span class="code-ln">2318</span>            mapping.setCustomerProjectNamingCode(request.getCustomerProjectNamingCode());</span><span class="code-row code-row-target"><span class="code-ln">2319</span>            mapping.setSettlementType(request.getSettlementType());</span><span class="code-row code-row-target"><span class="code-ln">2320</span>        }</span><span class="code-row code-row-target"><span class="code-ln">2321</span>        arReceivableCustomerMappingRepository.saveAll(mappings);</span><span class="code-row"><span class="code-ln">2322</span>    }</span><span class="code-row"><span class="code-ln">2323</span></span><span class="code-row"><span class="code-ln">2324</span>    /**</span><span class="code-row"><span class="code-ln">2325</span>     * Builds the aggregated Set Level view <span class="code-keyword">for</span> a single customer (no filter, all current mapping rows).</span><span class="code-row"><span class="code-ln">2326</span>     */</span></code></pre></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L2719-2723</span><span class="finding-cat finding-cat-requirement">需求矛盾</span><span class="evidence-line-unverified-badge" style="color:#c62828;border:1px solid #c62828;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段附近 &#177;5 行内未找到 evidence_quote 摘抄的原文，行号未经核实，下方证据代码可能不是问题真正所在的位置，请人工核实">&#9888; 行号未验证</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>需求文档在 <code>openspec/changes/s26-spx-pi-7775-customer-mapping-set-level/tasks.md</code> 的「2.1 新增按 Customer 聚合的查询接口（不改动现有 <code>/list</code>）」明确写了分组分页查询应 <code>ORDER BY customer_id DESC</code>，<code>proposal.md</code> 的新增接口说明也以该分组分页语义为前提；</p><p>而 <code>ArReceivableService.queryCustomerMappingsByCustomer</code> 的注释却声明 <code>pagedCustomerIds is already ordered by MAX(id) DESC</code>，并直接按该顺序组装返回结果。</p><p>这与实际仓储实现 <code>ArReceivableCustomerMappingRepositoryImpl.findCustomerIdsByCriteria</code> 中的 <code>ORDER BY customer_id DESC</code> 不一致，说明当前实现对分页排序语义的理解与需求/设计文档不一致。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>当调用方依赖新接口列表顺序时，代码注释和实现语义已经偏离需求定义，后续维护者若按注释继续补逻辑或优化 SQL，极易把排序改成 <code>MAX(id) DESC</code>，导致页面顺序与需求规定的 <code>customer_id DESC</code> 不一致。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>统一 <code>queryCustomerMappingsByCustomer</code> 与 <code>ArReceivableCustomerMappingRepositoryImpl.findCustomerIdsByCriteria</code> 的排序语义，按需求固定为 <code>ORDER BY customer_id DESC</code>，并同步修正文档/注释中关于 <code>MAX(id) DESC</code> 的表述。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>准备两个客户：customerId 较小但最新 mapping 行 id 更大，另一个 customerId 较大但 mapping 行 id 更小；</p><p>调用 <code>/admin/ar/receivable/customer-mapping/list-by-customer</code>，验证返回顺序必须按 customerId 倒序，而不是按各客户最大 mapping id 倒序。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">2714</span></span><span class="code-row"><span class="code-ln">2715</span>        <span class="code-keyword">return</span> <span class="code-keyword">new</span> PageDto&lt;&gt;(page, dtoList);</span><span class="code-row"><span class="code-ln">2716</span>    }</span><span class="code-row"><span class="code-ln">2717</span></span><span class="code-row"><span class="code-ln">2718</span>    /**</span><span class="code-row code-row-target"><span class="code-ln">2719</span>     * Query AR receivable customer mappings aggregated by customer (Set Level view).</span><span class="code-row code-row-target"><span class="code-ln">2720</span>     * Pagination is computed over the number of distinct matching customers, not mapping rows.</span><span class="code-row code-row-target"><span class="code-ln">2721</span>     * Reuses {<span class="code-annotation">@link</span> #createCustomerMappingSpecification} <span class="code-keyword">for</span> the detail-row filter so the two</span><span class="code-row code-row-target"><span class="code-ln">2722</span>     * query paths (grouped customerId page vs. detail rows) stay semantically aligned.</span><span class="code-row code-row-target"><span class="code-ln">2723</span>     *</span><span class="code-row"><span class="code-ln">2724</span>     * <span class="code-annotation">@param</span> request The page request containing filtering criteria and pagination parameters</span><span class="code-row"><span class="code-ln">2725</span>     * <span class="code-annotation">@return</span> PageDto containing the list of customer mapping groups and pagination information</span><span class="code-row"><span class="code-ln">2726</span>     */</span><span class="code-row"><span class="code-ln">2727</span>    <span class="code-keyword">public</span> PageDto&lt;ArReceivableCustomerMappingGroupDto&gt; queryCustomerMappingsByCustomer(ArReceivableCustomerMappingPageRequest request) {</span><span class="code-row"><span class="code-ln">2728</span>        long totalCustomers = arReceivableCustomerMappingRepository.countCustomerIdsByCriteria(request);</span></code></pre></details></div><details class="finding-security-fold" style="margin-top:8px;border-top:1px dashed #e2e2e2;padding-top:8px;"><summary style="cursor:pointer;font-weight:600;font-size:13px;color:#555;">🔒 安全/权限相关 · 2 项（点击展开）</summary><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L2255-2268</span><span class="finding-cat">权限与访问控制</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>ArReceivableController.changeCustomerSetLevel()</code> 仅通过 <code>@RequirePermissions(&quot;customer-mapping:save&quot;)</code> 做功能级鉴权，然后 <code>ArReceivableService.changeCustomerSetLevel(ChangeCustomerSetLevelReq request)</code> 直接使用 <code>request.getCustomerId()</code> 读取并修改任意客户的 <code>ArReceivableCustomerSetting</code> 与 <code>ArReceivableCustomerMapping</code>，代码中未见任何基于当前登录用户的数据范围校验，也未见对 <code>customerId</code> 归属的限制。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>只要拥有 <code>customer-mapping:save</code> 的账号知道或猜到其他客户的 <code>customerId</code>，就可以把该客户切换到 <code>SetLevelEnum.PICKUP</code> 或 <code>SetLevelEnum.SOLD_TO</code>，并批量覆盖该客户全部 mapping 的 <code>netSuitCustomerId</code>、<code>netSuitCustomerCode</code>、<code>customerProjectNamingCode</code>、<code>settlementType</code>，造成跨客户配置越权修改和账务映射被篡改。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>在 <code>ArReceivableService.changeCustomerSetLevel(ChangeCustomerSetLevelReq request)</code> 入口增加基于当前登录用户的数据范围校验，明确校验 <code>request.getCustomerId()</code> 是否在当前用户可管理的客户范围内；</p><p>若系统只有功能权限没有数据权限，也应在 Controller/Service 层补充客户归属校验后再允许执行批量更新。</p><p>可将校验封装为统一方法，在 <code>saveCustomerMapping</code>、<code>migrateCustomerMappings</code>、<code>queryCustomerMappingsByCustomer</code> 等同类客户映射接口复用。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>使用一个仅具备 <code>customer-mapping:save</code> 权限、但按业务只应管理自己客户范围的账号，调用 <code>POST /admin/ar/receivable/customer-mapping/set-level/save</code>，请求体中填入另一个客户的 <code>customerId</code> 以及新的 <code>netSuitCustomerId</code>、<code>netSuitCustomerCode</code>、<code>customerProjectNamingCode</code>、<code>settlementType</code>；</p><p>预期应被拒绝，当前代码会直接修改目标客户全部 mapping。</p></div></div></div></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L2727-2771</span><span class="finding-cat">权限与访问控制</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>ArReceivableController.queryCustomerMappingsByCustomer()</code> 仅声明 <code>@RequirePermissions(&quot;customer-mapping:view&quot;)</code>，而 <code>ArReceivableService.queryCustomerMappingsByCustomer(ArReceivableCustomerMappingPageRequest request)</code> 直接按请求条件查询 <code>customer_id</code>、客户名称、<code>pickupAccountName</code>、<code>netSuitCustomerId</code>、<code>netSuitCustomerCode</code>、<code>customerProjectNamingCode</code>、<code>settlementType</code> 等客户映射信息，代码中未见任何基于当前登录用户的数据范围过滤。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>只要拥有 <code>customer-mapping:view</code> 的账号构造任意 <code>customerId</code>、<code>netSuitCustomerId</code> 或分页条件，就可能枚举并读取不属于自己管理范围的客户映射配置，形成跨客户账务配置数据越权读取，泄露 NetSuite 对应关系和结算配置。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>在 <code>ArReceivableService.queryCustomerMappingsByCustomer(ArReceivableCustomerMappingPageRequest request)</code> 查询前注入当前登录用户可见的客户范围，并把该范围强制拼入 <code>countCustomerIdsByCriteria</code>、<code>findCustomerIdsByCriteria</code> 以及后续 <code>Specification</code>；</p><p>不要仅依赖前端传入的 <code>customerId</code> 过滤。若暂无统一数据权限组件，至少在 Service 层先根据当前用户可见客户集合做白名单限制。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>使用一个仅具备 <code>customer-mapping:view</code> 权限、但按业务只应查看自己客户范围的账号，调用 <code>POST /admin/ar/receivable/customer-mapping/list-by-customer</code>，不传 <code>customerId</code> 或传入其他客户的 <code>customerId</code>；</p><p>预期只能返回该账号被授权客户的数据，当前代码会返回命中的任意客户映射分组。</p></div></div></div></div></details></div></details><details class="file-group findings-file-group" open="open" id="fg-ab7a4fe4d52c" data-file-path="oms-facade/src/main/java/io/speedx/oms/facade/model/req/ChangeCustomerSetLevelReq.java" data-short-name="ChangeCustomerSetLevelReq.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">oms-facade/src/main/java/io/speedx/oms/facade/model/req/ChangeCustomerSetLevelReq.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">2 Major</span></span><span class="file-group-count">2 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L27</span><span class="finding-cat">API契约</span><span class="evidence-line-unverified-badge" style="color:#c62828;border:1px solid #c62828;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段附近 &#177;5 行内未找到 evidence_quote 摘抄的原文，行号未经核实，下方证据代码可能不是问题真正所在的位置，请人工核实">&#9888; 行号未验证</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>ChangeCustomerSetLevelReq</code> 新增了 <code>private Long netSuitCustomerId;</code>，但该字段只有 <code>@ApiModelProperty</code> 文档说明“Required only when Set Level is SOLD_TO”，没有任何 <code>@NotNull</code>、自定义校验注解或类级联动校验去强制 <code>setLevel == SetLevelEnum.SOLD_TO</code> 时必须传值。</p><p>也就是说，<code>ArReceivableService.changeCustomerSetLevel()</code> 对应的请求模型在接口层无法阻止缺失 <code>netSuitCustomerId</code> 的非法请求进入后续业务逻辑。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>调用 <code>/admin/ar/receivable/customer-mapping/set-level/save</code> 时，客户端可以提交 <code>setLevel</code> 为 <code>SOLD_TO</code> 但 <code>netSuitCustomerId</code> 为空的请求；</p><p>如果服务层后续直接落库或批量同步到 pickup mapping row，就会把关键结算映射字段写成空值，造成客户映射配置不完整，进一步引发财务归属错误或运行时异常。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>在 <code>ChangeCustomerSetLevelReq</code> 上增加类级条件校验，明确约束 <code>setLevel == SetLevelEnum.SOLD_TO</code> 时 <code>netSuitCustomerId</code>、<code>netSuitCustomerCode</code>、<code>customerProjectNamingCode</code> 必填，<code>setLevel == SetLevelEnum.PICKUP</code> 时这些字段应为空或被服务层显式忽略。</p><p>可通过自定义 <code>ConstraintValidator</code> 或 <code>@AssertTrue</code> 实现联动校验。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>构造一个调用 <code>/admin/ar/receivable/customer-mapping/set-level/save</code> 的请求：<code>customerId</code> 有效、<code>setLevel</code> 为 <code>SOLD_TO</code>、<code>netSuitCustomerId</code> 为空。</p><p>预期接口在参数校验阶段直接返回失败，而不是进入 <code>ArReceivableService.changeCustomerSetLevel()</code> 执行后续更新。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">22</span>    <span class="code-annotation">@ApiModelProperty</span>(value = <span class="code-string">"Target Set Level (SOLD_TO/PICKUP)"</span>, required = <span class="code-keyword">true</span>)</span><span class="code-row"><span class="code-ln">23</span>    <span class="code-annotation">@NotNull</span>(message = <span class="code-string">"Set Level cannot be null"</span>)</span><span class="code-row"><span class="code-ln">24</span>    <span class="code-keyword">private</span> SetLevelEnum setLevel;</span><span class="code-row"><span class="code-ln">25</span></span><span class="code-row"><span class="code-ln">26</span>    <span class="code-annotation">@ApiModelProperty</span>(<span class="code-string">"NetSuite Customer ID. Required only when Set Level is SOLD_TO (synced to every pickup mapping row); ignored when Set Level is PICKUP"</span>)</span><span class="code-row code-row-target"><span class="code-ln">27</span>    <span class="code-keyword">private</span> Long netSuitCustomerId;</span><span class="code-row"><span class="code-ln">28</span></span><span class="code-row"><span class="code-ln">29</span>    <span class="code-annotation">@ApiModelProperty</span>(<span class="code-string">"NetSuite Customer Code. Required only when Set Level is SOLD_TO; ignored when Set Level is PICKUP"</span>)</span><span class="code-row"><span class="code-ln">30</span>    <span class="code-keyword">private</span> String netSuitCustomerCode;</span><span class="code-row"><span class="code-ln">31</span></span><span class="code-row"><span class="code-ln">32</span>    <span class="code-annotation">@ApiModelProperty</span>(<span class="code-string">"Customer Project Naming Code. Required only when Set Level is SOLD_TO; ignored when Set Level is PICKUP"</span>)</span></code></pre></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L30-36</span><span class="finding-cat">业务逻辑</span><span class="evidence-line-unverified-badge" style="color:#c62828;border:1px solid #c62828;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段附近 &#177;5 行内未找到 evidence_quote 摘抄的原文，行号未经核实，下方证据代码可能不是问题真正所在的位置，请人工核实">&#9888; 行号未验证</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>ChangeCustomerSetLevelReq</code> 中 <code>netSuitCustomerCode</code>、<code>customerProjectNamingCode</code>、<code>settlementType</code> 这三个字段同样只通过 <code>@ApiModelProperty</code> 描述了“Only applied when Set Level is SOLD_TO; ignored when Set Level is PICKUP”，但代码没有任何约束来保证 <code>setLevel == SetLevelEnum.PICKUP</code> 时这些字段不会被携带，也没有约束 <code>setLevel == SetLevelEnum.SOLD_TO</code> 时 <code>settlementType</code> 必须落在允许值范围内并与其他字段一起完整提交。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>攻击者或误调用方可以在 <code>setLevel</code> 为 <code>PICKUP</code> 时夹带 <code>netSuitCustomerCode</code>、<code>customerProjectNamingCode</code>、<code>settlementType</code>，如果服务层遗漏分支清洗，就可能把本应“ignored”的字段错误写入配置；</p><p>反过来，在 <code>SOLD_TO</code> 场景下缺失这些字段也无法在入口被拦截，容易形成脏数据并扩大到批量同步的所有 pickup mapping row。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>在 <code>ChangeCustomerSetLevelReq</code> 增加显式的条件校验与字段清洗策略：<code>setLevel == SetLevelEnum.SOLD_TO</code> 时校验 <code>netSuitCustomerCode</code>、<code>customerProjectNamingCode</code>、<code>settlementType</code> 的必填和枚举合法性；</p><p><code>setLevel == SetLevelEnum.PICKUP</code> 时在服务层统一将这些字段置空后再处理，避免客户端夹带值污染数据。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>分别提交两类请求：</p><ol class="rt-list"><li><code>setLevel</code> 为 <code>PICKUP</code>，同时传入 <code>netSuitCustomerCode</code>、<code>customerProjectNamingCode</code>、<code>settlementType</code></li><li><code>setLevel</code> 为 <code>SOLD_TO</code>，但缺失 <code>customerProjectNamingCode</code> 或 <code>settlementType</code>。预期两类非法输入都被明确拒绝或在服务层被安全清洗，不会写入配置。</li></ol></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">25</span></span><span class="code-row"><span class="code-ln">26</span>    <span class="code-annotation">@ApiModelProperty</span>(<span class="code-string">"NetSuite Customer ID. Required only when Set Level is SOLD_TO (synced to every pickup mapping row); ignored when Set Level is PICKUP"</span>)</span><span class="code-row"><span class="code-ln">27</span>    <span class="code-keyword">private</span> Long netSuitCustomerId;</span><span class="code-row"><span class="code-ln">28</span></span><span class="code-row"><span class="code-ln">29</span>    <span class="code-annotation">@ApiModelProperty</span>(<span class="code-string">"NetSuite Customer Code. Required only when Set Level is SOLD_TO; ignored when Set Level is PICKUP"</span>)</span><span class="code-row code-row-target"><span class="code-ln">30</span>    <span class="code-keyword">private</span> String netSuitCustomerCode;</span><span class="code-row code-row-target"><span class="code-ln">31</span></span><span class="code-row code-row-target"><span class="code-ln">32</span>    <span class="code-annotation">@ApiModelProperty</span>(<span class="code-string">"Customer Project Naming Code. Required only when Set Level is SOLD_TO; ignored when Set Level is PICKUP"</span>)</span><span class="code-row code-row-target"><span class="code-ln">33</span>    <span class="code-keyword">private</span> String customerProjectNamingCode;</span><span class="code-row code-row-target"><span class="code-ln">34</span></span><span class="code-row code-row-target"><span class="code-ln">35</span>    <span class="code-annotation">@ApiModelProperty</span>(<span class="code-string">"Settlement Type (A_SCAN or D_SCAN). Only applied when Set Level is SOLD_TO; ignored when Set Level is PICKUP"</span>)</span><span class="code-row code-row-target"><span class="code-ln">36</span>    <span class="code-keyword">private</span> SettlementTypeEnum settlementType;</span><span class="code-row"><span class="code-ln">37</span>}</span></code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-6430eccb8c00" data-file-path="oms-infrastructure/src/main/java/io/speedx/oms/infrastructure/db/finance/repository/ArReceivableCustomerMappingRepositoryImpl.java" data-short-name="ArReceivableCustomerMappingRepositoryImpl.java" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">oms-infrastructure/src/main/java/io/speedx/oms/infrastructure/db/finance/repository/ArReceivableCustomerMappingRepositoryImpl.java</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">2 Critical</span></span><span class="file-group-count">3 处影响（2 个根因）</span></summary><div class="file-group-body"><div class="finding-card cluster-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-cat">SQL/数据库</span><span class="cluster-badge">根因 · 2 处影响</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>ArReceivableCustomerMappingRepositoryImpl.findCustomerIdsByCriteria</code> 通过字符串拼接构造原生 SQL，把 <code>whereClause</code> 直接拼进 <code>sql</code>：<code>&quot;SELECT customer_id FROM ar_receivable_customer_mapping WHERE &quot; + whereClause + ...</code>。</p><p>虽然当前 <code>buildWhereClause</code> 内部参数值使用了 <code>?</code> 占位，但这类模式本身违反禁止 SQL 拼接的基线规则；</p><p>一旦后续有人在 <code>buildWhereClause</code> 中继续拼接排序字段、列名或其他来自 <code>ArReceivableCustomerMappingPageRequest</code> 的文本条件，就会把注入点直接暴露在财务查询链路里。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>该实现把查询安全性建立在“后续维护者永远只追加参数化条件”的隐含前提上，缺少结构性约束。</p><p>后续需求若在同一方法继续扩展动态 SQL，很容易在 <code>/admin/ar/receivable/customer-mapping/list</code> 或 <code>/admin/ar/receivable/customer-mapping/list-by-customer</code> 对应的数据查询中引入 SQL 注入，导致财务客户映射数据被越权读取或数据库被恶意探测。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>将 <code>findCustomerIdsByCriteria</code> 和 <code>countCustomerIdsByCriteria</code> 改为使用 JPA Criteria API、<code>NamedParameterJdbcTemplate</code> 配合固定 SQL 模板，或至少把可变条件限定为受控枚举/布尔开关，不要通过 <code>String whereClause</code> 进行整段 SQL 拼接。</p><p>若必须保留原生 SQL，请把每个条件片段在方法内按固定分支追加，并禁止任何来自 <code>ArReceivableCustomerMappingPageRequest</code> 的文本直接参与 SQL 结构拼装。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>新增安全回归测试：针对 <code>ArReceivableCustomerMappingPageRequest</code> 的 <code>netSuitCustomerCode</code>、<code>customerProjectNamingCode</code> 等文本字段分别传入包含单引号、注释符、通配符组合的值，验证 <code>findCustomerIdsByCriteria</code> 与 <code>countCustomerIdsByCriteria</code> 只按参数值匹配，不会报 SQL 语法错误、不会扩大结果集，也不会改变原始查询结构。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">19</span></span><span class="code-row"><span class="code-ln">20</span>    <span class="code-annotation">@Override</span></span><span class="code-row"><span class="code-ln">21</span>    <span class="code-keyword">public</span> List&lt;Long&gt; findCustomerIdsByCriteria(ArReceivableCustomerMappingPageRequest request, int pageIndex, int pageSize) {</span><span class="code-row"><span class="code-ln">22</span>        List&lt;Object&gt; params = <span class="code-keyword">new</span> ArrayList&lt;&gt;();</span><span class="code-row"><span class="code-ln">23</span>        String whereClause = buildWhereClause(request, params);</span><span class="code-row code-row-target"><span class="code-ln">24</span></span><span class="code-row code-row-target"><span class="code-ln">25</span>        String sql = <span class="code-string">"SELECT customer_id FROM ar_receivable_customer_mapping WHERE "</span> + whereClause +</span><span class="code-row"><span class="code-ln">26</span>                <span class="code-string">" GROUP BY customer_id ORDER BY customer_id DESC LIMIT ? OFFSET ?"</span>;</span><span class="code-row"><span class="code-ln">27</span>        params.add(pageSize);</span><span class="code-row"><span class="code-ln">28</span>        params.add(pageIndex * pageSize);</span><span class="code-row"><span class="code-ln">29</span></span><span class="code-row"><span class="code-ln">30</span>        <span class="code-keyword">return</span> financeJdbcTemplate.query(sql, (rs, rowNum) -&gt; rs.getLong(<span class="code-string">"customer_id"</span>), params.toArray());</span></code></pre></details><details class="cluster-locations"><summary>展开查看全部 2 处影响位置</summary><table class="loc-table"><thead><tr><th>文件</th><th>行</th><th>问题摘要</th></tr></thead><tbody><tr><td class="loc-file">oms-infrastructure/src/main/java/io/speedx/oms/infrastructure/db/finance/repository/ArReceivableCustomerMappingRepositoryImpl.java</td><td class="loc-line">24-25</td><td class="loc-snippet">**原因：** `ArReceivableCustomerMappingRepositoryImpl.findCustomerIdsByCriteria` 通过</td></tr><tr><td class="loc-file">oms-infrastructure/src/main/java/io/speedx/oms/infrastructure/db/finance/repository/ArReceivableCustomerMappingRepositoryImpl.java</td><td class="loc-line">35-36</td><td class="loc-snippet">**原因：** `ArReceivableCustomerMappingRepositoryImpl.countCustomerIdsByCriteria` 同</td></tr></tbody></table></details></div><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L38-39</span><span class="finding-cat">SQL/数据库</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>ArReceivableCustomerMappingRepositoryImpl.countCustomerIdsByCriteria</code> 同样通过 <code>&quot;SELECT COUNT(*) FROM (SELECT customer_id FROM ar_receivable_customer_mapping WHERE &quot; + whereClause + &quot; GROUP BY customer_id) t&quot;</code> 拼接原生 SQL，把动态 <code>whereClause</code> 直接嵌入查询文本。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>这与 <code>findCustomerIdsByCriteria</code> 形成同源风险：当前实现虽然参数值使用占位符，但动态 SQL 片段的拼接方式会持续放大后续引入 SQL 注入或错误条件拼接的概率，而且统计查询与列表查询一旦拼接逻辑偏离，还会造成分页总数与实际数据不一致。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>将 <code>countCustomerIdsByCriteria</code> 与 <code>findCustomerIdsByCriteria</code> 统一改造成同一套受控查询构造方式，例如 Criteria API 或命名参数 SQL 模板，避免把 <code>whereClause</code> 作为自由字符串拼接进 SQL。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>对 <code>queryCustomerMappingsByCustomer</code> 传入多组边界筛选条件，验证统计总数与列表查询使用同一套参数化条件生成逻辑；同时检查实现中不存在把动态字符串直接拼进 SQL 文本的路径。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">33</span>    <span class="code-annotation">@Override</span></span><span class="code-row"><span class="code-ln">34</span>    <span class="code-keyword">public</span> long countCustomerIdsByCriteria(ArReceivableCustomerMappingPageRequest request) {</span><span class="code-row"><span class="code-ln">35</span>        List&lt;Object&gt; params = <span class="code-keyword">new</span> ArrayList&lt;&gt;();</span><span class="code-row"><span class="code-ln">36</span>        String whereClause = buildWhereClause(request, params);</span><span class="code-row"><span class="code-ln">37</span></span><span class="code-row code-row-target"><span class="code-ln">38</span>        String sql = <span class="code-string">"SELECT COUNT(*) FROM (SELECT customer_id FROM ar_receivable_customer_mapping WHERE "</span> +</span><span class="code-row code-row-target"><span class="code-ln">39</span>                whereClause + <span class="code-string">" GROUP BY customer_id) t"</span>;</span><span class="code-row"><span class="code-ln">40</span></span><span class="code-row"><span class="code-ln">41</span>        Long count = financeJdbcTemplate.queryForObject(sql, Long.<span class="code-keyword">class</span>, params.toArray());</span><span class="code-row"><span class="code-ln">42</span>        <span class="code-keyword">return</span> count != <span class="code-keyword">null</span> ? count : 0L;</span><span class="code-row"><span class="code-ln">43</span>    }</span><span class="code-row"><span class="code-ln">44</span></span></code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-e894fda01f35" data-file-path="openspec/changes/s26-spx-pi-7775-customer-mapping-set-level/design.md" data-short-name="design.md" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">openspec/changes/s26-spx-pi-7775-customer-mapping-set-level/design.md</span></span><span class="file-group-stats"><span class="stat-chip stat-major">2 Major</span></span><span class="file-group-count">2 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L188</span><span class="finding-cat">并发安全</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 TX-002 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 TX-002</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [TX-002] @Transactional未指定rollbackFor 命中了这行代码：<code>- [风险] </code>SOLD_TO<code> 客户批量同步编辑时，如果中途失败会导致该客户下部分 pickup 行更新、部分未更新，产生不一致 → <strong>缓解</strong>：整个同步过程放在单个 </code>@Transactional<code> 方法内，异常时整体回滚</code>。</p><p>这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「@Transactional未指定rollbackFor」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">183</span></span><span class="code-row"><span class="code-ln">184</span>## Risks / Trade-offs</span><span class="code-row"><span class="code-ln">185</span></span><span class="code-row"><span class="code-ln">186</span>- [风险] 新增的 `financeJdbcTemplate` 动态 SQL（`ArReceivableCustomerMappingRepositoryImpl`，仅用于<span class="code-string">"按 customerId 分组分页"</span>这一步）需要手写 WHERE 拼接逻辑，和 `createCustomerMappingSpecification` 的过滤条件是两套并行实现，未来如果只改了一处的过滤逻辑，容易出现两边语义不同步 → **缓解**：明细行的过滤和展示（`pickupMappings`）已改为直接复用 `createCustomerMappingSpecification`（见 D2 步骤 <span class="code-number">3</span>），只有<span class="code-string">"分组分页拿 customerId 列表"</span>这一步是独立 SQL，风险面已收窄；仍新增单元测试逐条核对这一步的过滤条件与 Specification 在相同输入下筛出的 customerId 集合一致（见 tasks.md 测试组），后续如修改过滤条件需要同时改两处并在测试里体现</span><span class="code-row"><span class="code-ln">187</span>- [风险] 手写 SQL 拼接 WHERE 条件如果不做参数化，存在 SQL 注入风险 → **缓解**：严格沿用项目里 `BillItemCandidateDscanRepositoryImpl` 的既有写法——`StringBuilder` 只拼接 SQL 结构（列名、`?` 占位符），所有用户输入值一律通过 `JdbcTemplate` 的 `?` 参数数组传入，不做字符串值拼接</span><span class="code-row code-row-target"><span class="code-ln">188</span>- [风险] `SOLD_TO` 客户批量同步编辑时，如果中途失败会导致该客户下部分 pickup 行更新、部分未更新，产生不一致 → **缓解**：整个同步过程放在单个 `<span class="code-annotation">@Transactional</span>` 方法内，异常时整体回滚</span><span class="code-row"><span class="code-ln">189</span>- [风险] 历史脏数据可能导致同一 `SOLD_TO` 客户下 pickup mapping 值本身就不一致 → **缓解**：查询聚合逻辑做<span class="code-string">"取 id 最小一条"</span>而非强制校验一致性；不在本次改动中做存量数据一致性清洗</span><span class="code-row"><span class="code-ln">190</span>- [风险] `saveCustomerMappingByCustomer` 未加并发锁，同一客户被并发保存、或保存操作与<span class="code-string">"新增 pickup 自动同步"</span>（D4）时间上重叠时，理论上存在竞态导致部分行同步不一致 → **缓解**：评估后判断这是低频的管理后台配置操作，发生概率低；即使发生，也会被现有的未匹配提醒邮件捕获，走 D5 的<span class="code-string">"人工重新保存"</span>闭环修复，本次不引入额外并发锁机制</span><span class="code-row"><span class="code-ln">191</span>- [风险] `PICKUP` 级别允许同一客户下不同 pickup 配置不同的 `customerProjectNamingCode`，但 `ArReceivableService.validateAndGetCustomerProjectNamingCode`（`ArReceivableService.java:<span class="code-number">409</span>-<span class="code-number">465</span>`）在 AR 账单创建请求的 `pickupIds` 为空/未传（代表<span class="code-string">"该客户全部 pickup"</span>）时，仍会退化为查询该客户全部 mapping 记录并要求 Code 完全一致，遇到 `PICKUP` 客户（<span class="code-number">619</span>、<span class="code-number">762</span>）存在不同 Code 时会抛异常拒绝建单 → **缓解**：这是既有校验逻辑，本次不改动；只记录风险并告知产品/前端——`PICKUP` 级别客户创建 AR 应收账单时，必须显式按 Code 分组传入 `pickupIds`，不能整客户一次性全量开票</span><span class="code-row"><span class="code-ln">192</span>- [风险] `ar_receivable_customer_setting` 中 <span class="code-number">619</span>、<span class="code-number">762</span> 的 `PICKUP` 例外记录若未及时写入（或未来发现还有其他遗漏的 Pickup 客户未被识别），会被系统当作默认 `SOLD_TO` 处理，导致该客户被错误地整户同步 → **缓解**：<span class="code-number">619</span>、<span class="code-number">762</span> 已知，作为本次发布的数据初始化步骤直接写入（不依赖产品后续交付）；如后续发现遗漏的 Pickup 客户，比照同样方式手动补写例外记录即可，成本很低</span><span class="code-row"><span class="code-ln">193</span>- [风险] D4 的自动同步逻辑目前只挂在 `MigrationService.initializeCustomerMapping`（当前唯一的占位 mapping 创建入口）上；若未来出现其他<span class="code-string">"新建 CustomerAccount / 新建 mapping 记录"</span>的入口，且未接入这个自动同步逻辑，`SOLD_TO` 客户新增的 pickup 仍会出现未同步、被误判未匹配的问题 → **缓解**：本次先覆盖已确认的唯一入口；后续如有新的创建入口，需要同步补上 D4 的同步调用，建议在该入口的代码评审中检查是否遗漏</span></code></pre></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L88</span><span class="finding-cat">并发安全</span><span class="evidence-line-unverified-badge" style="color:#c62828;border:1px solid #c62828;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段附近 &#177;5 行内未找到 evidence_quote 摘抄的原文，行号未经核实，下方证据代码可能不是问题真正所在的位置，请人工核实">&#9888; 行号未验证</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 TX-002 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 TX-002</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [TX-002] @Transactional未指定rollbackFor 命中了这行代码：<code>- <strong>目标 </code>SOLD_TO<code></strong>（不论当前是 </code>SOLD_TO<code> 还是 </code>PICKUP<code>）：Service 手写校验 </code>netSuitCustomerId<code>/</code>netSuitCustomerCode<code>/</code>customerProjectNamingCode<code> 非空后，在同一个 </code>@Transactional<code> 方法内对该 </code>customerId<code> 下 </code>findAllByCustomerId<code> …</code>。</p><p>这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「@Transactional未指定rollbackFor」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">83</span></span><span class="code-row"><span class="code-ln">84</span>**偏离说明（实现阶段修正）**：最初的实现把<span class="code-string">"变更 Set Level"</span>和<span class="code-string">"编辑单条 pickup mapping 记录"</span>两个正交的关注点耦合进同一个方法（`saveCustomerMappingByCustomer` 复用 `SaveArReceivableCustomerMappingReq`，`PICKUP` 不切换分支直接 delegate 给 `saveCustomerMapping`）。Code Review 中发现这个耦合导致入参校验非常绕——`pickupAccountId`/NetSuite 字段是否必填要看<span class="code-string">"目标 Set Level + 数据库当前 Set Level"</span>两层条件分支，且实际业务数据本身是 pickup 维度的，`saveCustomerMapping` 已经完整覆盖<span class="code-string">"编辑单条记录"</span>的场景。修正后的设计：**新接口只负责 Set Level 本身的变更（及其级联的批量同步/清理副作用），不掌管任何单条 mapping 记录的编辑**；<span class="code-string">"PICKUP 客户展开后编辑某一条 pickup 明细"</span>这个场景由前端直接调用老接口 `saveCustomerMapping`/`/save`（这条路径本来就和 Set Level 无关，无需经过新接口）。</span><span class="code-row"><span class="code-ln">85</span></span><span class="code-row"><span class="code-ln">86</span>新增独立的请求 DTO `ChangeCustomerSetLevelReq`（不复用 `SaveArReceivableCustomerMappingReq`，`SaveArReceivableCustomerMappingReq` 恢复原状，不再携带 `setLevel` 字段）+ 独立 Service 方法 `changeCustomerSetLevel` + Controller 新路由 `POST /admin/ar/receivable/customer-mapping/set-level/save`。按请求的目标 Set Level 分支：</span><span class="code-row"><span class="code-ln">87</span>- **目标 `PICKUP`**：仅 upsert `ar_receivable_customer_setting`（若已经是 `PICKUP` 则是幂等空操作）；不碰任何 mapping 行；只需要 `customerId` + `setLevel`，NetSuite 字段全部忽略</span><span class="code-row code-row-target"><span class="code-ln">88</span>- **目标 `SOLD_TO`**（不论当前是 `SOLD_TO` 还是 `PICKUP`）：Service 手写校验 `netSuitCustomerId`/`netSuitCustomerCode`/`customerProjectNamingCode` 非空后，在同一个 `<span class="code-annotation">@Transactional</span>` 方法内对该 `customerId` 下 `findAllByCustomerId` 取到的全部 mapping 行批量应用这些字段；若切换前是 `PICKUP`，额外软删除（`repository.delete()`，触发 `<span class="code-annotation">@SQLDelete</span>`）该客户在 `ar_receivable_customer_setting` 中的 `PICKUP` 记录</span><span class="code-row"><span class="code-ln">89</span></span><span class="code-row"><span class="code-ln">90</span>`netSuitCustomerId`/`netSuitCustomerCode`/`customerProjectNamingCode` 是否必填完全取决于目标 Set Level，这是跨字段 + 依赖数据库当前状态的条件校验，Bean Validation 分组做不到，因此保留在 Service 层手写校验（`customerId`/`setLevel` 本身是该接口任何分支都无条件需要的，用 `<span class="code-annotation">@NotNull</span>` 表达）。</span><span class="code-row"><span class="code-ln">91</span></span><span class="code-row"><span class="code-ln">92</span>**导出接口不需要新增**：经产品确认，导出数据结构和粒度都不随本次改动变化，新页面直接复用现有 `exportCustomerMappingsCsv`/`/<span class="code-keyword">export</span>`。</span><span class="code-row"><span class="code-ln">93</span></span></code></pre></details></div></div></details></div></div></details><details class="action-group action-group-pm_decision" style="margin-bottom:14px;border:1px solid #b7791f;border-radius:8px;"><summary style="cursor:pointer;font-weight:700;font-size:15px;color:#b7791f;padding:8px 12px;list-style:none;">&#128993; 待确认 / 需人工拍板 &middot; 2 个问题</summary><div style="padding:0 12px 8px;"><div class="findings-list-wrap"><details class="file-group findings-file-group" id="fg-47e0ac7fb941" data-file-path="oms-domain/src/main/java/io/speedx/oms/domain/service/comparetool/MigrationService.java" data-short-name="MigrationService.java" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">oms-domain/src/main/java/io/speedx/oms/domain/service/comparetool/MigrationService.java</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L512-525</span><span class="finding-cat">并发安全</span><span class="evidence-unverified-badge" style="color:#e65100;border:1px solid #e65100;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="evidence_quote 在 diff 中未找到匹配：可能是 AI 概括/改写而非原文摘抄">&#9888; 证据待核实</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>MigrationService.initializeCustomerMapping(CustomerAccount customerAccount)</code> 先调用 <code>arReceivableCustomerMappingRepository.existsByCustomerIdAndPickupAccountId(customerAccount.getCustomerId(), customerAccount.getId())</code> 判断，再创建并保存新的 <code>ArReceivableCustomerMapping</code>。</p><p>这是无锁的先查后写流程，且新增逻辑 <code>syncSoldToConfigForNewMapping(customerAccount.getCustomerId(), mapping)</code> 让重复插入的后果不再只是重复数据，还会复制 SOLD_TO 配置到重复记录。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>当迁移任务并发执行、重试执行，或多个线程同时初始化同一个 <code>customerId</code> + <code>pickupAccountId</code> 时，可能插入多条重复 <code>ArReceivableCustomerMapping</code>。</p><p>重复记录会污染 <code>queryCustomerMappingsByCustomer</code> 的聚合结果，并可能让后续切换 Set Level 时批量同步到多条本不该存在的映射。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>在 <code>ar_receivable_customer_mapping</code> 上为 <code>customer_id</code> + <code>pickup_account_id</code> 建立唯一约束，并将初始化逻辑改为数据库层幂等写入；</p><p>如果必须保留先查后写，至少在事务中使用锁或捕获唯一键冲突后按已存在处理。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>并发执行两次 <code>initializeCustomerMapping</code>，传入相同 <code>customerAccount.getCustomerId()</code> 和 <code>customerAccount.getId()</code> 的 <code>CustomerAccount</code>，验证最终数据库中只存在一条对应的 <code>ArReceivableCustomerMapping</code>，且不会因为并发而生成两条带相同 SOLD_TO 配置的记录。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">507</span>     *</span><span class="code-row"><span class="code-ln">508</span>     * <span class="code-annotation">@param</span> customerAccount The customer account to create mapping <span class="code-keyword">for</span></span><span class="code-row"><span class="code-ln">509</span>     */</span><span class="code-row"><span class="code-ln">510</span>    <span class="code-keyword">private</span> <span class="code-keyword">void</span> initializeCustomerMapping(CustomerAccount customerAccount) {</span><span class="code-row"><span class="code-ln">511</span>        <span class="code-comment">// Check if mapping already exists</span></span><span class="code-row code-row-target"><span class="code-ln">512</span>        boolean mappingExists = arReceivableCustomerMappingRepository</span><span class="code-row code-row-target"><span class="code-ln">513</span>                .existsByCustomerIdAndPickupAccountId(customerAccount.getCustomerId(), customerAccount.getId());</span><span class="code-row code-row-target"><span class="code-ln">514</span>        <span class="code-keyword">if</span> (mappingExists) {</span><span class="code-row code-row-target"><span class="code-ln">515</span>            log.info(<span class="code-string">"ArReceivableCustomerMapping already exists for customerId: {}, pickupAccountId: {}"</span>,</span><span class="code-row code-row-target"><span class="code-ln">516</span>                    customerAccount.getCustomerId(), customerAccount.getId());</span><span class="code-row code-row-target"><span class="code-ln">517</span>            <span class="code-keyword">return</span>;</span><span class="code-row code-row-target"><span class="code-ln">518</span>        }</span><span class="code-row code-row-target"><span class="code-ln">519</span></span><span class="code-row code-row-target"><span class="code-ln">520</span>        ArReceivableCustomerMapping mapping = <span class="code-keyword">new</span> ArReceivableCustomerMapping();</span><span class="code-row code-row-target"><span class="code-ln">521</span>        mapping.setCustomerId(customerAccount.getCustomerId());</span><span class="code-row code-row-target"><span class="code-ln">522</span>        mapping.setPickupAccountId(customerAccount.getId());</span><span class="code-row code-row-target"><span class="code-ln">523</span>        <span class="code-comment">// Leave netSuitCustomerId, netSuitCustomerCode, customerProjectNamingCode as null</span></span><span class="code-row code-row-target"><span class="code-ln">524</span>        <span class="code-comment">// They will be set later through the customer mapping UI</span></span><span class="code-row code-row-target"><span class="code-ln">525</span>        syncSoldToConfigForNewMapping(customerAccount.getCustomerId(), mapping);</span><span class="code-row"><span class="code-ln">526</span>        arReceivableCustomerMappingRepository.save(mapping);</span><span class="code-row"><span class="code-ln">527</span>        log.info(<span class="code-string">"Created ArReceivableCustomerMapping for customerId: {}, pickupAccountId: {}"</span>,</span><span class="code-row"><span class="code-ln">528</span>                customerAccount.getCustomerId(), customerAccount.getId());</span><span class="code-row"><span class="code-ln">529</span>    }</span><span class="code-row"><span class="code-ln">530</span></span></code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-652ad1cba0f5" data-file-path="openspec/changes/s26-spx-pi-7775-customer-mapping-set-level/tasks.md" data-short-name="tasks.md" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">openspec/changes/s26-spx-pi-7775-customer-mapping-set-level/tasks.md</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L22</span><span class="finding-cat">并发安全</span><span class="evidence-line-unverified-badge" style="color:#c62828;border:1px solid #c62828;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段附近 &#177;5 行内未找到 evidence_quote 摘抄的原文，行号未经核实，下方证据代码可能不是问题真正所在的位置，请人工核实">&#9888; 行号未验证</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 TX-002 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 TX-002</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [TX-002] @Transactional未指定rollbackFor 命中了这行代码：<code>- [x] 3.2 在 </code>ArReceivableService<code> 新增 </code>changeCustomerSetLevel<code> 方法（<strong>不修改</strong> </code>saveCustomerMapping<code>）：目标 </code>PICKUP<code> 时仅 upsert </code>ar_receivable_customer_setting<code>（已是 </code>PICKUP<code> 则空操作），不触碰任何 mapping 记录；目标 </code>SOLD_TO<code> 时…</code>。这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p><p><strong>⚠️ 需求核对提示：</strong> 该 finding 指出的具体文案/取值（<code>ar_receivable_customer_setting</code>）已逐字出现在本次需求原文中，可能是需求明确要求的行为，而非开发自行引入的缺陷。</p><p>是否需要调整须与需求方确认，不建议直接按「立即修代码」处理。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「@Transactional未指定rollbackFor」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">17</span>## <span class="code-number">3</span>. 新增独立的 Set Level 变更接口（不改动现有 `/save`）</span><span class="code-row"><span class="code-ln">18</span></span><span class="code-row"><span class="code-ln">19</span>&gt; 实现阶段修正：最初把这个接口设计成同时兼管<span class="code-string">"单条 pickup mapping 编辑"</span>（`PICKUP` 不切换分支 delegate 给 `saveCustomerMapping`），Code Review 后发现这把两个正交关注点耦合在一起，入参校验绕（`pickupAccountId`/NetSuite 字段是否必填要看两层条件分支）。修正为：新接口只管 Set Level 本身的变更及其级联同步/清理，`PICKUP` 客户展开编辑某条 pickup 明细由前端直接调现有 `/save`，详见 design.md D3。</span><span class="code-row"><span class="code-ln">20</span></span><span class="code-row"><span class="code-ln">21</span>- [x] <span class="code-number">3.1</span> 新增独立请求 DTO `ChangeCustomerSetLevelReq`（`customerId`/`setLevel` 用 `<span class="code-annotation">@NotNull</span>`；`netSuitCustomerId`/`netSuitCustomerCode`/`customerProjectNamingCode`/`settlementType` 不加 Bean Validation，改为 Service 层按目标 Set Level 手写校验）；**不复用** `SaveArReceivableCustomerMappingReq`，该 DTO 保持原状不受影响</span><span class="code-row code-row-target"><span class="code-ln">22</span>- [x] <span class="code-number">3.2</span> 在 `ArReceivableService` 新增 `changeCustomerSetLevel` 方法（**不修改** `saveCustomerMapping`）：目标 `PICKUP` 时仅 upsert `ar_receivable_customer_setting`（已是 `PICKUP` 则空操作），不触碰任何 mapping 记录；目标 `SOLD_TO` 时先校验 `netSuitCustomerId`/`netSuitCustomerCode`/`customerProjectNamingCode` 均非空，再在同一 `<span class="code-annotation">@Transactional</span>` 方法内批量同步该客户下全部 pickup mapping 记录的 NetSuite 字段，`ar_receivable_customer_setting` **不写入任何记录**（该表只存 `PICKUP` 例外）</span><span class="code-row"><span class="code-ln">23</span>- [x] <span class="code-number">3.3</span> 切换 Set Level 时对 `ar_receivable_customer_setting` 的处理：`PICKUP → SOLD_TO` 在同步 mapping 行之后**软删除**（`repository.delete()`）该客户现有的 `PICKUP` 记录；`SOLD_TO → PICKUP` **新插入**一条该客户的 `PICKUP` 记录，不修改现有 mapping 记录（已确认为纯前端展示行为，后端不清空数据，见 design.md Context）</span><span class="code-row"><span class="code-ln">24</span>- [x] <span class="code-number">3.4</span> 在 `ArReceivableController` 新增 `POST /admin/ar/receivable/customer-mapping/set-level/save` 路由（**不修改**现有 `/save` 路由），加 `<span class="code-annotation">@RequirePermissions</span>(<span class="code-string">"customer-mapping:save"</span>)`（复用现有 `/save` 的权限点，见 design.md「Interface Design」），映射到 `changeCustomerSetLevel`</span><span class="code-row"><span class="code-ln">25</span></span><span class="code-row"><span class="code-ln">26</span>导出接口不新增：经产品确认，导出数据结构和粒度都不随本次改动变化，新页面直接复用现有 `/<span class="code-keyword">export</span>`（`exportCustomerMappingsCsv`），不需要额外任务。</span><span class="code-row"><span class="code-ln">27</span></span></code></pre></details></div></div></details></div></div></details><details class="action-group action-group-optional" style="margin-bottom:14px;border:1px solid #2f855a;border-radius:8px;"><summary style="cursor:pointer;font-weight:700;font-size:15px;color:#2f855a;padding:8px 12px;list-style:none;">&#128994; 可选优化 &middot; 4 个问题</summary><div style="padding:0 12px 8px;"><div class="findings-list-wrap"><details class="file-group findings-file-group" id="fg-f59e30ef085d" data-file-path="oms-facade-impl/src/main/java/io/speedx/oms/facade/impl/web/admin/ArReceivableController.java" data-short-name="ArReceivableController.java" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">oms-facade-impl/src/main/java/io/speedx/oms/facade/impl/web/admin/ArReceivableController.java</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">4 处影响（1 个根因）</span></summary><div class="file-group-body"><div class="finding-card cluster-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-cat">边界条件</span><span class="cluster-badge">根因 · 4 处影响</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 NULL-003 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 NULL-003</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：<code>@ApiOperation(&quot;Change AR receivable customer Set Level (SOLD_TO/PICKUP)&quot;)</code>。</p><p>这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「除法运算未判分母为零」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">276</span>            <span class="code-annotation">@Valid</span> <span class="code-annotation">@RequestBody</span> SaveArReceivableCustomerMappingReq request) {</span><span class="code-row"><span class="code-ln">277</span>        log.info(<span class="code-string">"Saving AR receivable customer mapping: {}"</span>, request);</span><span class="code-row"><span class="code-ln">278</span>        <span class="code-keyword">return</span> BaseResponse.success(arReceivableService.saveCustomerMapping(request));</span><span class="code-row"><span class="code-ln">279</span>    }</span><span class="code-row"><span class="code-ln">280</span></span><span class="code-row code-row-target"><span class="code-ln">281</span>    <span class="code-annotation">@ApiOperation</span>(<span class="code-string">"Change AR receivable customer Set Level (SOLD_TO/PICKUP)"</span>)</span><span class="code-row"><span class="code-ln">282</span>    <span class="code-annotation">@RequirePermissions</span>(<span class="code-string">"customer-mapping:save"</span>)</span><span class="code-row"><span class="code-ln">283</span>    <span class="code-annotation">@PostMapping</span>(<span class="code-string">"/customer-mapping/set-level/save"</span>)</span><span class="code-row"><span class="code-ln">284</span>    <span class="code-keyword">public</span> BaseResponse&lt;ArReceivableCustomerMappingGroupDto&gt; changeCustomerSetLevel(</span><span class="code-row"><span class="code-ln">285</span>            <span class="code-annotation">@Valid</span> <span class="code-annotation">@RequestBody</span> ChangeCustomerSetLevelReq request) {</span><span class="code-row"><span class="code-ln">286</span>        log.info(<span class="code-string">"Changing AR receivable customer Set Level: {}"</span>, request);</span></code></pre></details><details class="cluster-locations"><summary>展开查看全部 4 处影响位置</summary><table class="loc-table"><thead><tr><th>文件</th><th>行</th><th>问题摘要</th></tr></thead><tbody><tr><td class="loc-file">oms-facade-impl/src/main/java/io/speedx/oms/facade/impl/web/admin/ArReceivableController.java</td><td class="loc-line">281</td><td class="loc-snippet">固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：`@ApiOperation(&quot;Change AR receivable customer Set Level…</td></tr><tr><td class="loc-file">oms-facade-impl/src/main/java/io/speedx/oms/facade/impl/web/admin/ArReceivableController.java</td><td class="loc-line">283</td><td class="loc-snippet">固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：`@PostMapping(&quot;/customer-mapping/set-level/save&quot;)`。</td></tr><tr><td class="loc-file">oms-facade-impl/src/main/java/io/speedx/oms/facade/impl/web/admin/ArReceivableController.java</td><td class="loc-line">283</td><td class="loc-snippet">固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：`@PostMapping(&quot;/customer-mapping/set-level/save&quot;)`。</td></tr><tr><td class="loc-file">oms-facade-impl/src/main/java/io/speedx/oms/facade/impl/web/admin/ArReceivableController.java</td><td class="loc-line">301</td><td class="loc-snippet">固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：`@PostMapping(&quot;/customer-mapping/list-by-customer&quot;)`。</td></tr></tbody></table></details></div></div></details><details class="file-group findings-file-group" id="fg-288361f46d74" data-file-path="oms-facade/src/main/java/io/speedx/oms/facade/model/dto/ArReceivableCustomerMappingGroupDto.java" data-short-name="ArReceivableCustomerMappingGroupDto.java" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">oms-facade/src/main/java/io/speedx/oms/facade/model/dto/ArReceivableCustomerMappingGroupDto.java</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L24</span><span class="finding-cat">边界条件</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 NULL-003 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 NULL-003</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：<code>@ApiModelProperty(&quot;Set Level: SOLD_TO/PICKUP&quot;)</code>。</p><p>这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「除法运算未判分母为零」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">19</span>    <span class="code-keyword">private</span> Long customerId;</span><span class="code-row"><span class="code-ln">20</span></span><span class="code-row"><span class="code-ln">21</span>    <span class="code-annotation">@ApiModelProperty</span>(<span class="code-string">"Customer Name"</span>)</span><span class="code-row"><span class="code-ln">22</span>    <span class="code-keyword">private</span> String customerName;</span><span class="code-row"><span class="code-ln">23</span></span><span class="code-row code-row-target"><span class="code-ln">24</span>    <span class="code-annotation">@ApiModelProperty</span>(<span class="code-string">"Set Level: SOLD_TO/PICKUP"</span>)</span><span class="code-row"><span class="code-ln">25</span>    <span class="code-keyword">private</span> SetLevelEnum setLevel;</span><span class="code-row"><span class="code-ln">26</span></span><span class="code-row"><span class="code-ln">27</span>    <span class="code-annotation">@ApiModelProperty</span>(<span class="code-string">"NetSuite Customer ID (only populated when setLevel is SOLD_TO)"</span>)</span><span class="code-row"><span class="code-ln">28</span>    <span class="code-keyword">private</span> Long netSuitCustomerId;</span><span class="code-row"><span class="code-ln">29</span></span></code></pre></details></div></div></details><details class="file-group findings-file-group" id="fg-ab7a4fe4d52c" data-file-path="oms-facade/src/main/java/io/speedx/oms/facade/model/req/ChangeCustomerSetLevelReq.java" data-short-name="ChangeCustomerSetLevelReq.java" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">oms-facade/src/main/java/io/speedx/oms/facade/model/req/ChangeCustomerSetLevelReq.java</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L22</span><span class="finding-cat">边界条件</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 NULL-003 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 NULL-003</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：<code>@ApiModelProperty(value = &quot;Target Set Level (SOLD_TO/PICKUP)&quot;, required = true)</code>。</p><p>这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「除法运算未判分母为零」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">17</span></span><span class="code-row"><span class="code-ln">18</span>    <span class="code-annotation">@ApiModelProperty</span>(value = <span class="code-string">"Customer ID"</span>, required = <span class="code-keyword">true</span>)</span><span class="code-row"><span class="code-ln">19</span>    <span class="code-annotation">@NotNull</span>(message = <span class="code-string">"Customer ID cannot be null"</span>)</span><span class="code-row"><span class="code-ln">20</span>    <span class="code-keyword">private</span> Long customerId;</span><span class="code-row"><span class="code-ln">21</span></span><span class="code-row code-row-target"><span class="code-ln">22</span>    <span class="code-annotation">@ApiModelProperty</span>(value = <span class="code-string">"Target Set Level (SOLD_TO/PICKUP)"</span>, required = <span class="code-keyword">true</span>)</span><span class="code-row"><span class="code-ln">23</span>    <span class="code-annotation">@NotNull</span>(message = <span class="code-string">"Set Level cannot be null"</span>)</span><span class="code-row"><span class="code-ln">24</span>    <span class="code-keyword">private</span> SetLevelEnum setLevel;</span><span class="code-row"><span class="code-ln">25</span></span><span class="code-row"><span class="code-ln">26</span>    <span class="code-annotation">@ApiModelProperty</span>(<span class="code-string">"NetSuite Customer ID. Required only when Set Level is SOLD_TO (synced to every pickup mapping row); ignored when Set Level is PICKUP"</span>)</span><span class="code-row"><span class="code-ln">27</span>    <span class="code-keyword">private</span> Long netSuitCustomerId;</span></code></pre></details></div></div></details><details class="file-group findings-file-group" id="fg-e894fda01f35" data-file-path="openspec/changes/s26-spx-pi-7775-customer-mapping-set-level/design.md" data-short-name="design.md" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">openspec/changes/s26-spx-pi-7775-customer-mapping-set-level/design.md</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">2 处影响（1 个根因）</span></summary><div class="file-group-body"><div class="finding-card cluster-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-cat">边界条件</span><span class="cluster-badge">根因 · 2 处影响</span><span class="evidence-line-unverified-badge" style="color:#c62828;border:1px solid #c62828;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段附近 &#177;5 行内未找到 evidence_quote 摘抄的原文，行号未经核实，下方证据代码可能不是问题真正所在的位置，请人工核实">&#9888; 行号未验证</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 NULL-003 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 NULL-003</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：`<code>ar_receivable_customer_mapping</code>（<code>oms-infrastructure/.../db/finance/po/ArReceivableCustomerMapping.java</code>，financeDataSource）当前是纯 pickup 维度的存储：<code>customerId</code>（指向共享主数据表 <code>Customer</code>）+ <code>pickupAccountId</code>（指向 <code>Cu…</code>。这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「除法运算未判分母为零」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">1</span>## Context</span><span class="code-row"><span class="code-ln">2</span></span><span class="code-row code-row-target"><span class="code-ln">3</span>`ar_receivable_customer_mapping`（`oms-infrastructure/.../db/finance/po/ArReceivableCustomerMapping.java`，financeDataSource）当前是纯 pickup 维度的存储：`customerId`（指向共享主数据表 `Customer`）+ `pickupAccountId`（指向 `CustomerAccount`）+ NetSuite 三个映射字段 + `settlementType`。</span><span class="code-row"><span class="code-ln">4</span></span><span class="code-row"><span class="code-ln">5</span>经与用户确认生产数据现状：</span><span class="code-row"><span class="code-ln">6</span>- `pickup_account_id IS NULL` 的记录是历史脏数据，业务方将另行清理，不代表任何有效的 Set Level 语义，本次改动不基于这批记录做任何推导</span><span class="code-row"><span class="code-ln">7</span>- `pickup_account_id = customer_id` 的记录是正常数据，代表这个客户当前只有一份统一配置（事实上的 <span class="code-string">"Sold To"</span>）</span><span class="code-row"><span class="code-ln">8</span>- 目前全库只有 **<span class="code-number">619</span>、<span class="code-number">762</span>** 两个客户名下存在真正意义上的多个不同 pickup account 分别配置（事实上的 <span class="code-string">"Pickup"</span>），其余有效客户都是上面的单行统一配置形态</span></code></pre></details><details class="cluster-locations"><summary>展开查看全部 2 处影响位置</summary><table class="loc-table"><thead><tr><th>文件</th><th>行</th><th>问题摘要</th></tr></thead><tbody><tr><td class="loc-file">openspec/changes/s26-spx-pi-7775-customer-mapping-set-level/design.md</td><td class="loc-line">3</td><td class="loc-snippet">固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：``ar_receivable_customer_mapping`（`oms-infrastructure/.…</td></tr><tr><td class="loc-file">openspec/changes/s26-spx-pi-7775-customer-mapping-set-level/design.md</td><td class="loc-line">3</td><td class="loc-snippet">固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：``ar_receivable_customer_mapping`（`oms-infrastructure/.…</td></tr></tbody></table></details></div></div></details></div></div></details>
+    </div>
+
+    <div id="panel-dp" class="report-panel" role="tabpanel" aria-labelledby="tab-dp">
+      <div class="dp-shell"><div class="dp-header">
+  <h1>数据权限分析报告</h1>
+  <p class="subtitle">AI Code Review · 接口级别数据权限审计</p>
+  <div class="meta-row"><div class="meta-item">项目 <strong>oms</strong></div><div class="meta-item">涉及接口路径（自动汇总） <strong>/admin/ar/receivable/customer-mapping/list-by-customer · /admin/ar/receivable/customer-mapping/set-level/save</strong></div><div class="meta-item">报告日期 <strong>2026-09-08 17:08:27</strong></div><div class="meta-item">涉及角色标签 <strong>customer-mapping:save、customer-mapping:view</strong></div></div>
+</div>
+
+<div class="dp-body">
+
+  <div class="dp-stats">
+    
+  <div class="summary-grid">
+    <div class="summary-card critical"><div class="count">0</div><div class="label">Critical</div></div>
+    <div class="summary-card high"><div class="count">2</div><div class="label">Major</div></div>
+    <div class="summary-card medium"><div class="count">0</div><div class="label">Minor</div></div>
+    <div class="summary-card info"><div class="count">0</div><div class="label">Info</div></div>
+  </div>
+  <p style="margin:8px 0 0;font-size:.8rem;color:#718096;">Total 2 条权限类问题 · 涉及 2 个接口（已解析路径）</p>
+
+  </div>
+
+  <div class="dp-section">
+    <div class="dp-section-title">角色权限定义</div>
+    <div class="dp-roles"><div class="role-box"><div class="role-icon">&#128100;</div><div class="role-info"><h3>项目级环境事实（审查时须知）</h3><div class="role-md">- <strong>driver</strong>：司机；仅自身用户与当前路线/包裹相关数据。<br/>
+- <strong>driver-leader / fleet leader</strong>：车队队长；仅本 <code>fleetId</code> 范围内数据。<br/>
+- <strong>operator / dispatcher</strong>：运营/调度；按 <code>facilityCode</code>、DSP 等约定收敛列表与详情。<br/>
+- <strong>admin</strong>：管理员；可访问全量（若代码中另有细分需写明）。<br/>
+<br/>
+<br/>
+- 管理端接口通常需 <code>@PreAuthorize</code> 或项目统一 <code>AuthUtil</code> 校验。<br/>
+- 列表/导出须注入当前用户的数据范围（如 <code>fleetId</code>、<code>dspId</code>），禁止仅靠前端传参筛选。<br/>
+<br/>
+<br/>
+- 运行时配置以 Nacos 配置中心为准，本地 application.yml 的开关值不代表生产实际值。<br/>
+- 各服务大量使用自带池化的 starter（IBM MQ / Druid / Lettuce / Kafka）；自定义 @Primary 基础设施 Bean 会使 starter 自动装配让位，池化/缓存包装随之失效。<br/>
+- 海关链路（ACAS/AMS/ABI）存在 MAWB→数千小包的批量放大特征（一次 MAWB 级操作可触发 4000+ 次逐条发送），发送路径上任何 per-call 开销都会被放大三个数量级。</div></div></div></div>
+  </div>
+
+  <div class="dp-gate"></div>
+
+  <div class="dp-section">
+    <div class="dp-section-title">接口权限审计总览</div>
+    <div class="table-wrap"><table class="dp-audit"><thead><tr><th>方法</th><th>路径</th><th>Service 方法</th><th>权限校验</th><th>数据范围</th><th>风险</th><th>问题描述</th></tr></thead><tbody><tr class="row-major"><td style='white-space:nowrap;vertical-align:middle;'><span class="badge badge-post">POST</span></td><td style='min-width:120px;'><code style="font-size:.82rem;word-break:break-all;">/admin/ar/receivable/customer-mapping/list-by-customer</code></td><td style='min-width:160px;'><code style="font-size:.82rem;">queryCustomerMappingsByCustomer(ArReceivableCustomerMappingPageRequest request)</code></td><td style='white-space:nowrap;'><span style="color:#dd6b20;">待复核</span></td><td style='min-width:140px;font-size:.85rem;'><span style="font-size:.85rem;">代码仅校验 customer-mapping:view，随后按请求条件直接查询并返回客户映射分组，未见数据范围过滤</span></td><td style='white-space:nowrap;'><div class="risk-zh">高风险（跨客户配置越权读取）</div><div style="margin-top:6px;"><span class="badge badge-high">HIGH</span></div></td><td style='min-width:220px;'><ul class="issue-list"><li><strong>原因：</strong> <code>ArReceivableController.queryCustomerMappingsByCustomer()</code> 仅声明 <code>@RequirePermissions(&quot;customer-mapping:view&quot;)</code>，而 <code>ArReceivableService.queryCustomerMappingsByCustomer(ArReceivableCustomerMappingPageRequest request)</code> 直接按请求条件查询 <code>customer_id</code>、客户名称、<code>pickupAccountName</code>、<code>netSuitCustomerId</code>、<code>netSuitCustomerCode</code>、<code>customerProjectNamingCode</code>、<code>settlementType</code> 等客户映射信息，代码中未见任何基于当前登录用户的数据范围过滤</li><li><strong>影响：</strong> 只要拥有 <code>customer-mapping:view</code> 的账号构造任意 <code>customerId</code>、<code>netSuitCustomerId</code> 或分页条件，就可能枚举并读取不属于自己管理范围的客户映射配置，形成跨客户账务配置数据越权读取，泄露 NetSuite 对应关系和结算配置</li></ul></td></tr><tr class="row-major"><td style='white-space:nowrap;vertical-align:middle;'><span class="badge badge-post">POST</span></td><td style='min-width:120px;'><code style="font-size:.82rem;word-break:break-all;">/admin/ar/receivable/customer-mapping/set-level/save</code></td><td style='min-width:160px;'><code style="font-size:.82rem;">changeCustomerSetLevel(ChangeCustomerSetLevelReq request)</code></td><td style='white-space:nowrap;'><span style="color:#dd6b20;">待复核</span></td><td style='min-width:140px;font-size:.85rem;'><span style="font-size:.85rem;">代码仅校验 customer-mapping:save，随后直接按 request.getCustomerId() 修改目标客户配置，未见数据范围限制</span></td><td style='white-space:nowrap;'><div class="risk-zh">高风险（跨客户配置越权修改）</div><div style="margin-top:6px;"><span class="badge badge-high">HIGH</span></div></td><td style='min-width:220px;'><ul class="issue-list"><li><strong>原因：</strong> <code>ArReceivableController.changeCustomerSetLevel()</code> 仅通过 <code>@RequirePermissions(&quot;customer-mapping:save&quot;)</code> 做功能级鉴权，然后 <code>ArReceivableService.changeCustomerSetLevel(ChangeCustomerSetLevelReq request)</code> 直接使用 <code>request.getCustomerId()</code> 读取并修改任意客户的 <code>ArReceivableCustomerSetting</code> 与 <code>ArReceivableCustomerMapping</code>，代码中未见任何基于当前登录用户的数据范围校验，也未见对 <code>customerId</code> 归属的限制</li><li><strong>影响：</strong> 只要拥有 <code>customer-mapping:save</code> 的账号知道或猜到其他客户的 <code>customerId</code>，就可以把该客户切换到 <code>SetLevelEnum.PICKUP</code> 或 <code>SetLevelEnum.SOLD_TO</code>，并批量覆盖该客户全部 mapping 的 <code>netSuitCustomerId</code>、<code>netSuitCustomerCode</code>、<code>customerProjectNamingCode</code>、<code>settlementType</code>，造成跨客户配置越权修改和账务映射被篡改</li></ul></td></tr></tbody></table></div>
+  </div>
+
+  
+
+  <div class="dp-section">
+    <div class="dp-section-title">端点详情</div>
+    <div class="dp-folds"><details class="issue-fold"><summary>POST /admin/ar/receivable/customer-mapping/list-by-customer</summary><div class="issue-fold-body">
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="badge high">High</span>
+      <span class="method-badge">POST</span>
+      <span class="endpoint">/admin/ar/receivable/customer-mapping/list-by-customer</span>
+    </div>
+    <div class="issue-body">
+      <div class="section-title">问题描述</div>
+      <p class="loc-hint">关联位置：<code>oms-domain/src/main/java/io/speedx/oms/domain/service/ArReceivableService.java L2727-2771</code></p>
+      <p class="desc">1.
+<code>ArReceivableController.queryCustomerMappingsByCustomer()</code> 仅声明 <code>@RequirePermissions(&quot;customer-mapping:view&quot;)</code>，而 <code>ArReceivableService.queryCustomerMappingsByCustomer(ArReceivableCustomerMappingPageRequest request)</code> 直接按请求条件查询 <code>customer_id</code>、客户名称、<code>pickupAccountName</code>、<code>netSuitCustomerId</code>、<code>netSuitCustomerCode</code>、<code>customerProjectNamingCode</code>、<code>settlementType</code> 等客户映射信息，代码中未见任何基于当前登录用户的数据范围过滤。</p>
+      
+      <div class="two-col">
+        <div class="impact-box">
+          <h4>安全影响</h4>
+          <p>只要拥有 <code>customer-mapping:view</code> 的账号构造任意 <code>customerId</code>、<code>netSuitCustomerId</code> 或分页条件，就可能枚举并读取不属于自己管理范围的客户映射配置，形成跨客户账务配置数据越权读取，泄露 NetSuite 对应关系和结算配置。</p>
+        </div>
+        <div class="fix-box">
+          <h4>修复建议</h4>
+          <ul class="list"><li>在 <code>ArReceivableService.queryCustomerMappingsByCustomer(ArReceivableCustomerMappingPageRequest request)</code> 查询前注入当前登录用户可见的客户范围，并把该范围强制拼入 <code>countCustomerIdsByCriteria</code>、<code>findCustomerIdsByCriteria</code> 以及后续 <code>Specification</code>；不要仅依赖前端传入的 <code>customerId</code> 过滤。若暂无统一数据权限组件，至少在 Service 层先根据当前用户可见客户集合做白名单限制。</li></ul>
+        </div>
+      </div>
+      
+    </div>
+  </div>
+</div></details>
+<details class="issue-fold"><summary>POST /admin/ar/receivable/customer-mapping/set-level/save</summary><div class="issue-fold-body">
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="badge high">High</span>
+      <span class="method-badge">POST</span>
+      <span class="endpoint">/admin/ar/receivable/customer-mapping/set-level/save</span>
+    </div>
+    <div class="issue-body">
+      <div class="section-title">问题描述</div>
+      <p class="loc-hint">关联位置：<code>oms-domain/src/main/java/io/speedx/oms/domain/service/ArReceivableService.java L2255-2268</code></p>
+      <p class="desc">1.
+<code>ArReceivableController.changeCustomerSetLevel()</code> 仅通过 <code>@RequirePermissions(&quot;customer-mapping:save&quot;)</code> 做功能级鉴权，然后 <code>ArReceivableService.changeCustomerSetLevel(ChangeCustomerSetLevelReq request)</code> 直接使用 <code>request.getCustomerId()</code> 读取并修改任意客户的 <code>ArReceivableCustomerSetting</code> 与 <code>ArReceivableCustomerMapping</code>，代码中未见任何基于当前登录用户的数据范围校验，也未见对 <code>customerId</code> 归属的限制。</p>
+      
+      <div class="two-col">
+        <div class="impact-box">
+          <h4>安全影响</h4>
+          <p>只要拥有 <code>customer-mapping:save</code> 的账号知道或猜到其他客户的 <code>customerId</code>，就可以把该客户切换到 <code>SetLevelEnum.PICKUP</code> 或 <code>SetLevelEnum.SOLD_TO</code>，并批量覆盖该客户全部 mapping 的 <code>netSuitCustomerId</code>、<code>netSuitCustomerCode</code>、<code>customerProjectNamingCode</code>、<code>settlementType</code>，造成跨客户配置越权修改和账务映射被篡改。</p>
+        </div>
+        <div class="fix-box">
+          <h4>修复建议</h4>
+          <ul class="list"><li>在 <code>ArReceivableService.changeCustomerSetLevel(ChangeCustomerSetLevelReq request)</code> 入口增加基于当前登录用户的数据范围校验，明确校验 <code>request.getCustomerId()</code> 是否在当前用户可管理的客户范围内；若系统只有功能权限没有数据权限，也应在 Controller/Service 层补充客户归属校验后再允许执行批量更新。可将校验封装为统一方法，在 <code>saveCustomerMapping</code>、<code>migrateCustomerMappings</code>、<code>queryCustomerMappingsByCustomer</code> 等同类客户映射接口复用。</li></ul>
+        </div>
+      </div>
+      
+    </div>
+  </div>
+</div></details></div>
+  </div>
+
+  
+
+  
+
+  <div class="dp-footer"><p>本报告由 AI Code Review 生成（data_permission 模式）。权限类 finding 涉及文件：<strong>oms-domain/src/main/java/io/speedx/oms/domain/service/ArReceivableService.java</strong></p><p style="margin-top:4px;">生成时间：2026-09-08 17:08:27 · 项目：oms</p></div>
+
+</div>
+</div>
+    </div>
+  </div>
+  <script>
+    function escHtml(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function formatSummaryInner(rawBlock) {
+      var lines = rawBlock.split(/\r?\n/);
+      var html = '';
+      var listType = null;
+
+      function closeList() {
+        if (listType) { html += '</' + listType + '>'; listType = null; }
+      }
+
+      function renderInline(text) {
+        var st = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        st = st.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        st = st.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+        return st;
+      }
+
+      lines.forEach(function(line) {
+        var trimmed = line.trim();
+        if (!trimmed) { closeList(); return; }
+
+        if (/^#{1,3}\s+/.test(trimmed)) {
+          closeList();
+          var title = trimmed.replace(/^#{1,3}\s+/, '');
+          html += '<p class="summary-section-title">' + renderInline(title) + '</p>';
+          return;
+        }
+
+        if (/^\*\*[^*]+\*\*[：:。]?$/.test(trimmed)) {
+          closeList();
+          var title2 = trimmed.replace(/^\*\*|\*\*[：:。]?$/g, '');
+          html += '<p class="summary-section-title">' + renderInline(title2) + '</p>';
+          return;
+        }
+
+        if (/^[【「『].*[】」』]$/.test(trimmed) ||
+            (trimmed.length <= 30 && /[：:]$/.test(trimmed) && !/^\d/.test(trimmed))) {
+          closeList();
+          var title3 = trimmed.replace(/^[【「『]|[】」』]$/g, '').replace(/[：:]$/, '');
+          html += '<p class="summary-section-title">' + renderInline(title3) + '</p>';
+          return;
+        }
+
+        if (/^[-*]\s+/.test(trimmed)) {
+          if (listType !== 'ul') { closeList(); html += '<ul>'; listType = 'ul'; }
+          var content = trimmed.replace(/^[-*]\s+/, '');
+          html += '<li>' + renderInline(content) + '</li>';
+          return;
+        }
+
+        if (/^[\(（]?\d+[\)）.\、]\s*/.test(trimmed)) {
+          if (listType !== 'ol') { closeList(); html += '<ol>'; listType = 'ol'; }
+          var content2 = trimmed.replace(/^[\(（]?\d+[\)）.\、]\s*/, '');
+          html += '<li>' + renderInline(content2) + '</li>';
+          return;
+        }
+
+        closeList();
+        if (trimmed.length > 280 && /[。！？][\s\u3000]/.test(trimmed)) {
+          var chunks = trimmed.split(/(?<=[。！？])[\s\u3000]+/).filter(function (c) { return c.trim(); });
+          if (chunks.length > 1) {
+            chunks.forEach(function (c) {
+              html += '<p>' + renderInline(c.trim()) + '</p>';
+            });
+            return;
+          }
+        }
+        html += '<p>' + renderInline(trimmed) + '</p>';
+      });
+
+      closeList();
+      return html;
+    }
+
+    function formatSummary() {
+      var el = document.getElementById('summary-text');
+      if (!el) return;
+      if (el.classList.contains('summary-preformatted')) return;
+      var raw = el.textContent || '';
+      raw = raw.replace(/\s+(?=本分片)/g, '\n---SHARD---\n');
+      var shards = raw.split(/\n---SHARD---\n/).map(function(s) { return s.trim(); }).filter(Boolean);
+      if (!shards.length) shards = [raw.trim()].filter(Boolean);
+
+      if (shards.length <= 1) {
+        var inner = formatSummaryInner(shards[0] || '');
+        if (inner) el.innerHTML = inner;
+        return;
+      }
+
+      var htmlShards = [];
+      for (var i = 0; i < shards.length; i++) {
+        var blockHtml = formatSummaryInner(shards[i]);
+        if (blockHtml) htmlShards.push('<div class="summary-shard">' + blockHtml + '</div>');
+      }
+      var head = htmlShards.slice(0, 3).join('');
+      var tail = htmlShards.slice(3).join('');
+      var moreBtn = '';
+      if (tail) {
+        moreBtn = '<button type="button" class="summary-toggle" id="summary-toggle-btn" aria-expanded="false">展开全部分片结论 (' + (htmlShards.length - 3) + ')</button>';
+      }
+      el.innerHTML = '<div class="summary-shards-wrap">' + head +
+        (tail ? '<div class="summary-more" id="summary-more-block" hidden>' + tail + '</div>' : '') +
+        moreBtn + '</div>';
+
+      var btn = document.getElementById('summary-toggle-btn');
+      var more = document.getElementById('summary-more-block');
+      if (btn && more) {
+        btn.addEventListener('click', function() {
+          var ex = btn.getAttribute('aria-expanded') === 'true';
+          more.hidden = ex;
+          btn.setAttribute('aria-expanded', ex ? 'false' : 'true');
+          btn.textContent = ex
+            ? ('展开全部分片结论 (' + (htmlShards.length - 3) + ')')
+            : '收起分片结论';
+        });
+      }
+    }
+
+    function switchReportTab(which) {
+      var panels = ['panel-general', 'panel-dp'];
+      var tabs = ['tab-general', 'tab-dp'];
+      var activePanel = which === 'dp' ? 'panel-dp' : 'panel-general';
+      var activeTab = which === 'dp' ? 'tab-dp' : 'tab-general';
+      panels.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) { el.classList.toggle('is-active', id === activePanel); }
+      });
+      tabs.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) { el.setAttribute('aria-selected', id === activeTab ? 'true' : 'false'); }
+      });
+    }
+
+    var activeFilter = null;
+
+    function getSearchQuery() {
+      var inp = document.getElementById('findings-search');
+      return inp ? String(inp.value || '').trim().toLowerCase() : '';
+    }
+
+    function applyFindingsFilter() {
+      var hint = document.getElementById('filter-hint');
+      var hintLabel = document.getElementById('filter-hint-label');
+
+      if (activeFilter) {
+        hintLabel.textContent = activeFilter.toUpperCase();
+        hint.style.display = 'block';
+      } else {
+        hint.style.display = 'none';
+      }
+
+      var q = getSearchQuery();
+
+      document.querySelectorAll('.findings-file-group').forEach(function(group) {
+        var visible = 0;
+        group.querySelectorAll('.finding-card').forEach(function(card) {
+          var sev = card.getAttribute('data-severity') || 'info';
+          var sevOk = !activeFilter || sev === activeFilter;
+          var textOk = !q || card.textContent.toLowerCase().indexOf(q) !== -1;
+          var show = sevOk && textOk;
+          card.style.display = show ? '' : 'none';
+          if (show) visible++;
+        });
+        group.style.display = visible === 0 ? 'none' : '';
+        // 任务115续作：finding 现在可能嵌套在 <details class="action-group"> 里，
+        // 该祖先关闭时子元素无论 style.display 如何都不会渲染，命中过滤结果时须一并展开。
+        if (visible > 0) {
+          var actionGroup = group.closest('.action-group');
+          if (actionGroup) actionGroup.open = true;
+        }
+      });
+
+      document.querySelectorAll('.file-block').forEach(function(block) {
+        if (block.classList.contains('findings-file-group')) return;
+        var rows = block.querySelectorAll('tbody tr');
+        if (!rows.length) return;
+        var vis = 0;
+        rows.forEach(function(row) {
+          if (!activeFilter || row.querySelector('.chip.' + activeFilter)) {
+            row.style.display = '';
+            vis++;
+          } else {
+            row.style.display = 'none';
+          }
+        });
+        block.style.display = vis === 0 ? 'none' : '';
+      });
+
+      // 顶部 Critical/Major 计数把「牵连影响」的 RISK/NEEDS_HUMAN 也并了进去
+      // （用户拍板口径），但这些卡片不是 .finding-card，之前点 Critical 只会
+      // 过滤上面两段、对牵连影响毫无反应，数字和实际看到的东西对不上
+      // （build TEST_pus-exchange-api/222 反馈）。按同一套口径把牵连影响的卡
+      // 也纳入过滤：RISK 对应 critical，NEEDS_HUMAN 对应 major；筛 minor/info
+      // 时牵连影响没有对应桶，全部隐藏是符合口径的。
+      var impactLevelMap = { critical: 'RISK', major: 'NEEDS_HUMAN' };
+      document.querySelectorAll('.impact-card[data-impact-level]').forEach(function(card) {
+        var level = card.getAttribute('data-impact-level');
+        var show = !activeFilter || impactLevelMap[activeFilter] === level;
+        card.style.display = show ? '' : 'none';
+        if (show && activeFilter) {
+          var d = card.closest('details');
+          if (d) d.open = true;
+        }
+      });
+    }
+
+    function filterBySeverity(chip) {
+      var filter = chip.dataset.filter;
+      if (activeFilter === filter) {
+        clearFilter();
+        return;
+      }
+      activeFilter = filter;
+      document.querySelectorAll('.filter-chip').forEach(function(c) {
+        if (c.dataset.filter === filter) {
+          c.classList.add('active');
+          c.classList.remove('dimmed');
+        } else {
+          c.classList.remove('active');
+          c.classList.add('dimmed');
+        }
+      });
+      applyFindingsFilter();
+    }
+
+    function clearFilter() {
+      activeFilter = null;
+      document.querySelectorAll('.filter-chip').forEach(function(c) {
+        c.classList.remove('active', 'dimmed');
+      });
+      applyFindingsFilter();
+    }
+
+    function initFindingsToolbar() {
+      var tb = document.getElementById('findings-toolbar');
+      if (!tb) return;
+      var groups = document.querySelectorAll('#panel-general .findings-file-group');
+      tb.style.display = groups.length ? '' : 'none';
+    }
+
+    (function () {
+      var chips = document.querySelectorAll('table .chip');
+      for (var i = 0; i < chips.length; i++) {
+        chips[i].textContent = chips[i].textContent.toUpperCase();
+      }
+
+      formatSummary();
+
+      initFindingsToolbar();
+
+      var ex = document.getElementById('expand-all-files');
+      var cl = document.getElementById('collapse-all-files');
+      if (ex) ex.addEventListener('click', function() {
+        document.querySelectorAll('.findings-file-group').forEach(function(d) { d.open = true; });
+        document.querySelectorAll('.action-group').forEach(function(d) { d.open = true; });
+      });
+      if (cl) cl.addEventListener('click', function() {
+        document.querySelectorAll('.findings-file-group').forEach(function(d) { d.open = false; });
+        document.querySelectorAll('.action-group').forEach(function(d) { d.open = false; });
+      });
+
+      var search = document.getElementById('findings-search');
+      if (search) {
+        search.addEventListener('input', function() { applyFindingsFilter(); });
+      }
+    })();
+
+    // Chart.js initialization
+    function renderCategoryChart(categoryData) {
+      var ctx = document.getElementById('categoryChart');
+      if (!ctx) return;
+      ctx = ctx.getContext('2d');
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: Object.keys(categoryData),
+          datasets: [{
+            label: '问题数量',
+            data: Object.values(categoryData),
+            // 跟报告主色（teal 系）协调的低饱和度调色板，替换 Chart.js 默认的
+            // 高饱和度七彩配色（用户反馈报告"不好看"，实测截图确认默认色彩
+            // 花哨刺眼、跟品牌色不搭）；18 色覆盖 VALID_CATEGORIES 全量枚举，
+            // 保证再多分类同时出现也不会因为数组不够长而退化成无色
+            backgroundColor: [
+              '#0f766e', '#b5651d', '#4a6fa5', '#8e6c96',
+              '#6b8f71', '#b58a3d', '#b56576', '#5c7a89',
+              '#3d8a8a', '#a3703f', '#5f7a9d', '#7a6b9d',
+              '#7fa17f', '#c29b5c', '#9d6b7a', '#6b8a9d',
+              '#8a9d6b', '#9d7a5f'
+            ]
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: true } }
+        }
+      });
+    }
+
+    // 这个短列表只是一句话摘要，不值得把 markdown 代码块渲染进一个 <li> 里——
+    // 直接去掉标记符本身，露出裸文本即可（跟 _render_markdown_lite 的完整
+    // 渲染不同，这里要的是"别露出字面 ** 和 ``` "，不是"渲染出富文本"）
+    function stripMdLite(text) {
+      return (text || '')
+        .replace(/```[a-zA-Z]*\n?/g, '')
+        .replace(/```/g, '')
+        .replace(/\*\*([^*]+)\*\*/g, '$1')
+        .replace(/`([^`]+)`/g, '$1');
+    }
+
+    function renderTopCriticals(topCriticals) {
+      var list = document.getElementById('top-criticals-list');
+      var box = document.getElementById('top-criticals');
+      if (!list) return;
+      // 一条都没有时整块收起，不留「标题 + 暂无 Critical 问题」空框占首屏
+      if (!topCriticals || !topCriticals.length) {
+        if (box) box.hidden = true;
+        list.innerHTML = '';
+        return;
+      }
+      if (box) box.hidden = false;
+      list.innerHTML = topCriticals.map(function(c) {
+        var desc = stripMdLite(c.description || '');
+        if (desc.length > 120) desc = desc.substring(0, 120) + '…';
+        // source 只有牵连影响条目才带：不标来源的话，读者会把"改动波及到的
+        // 其他调用点"当成"这段代码本身写错了"，两者要采取的动作不一样
+        var tag = c.source
+          ? '<span class="tc-source">' + escHtml(c.source) + '</span>'
+          : '';
+        return '<li>' + tag + '<strong>' + escHtml(c.file + (c.line ? ':' + c.line : '')) +
+               '</strong><span class="tc-desc">' + escHtml(desc) + '</span></li>';
+      }).join('');
+    }
+
+    // Export stubs (implemented in Task 5)
+    function exportJira() { alert('导出为 Jira 功能待实现'); }
+    function exportExcel() { alert('导出为 Excel 功能待实现'); }
+    function exportCsv() { alert('导出为 CSV 功能待实现'); }
+
+    // Inject summary data (Task 5)
+    if (typeof renderCategoryChart === 'function') renderCategoryChart({"\u8fb9\u754c\u6761\u4ef6": 4, "\u5e76\u53d1\u5b89\u5168": 4, "SQL/\u6570\u636e\u5e93": 2, "\u4e1a\u52a1\u903b\u8f91": 2, "\u6743\u9650\u4e0e\u8bbf\u95ee\u63a7\u5236": 2, "\u5f02\u5e38\u5904\u7406": 1, "\u9700\u6c42\u77db\u76fe": 1, "\u9700\u6c42\u672a\u5b9e\u73b0": 1, "API\u5951\u7ea6": 1});
+if (typeof renderTopCriticals === 'function') renderTopCriticals([{"file": "oms-domain/src/main/java/io/speedx/oms/domain/service/ArReceivableService.java", "line": "2288-2295", "severity": "critical", "category": "需求未实现", "description": "原因：需求文档 `proposal.md` 与 `tasks.md 2.3` 都把 `changeCustomerSetLevel` 的 `SOLD_TO` 分支定义为：将该客户下所有 pickup 的 mapping 记录同步更新为同一份 NetSuite 字段值；而本次实现的 `validateSoldToSyncFields` 只强制校验 `netSuitCustomerId`、`netSuitCustomerCode`、`customerProjectNamingCode`，没有对 `settlementType` 做必填校验，随后 `syncSoldToMappingRows` 又会无条件执行 `mapping.setSettlementType(request.getSettlementType());`。这意味着调用 `/customer-mapping/set-level/save` 切到 `SOLD_TO` 时可以把所有 pickup 行的 `settlementType` 同步写成 `null`。影响：一旦前端或调用方在切换到 `SOLD_TO` 时未传 `settlementType`，系统会把原本已有的 `settlementType` 批量清空，结果不再是需求要求的“同步为同一份配置”，而是把统一配置中的一个字段丢失。", "suggestion": "在 `validateSoldToSyncFields` 中补充 `settlementType` 非空校验，或在 `syncSoldToMappingRows` 中明确保留原值而不是写入 `null`。", "test_scenario": "准备一个客户名下两条 `ArReceivableCustomerMapping`，两条记录当前都有非空 `settlementType`；调用 `/admin/ar/receivable/customer-mapping/set-level/save`，请求体设置 `setLevel=SOLD_TO` 且故意不传 `settlementType`，验证接口应拒绝请求，且数据库中两条记录的 `settlementType` 不被清空。", "http_method": "", "path_pattern": "", "permission_tags": [], "java_entry_method": "", "expected_permission": "", "actual_behavior": "", "evidence_refs": [], "risk_label_zh": "", "evidence_quote": "mapping.setSettlementType(request.getSettlementType());", "requirement_ref": "openspec/changes/s26-spx-pi-7775-customer-mapping-set-level/tasks.md · 2.3 在 `ArReceivableService` 新增 `queryCustomerMappingsByCustomer` 方法 · `SOLD_TO` 额外填充顶层聚合 NetSuite 字段（含 settlementType）以及 proposal.md · `changeCustomerSetLevel` 在目标 `SOLD_TO` 时将所有 pickup 的 mapping 记录同步更新为同一份字段值", "unimplemented_feature": "切换到 `SOLD_TO` 时没有保证 `settlementType` 作为统一配置字段被完整同步，允许把该字段批量清空。", "deviation_rationale_check": "", "_line_unverified": true}, {"file": "oms-infrastructure/src/main/java/io/speedx/oms/infrastructure/db/finance/repository/ArReceivableCustomerMappingRepositoryImpl.java", "line": "24-25", "severity": "critical", "category": "SQL/数据库", "description": "**原因：** `ArReceivableCustomerMappingRepositoryImpl.findCustomerIdsByCriteria` 通过字符串拼接构造原生 SQL，把 `whereClause` 直接拼进 `sql`：`\"SELECT customer_id FROM ar_receivable_customer_mapping WHERE \" + whereClause + ...`。虽然当前 `buildWhereClause` 内部参数值使用了 `?` 占位，但这类模式本身违反禁止 SQL 拼接的基线规则；一旦后续有人在 `buildWhereClause` 中继续拼接排序字段、列名或其他来自 `ArReceivableCustomerMappingPageRequest` 的文本条件，就会把注入点直接暴露在财务查询链路里。\n\n**影响：** 该实现把查询安全性建立在“后续维护者永远只追加参数化条件”的隐含前提上，缺少结构性约束。后续需求若在同一方法继续扩展动态 SQL，很容易在 `/admin/ar/receivable/customer-mapping/list` 或 `/admin/ar/receivable/customer-mapping/list-by-customer` 对应的数据查询中引入 SQL 注入，导致财务客户映射数据被越权读取或数据库被恶意探测。", "suggestion": "将 `findCustomerIdsByCriteria` 和 `countCustomerIdsByCriteria` 改为使用 JPA Criteria API、`NamedParameterJdbcTemplate` 配合固定 SQL 模板，或至少把可变条件限定为受控枚举/布尔开关，不要通过 `String whereClause` 进行整段 SQL 拼接。若必须保留原生 SQL，请把每个条件片段在方法内按固定分支追加，并禁止任何来自 `ArReceivableCustomerMappingPageRequest` 的文本直接参与 SQL 结构拼装。", "test_scenario": "新增安全回归测试：针对 `ArReceivableCustomerMappingPageRequest` 的 `netSuitCustomerCode`、`customerProjectNamingCode` 等文本字段分别传入包含单引号、注释符、通配符组合的值，验证 `findCustomerIdsByCriteria` 与 `countCustomerIdsByCriteria` 只按参数值匹配，不会报 SQL 语法错误、不会扩大结果集，也不会改变原始查询结构。", "http_method": "", "path_pattern": "", "permission_tags": [], "java_entry_method": "", "expected_permission": "", "actual_behavior": "", "evidence_refs": [], "risk_label_zh": "", "evidence_quote": "String sql = \"SELECT customer_id FROM ar_receivable_customer_mapping WHERE \" + whereClause +", "requirement_ref": "", "unimplemented_feature": "", "deviation_rationale_check": "", "_cluster_count": 2, "_cluster_locations": [{"file": "oms-infrastructure/src/main/java/io/speedx/oms/infrastructure/db/finance/repository/ArReceivableCustomerMappingRepositoryImpl.java", "line": "24-25", "description_snippet": "**原因：** `ArReceivableCustomerMappingRepositoryImpl.findCustomerIdsByCriteria` 通过"}, {"file": "oms-infrastructure/src/main/java/io/speedx/oms/infrastructure/db/finance/repository/ArReceivableCustomerMappingRepositoryImpl.java", "line": "35-36", "description_snippet": "**原因：** `ArReceivableCustomerMappingRepositoryImpl.countCustomerIdsByCriteria` 同"}]}, {"file": "oms-infrastructure/src/main/java/io/speedx/oms/infrastructure/db/finance/repository/ArReceivableCustomerMappingRepositoryImpl.java", "line": "38-39", "severity": "critical", "category": "SQL/数据库", "description": "**原因：** `ArReceivableCustomerMappingRepositoryImpl.countCustomerIdsByCriteria` 同样通过 `\"SELECT COUNT(*) FROM (SELECT customer_id FROM ar_receivable_customer_mapping WHERE \" + whereClause + \" GROUP BY customer_id) t\"` 拼接原生 SQL，把动态 `whereClause` 直接嵌入查询文本。  \n**影响：** 这与 `findCustomerIdsByCriteria` 形成同源风险：当前实现虽然参数值使用占位符，但动态 SQL 片段的拼接方式会持续放大后续引入 SQL 注入或错误条件拼接的概率，而且统计查询与列表查询一旦拼接逻辑偏离，还会造成分页总数与实际数据不一致。", "suggestion": "将 `countCustomerIdsByCriteria` 与 `findCustomerIdsByCriteria` 统一改造成同一套受控查询构造方式，例如 Criteria API 或命名参数 SQL 模板，避免把 `whereClause` 作为自由字符串拼接进 SQL。", "test_scenario": "对 `queryCustomerMappingsByCustomer` 传入多组边界筛选条件，验证统计总数与列表查询使用同一套参数化条件生成逻辑；同时检查实现中不存在把动态字符串直接拼进 SQL 文本的路径。", "http_method": "", "path_pattern": "", "permission_tags": [], "java_entry_method": "", "expected_permission": "", "actual_behavior": "", "evidence_refs": [], "risk_label_zh": "", "evidence_quote": "String sql = \"SELECT COUNT(*) FROM (SELECT customer_id FROM ar_receivable_customer_mapping WHERE \" +", "requirement_ref": "", "unimplemented_feature": "", "deviation_rationale_check": ""}]);
+
+    // Export dropdown toggle
+    (function() {
+      var btn = document.getElementById('export-btn');
+      var menu = document.getElementById('export-menu');
+      if (!btn || !menu) return;
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var shown = menu.style.display === 'block';
+        menu.style.display = shown ? 'none' : 'block';
+      });
+      document.addEventListener('click', function() {
+        menu.style.display = 'none';
+      });
+    })();
+  </script>
+</body>
+</html>
