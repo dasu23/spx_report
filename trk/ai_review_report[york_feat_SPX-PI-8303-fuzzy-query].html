@@ -1,0 +1,2618 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Code Review Report</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      /* 重新设计（用户反馈"前端样式不好看"）：底色/正文/次要文字/边框/标题
+         此前全部带一层绿色调（跟 --accent 撞在一起，显得到处都是同一种绿），
+         改成中性板岩灰基调 + 一个teal 强调色，层次更清楚，也更耐看。 */
+      --bg: #f3f4f7;
+      --card: #ffffff;
+      --text: #1c2333;
+      --muted: #667085;
+      --border: #e3e6ec;
+      --heading: #0f1420;
+      --accent: #0f766e;
+      --accent-dark: #0b5850;
+      --accent-soft: #e6f4f2;
+
+      --critical-bg: #fdeceb;
+      --critical-text: #b3261e;
+      --critical-border: #f3b7b2;
+      --critical-strong: #d1291f;
+
+      --major-bg: #fdf1e3;
+      --major-text: #a85311;
+      --major-border: #f4d19d;
+      --major-strong: #d5720f;
+
+      --minor-bg: #fdf7e0;
+      --minor-text: #8a6208;
+      --minor-border: #f1e096;
+      --minor-strong: #a37d0a;
+
+      --info-bg: #eaf1fd;
+      --info-text: #23509c;
+      --info-border: #c0d6f6;
+      --info-strong: #2f66c9;
+
+      --safe-bg: #e8f6ee;
+      --safe-text: #1a7a4c;
+      --safe-border: #aee3c4;
+
+      --chip-bg: #eef0f5;
+      --code-bg: #10182b;
+      --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+      --shadow: 0 8px 24px rgba(16, 24, 40, 0.08);
+      --shadow-lg: 0 20px 44px rgba(16, 24, 40, 0.14);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans SC", Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .page {
+      max-width: 1180px;
+      margin: 28px auto 48px;
+      padding: 0 20px;
+    }
+
+    /* 重新设计：原来是一大片高饱和绿色渐变斜切块，视觉上很"闹"；
+       改成深板岩底色 + 顶部一条细 teal 强调线，克制一些，也更像专业
+       研发工具的报告头，而不是营销落地页banner。 */
+    .hero {
+      position: relative;
+      background: linear-gradient(165deg, #0b1220 0%, #121a2c 55%, #0e2422 100%);
+      color: #f4f7fb;
+      border-radius: 18px;
+      padding: 26px 28px 24px;
+      box-shadow: var(--shadow-lg);
+      margin-bottom: 18px;
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 3px;
+      background: linear-gradient(90deg, #14b8a6, #22d3ee 45%, #14b8a6 100%);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -60px;
+      top: -60px;
+      width: 220px;
+      height: 220px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(20, 184, 166, 0.22), transparent 70%);
+      pointer-events: none;
+    }
+
+    .hero h1 {
+      margin: 0 0 10px;
+      font-size: 24px;
+      font-weight: 700;
+      line-height: 1.25;
+      letter-spacing: 0.1px;
+    }
+
+    .hero-meta {
+      margin: 0;
+      font-size: 13.5px;
+      color: #aab4c8;
+      letter-spacing: 0.01em;
+    }
+
+    .summary {
+      background: var(--card);
+      padding: 16px 18px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      margin-bottom: 20px;
+    }
+
+    .summary h2,
+    .section-title {
+      margin: 0 0 12px;
+      font-size: 18px;
+      color: var(--heading);
+    }
+
+    .subsection-title {
+      margin-top: 28px;
+    }
+
+    .api-permission-block code {
+      font-size: 12px;
+      word-break: break-all;
+    }
+
+    .api-surface-sub {
+      margin: 18px 0 8px;
+      font-size: 16px;
+      color: var(--heading);
+    }
+
+    .inferred-hint {
+      margin: 0 0 12px;
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    /* 总体结论正文区 */
+    .summary-body {
+      margin: 0 0 16px;
+      font-size: 14px;
+      color: var(--text);
+      line-height: 1.75;
+    }
+
+    .summary-body p {
+      margin: 0 0 10px;
+    }
+
+    .summary-body p:last-child {
+      margin-bottom: 0;
+    }
+
+    .summary-body ol,
+    .summary-body ul {
+      margin: 4px 0 12px;
+      padding-left: 22px;
+    }
+
+    .summary-body ol li,
+    .summary-body ul li {
+      margin-bottom: 6px;
+      line-height: 1.65;
+    }
+
+    .summary-body .summary-section-title {
+      font-weight: 700;
+      color: var(--heading);
+      margin: 16px 0 6px;
+      font-size: 13px;
+      letter-spacing: 0.3px;
+      padding-left: 8px;
+      border-left: 3px solid var(--accent);
+    }
+
+    .summary-body .summary-section-title:first-child {
+      margin-top: 0;
+    }
+
+    .summary-body strong {
+      color: var(--heading);
+      font-weight: 700;
+    }
+
+    /* 严重级别筛选区 */
+    .filter-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-top: 6px;
+    }
+
+    .filter-label {
+      font-size: 12px;
+      color: var(--muted);
+      margin-right: 2px;
+    }
+
+    .chips-impact-note {
+      width: 100%;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 5px 13px;
+      border-radius: 9px;
+      font-size: 12.5px;
+      font-weight: 700;
+      background: var(--chip-bg);
+      color: var(--heading);
+      border: 1px solid transparent;
+    }
+
+    .filter-chip {
+      cursor: pointer;
+      transition: transform 0.12s, box-shadow 0.12s, opacity 0.12s;
+      user-select: none;
+    }
+
+    .filter-chip:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 3px 8px rgba(0,0,0,0.12);
+    }
+
+    .filter-chip.active {
+      box-shadow: 0 0 0 2.5px currentColor;
+      transform: translateY(-1px);
+    }
+
+    .filter-chip.dimmed {
+      opacity: 0.4;
+    }
+
+    .critical { background: var(--critical-bg); color: var(--critical-text); border-color: var(--critical-border); }
+    .major { background: var(--major-bg); color: var(--major-text); border-color: var(--major-border); }
+    .minor { background: var(--minor-bg); color: var(--minor-text); border-color: var(--minor-border); }
+    .info { background: var(--info-bg); color: var(--info-text); border-color: var(--info-border); }
+
+    /* 筛选状态提示条 */
+    #filter-hint {
+      display: none;
+      margin: -10px 0 14px;
+      padding: 8px 14px;
+      background: var(--accent-soft);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    #filter-hint .clear-filter {
+      margin-left: 8px;
+      color: var(--accent);
+      cursor: pointer;
+      font-weight: 600;
+      text-decoration: underline;
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    /* 工具栏：搜索 + 展开折叠 */
+    .findings-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+      padding: 12px 14px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+    }
+
+    .findings-search {
+      flex: 1 1 220px;
+      min-width: 0;
+      padding: 10px 14px;
+      font: inherit;
+      font-size: 14px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+      color: var(--text);
+    }
+
+    .findings-search:focus {
+      outline: none;
+      box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.35);
+      border-color: var(--accent);
+    }
+
+    .findings-toolbar-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .toolbar-btn {
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--chip-bg);
+      color: var(--heading);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .toolbar-btn:hover {
+      background: #e3e6ec;
+    }
+
+    /* 文件 TOC */
+    .findings-toc {
+      margin-bottom: 16px;
+      padding: 10px 12px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+    }
+
+    .toc-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 8px;
+      letter-spacing: 0.04em;
+    }
+
+    .toc-pill-wrap {
+      display: flex;
+      flex-wrap: nowrap;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .toc-pill {
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      text-decoration: none;
+      color: var(--heading);
+      background: var(--chip-bg);
+      border: 1px solid var(--border);
+      transition: transform 0.12s, box-shadow 0.12s;
+    }
+
+    .toc-pill:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+
+    .toc-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .toc-dot.sev-critical { background: var(--critical-text); }
+    .toc-dot.sev-major { background: var(--major-text); }
+    .toc-dot.sev-minor { background: var(--minor-text); }
+    .toc-dot.sev-info { background: var(--info-text); }
+
+    /* 总体结论：多分片 */
+    .summary-shards-wrap {
+      margin-bottom: 4px;
+    }
+
+    .summary-shard {
+      margin-bottom: 14px;
+      padding: 12px 14px;
+      background: #fafbfd;
+      border-radius: 10px;
+      border-left: 4px solid var(--accent);
+    }
+
+    .summary-shard:last-of-type {
+      margin-bottom: 10px;
+    }
+
+    .summary-more[hidden] {
+      display: none !important;
+    }
+
+    .summary-toggle {
+      display: inline-block;
+      margin-top: 4px;
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 16px;
+      border-radius: 8px;
+      border: 1px solid var(--accent);
+      background: #fff;
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .summary-toggle:hover {
+      background: #eef8f5;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details {
+      margin-top: 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0 12px 10px;
+      background: #fafbfc;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details summary {
+      cursor: pointer;
+      padding: 10px 0;
+      font-weight: 600;
+      color: var(--accent);
+      list-style: none;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .summary-raw-pre {
+      margin: 0;
+      max-height: 420px;
+      overflow: auto;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* 按文件 findings：可折叠组 + 卡片 */
+    .findings-list-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    details.file-group.findings-file-group {
+      margin: 0;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .file-group-summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 14px;
+      padding: 14px 16px;
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .file-group-summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .file-group-title {
+      display: inline-flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 14px;
+      color: var(--heading);
+      flex: 1 1 200px;
+      min-width: 0;
+    }
+
+    .file-path-text {
+      word-break: break-all;
+      line-height: 1.45;
+    }
+
+    .sev-indicator {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      margin-top: 4px;
+    }
+
+    .sev-indicator.sev-critical { background: var(--critical-text); box-shadow: 0 0 0 2px var(--critical-bg); }
+    .sev-indicator.sev-major { background: var(--major-text); box-shadow: 0 0 0 2px var(--major-bg); }
+    .sev-indicator.sev-minor { background: var(--minor-text); box-shadow: 0 0 0 2px var(--minor-bg); }
+    .sev-indicator.sev-info { background: var(--info-text); box-shadow: 0 0 0 2px var(--info-bg); }
+
+    .file-group-stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .stat-chip {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 999px;
+    }
+
+    .stat-chip.stat-critical { background: var(--critical-bg); color: var(--critical-text); }
+    .stat-chip.stat-major { background: var(--major-bg); color: var(--major-text); }
+    .stat-chip.stat-minor { background: var(--minor-bg); color: var(--minor-text); }
+    .stat-chip.stat-info { background: var(--info-bg); color: var(--info-text); }
+
+    .file-group-count {
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .file-group-body {
+      padding: 12px 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .finding-card {
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: #fff;
+      padding: 15px 17px;
+      border-left-width: 4px;
+      border-left-style: solid;
+      box-shadow: var(--shadow-sm);
+      transition: box-shadow 0.15s;
+    }
+
+    .finding-card:hover { box-shadow: var(--shadow); }
+
+    .finding-card.severity-critical { border-left-color: var(--critical-strong); background: linear-gradient(90deg, var(--critical-bg) 0%, #fff 14px); }
+    .finding-card.severity-major { border-left-color: var(--major-strong); background: linear-gradient(90deg, var(--major-bg) 0%, #fff 14px); }
+    .finding-card.severity-minor { border-left-color: var(--minor-strong); background: linear-gradient(90deg, var(--minor-bg) 0%, #fff 14px); }
+    .finding-card.severity-info { border-left-color: var(--info-strong); background: linear-gradient(90deg, var(--info-bg) 0%, #fff 14px); }
+
+    .finding-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .sev-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 4px 12px;
+      border-radius: 7px;
+      font-size: 11.5px;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .sev-badge.critical { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .sev-badge.major { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .sev-badge.minor { background: var(--minor-bg); color: var(--minor-text); border: 1px solid var(--minor-border); }
+    .sev-badge.info { background: var(--info-bg); color: var(--info-text); border: 1px solid var(--info-border); }
+
+    .finding-line {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      background: var(--chip-bg);
+      padding: 4px 8px;
+      border-radius: 6px;
+    }
+
+    .finding-cat {
+      font-size: 12.5px;
+      font-weight: 700;
+      color: var(--accent-dark);
+      background: var(--accent-soft);
+      padding: 3px 9px;
+      border-radius: 6px;
+    }
+
+    /* 需求对账三类（需求未实现/需求矛盾/需求外动作）用色块徽章而非纯文字，
+       跟严重级别徽章一样醒目——用户反馈普通文字分类容易在列表里被漏看，
+       尤其"需求未实现"现在总是 Critical。*/
+    .finding-cat-requirement {
+      background: var(--critical-bg);
+      color: var(--critical-text);
+      border: 1px solid var(--critical-border);
+      border-radius: 6px;
+      padding: 3px 10px;
+    }
+
+    /* ── 接口审查覆盖清单 ── */
+    .endpoint-coverage {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px 18px;
+      box-shadow: var(--shadow);
+      margin-bottom: 20px;
+    }
+
+    .ec-note {
+      margin: 0 0 10px;
+      font-size: 13px;
+      line-height: 1.7;
+      color: var(--muted);
+    }
+
+    .ec-note-warn {
+      padding: 9px 12px;
+      border-radius: 8px;
+      background: var(--major-bg);
+      border-left: 4px solid var(--major-strong);
+      color: var(--major-text);
+    }
+
+    .ec-note-warn strong { color: var(--major-strong); }
+
+    .ec-table-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid var(--border); }
+
+    .ec-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .ec-table th {
+      text-align: left;
+      padding: 9px 12px;
+      background: #fafbfd;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .ec-table td {
+      padding: 10px 12px;
+      border-top: 1px solid var(--border);
+      vertical-align: top;
+      line-height: 1.65;
+    }
+
+    .ec-table tbody tr:first-child td { border-top: none; }
+
+    .ec-table .ec-method,
+    .ec-table .ec-verdict { white-space: nowrap; }
+
+    .ec-table .ec-path code {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+      word-break: break-all;
+    }
+
+    .ec-table .ec-reason { color: var(--muted); }
+
+    .ec-badge {
+      display: inline-block;
+      padding: 2px 9px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .ec-badge.ec-risk { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .ec-badge.ec-pending { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .ec-badge.ec-safe { background: var(--safe-bg); color: var(--safe-text); border: 1px solid var(--safe-border); }
+
+    tr.ec-risk td { background: #fffbfa; }
+    tr.ec-pending td { background: #fffdf9; }
+
+    /* 分片没审成时的披露条：必须比正文更抢眼，否则读者会把
+       「报告里没写」误当成「这里没问题」 */
+    .shard-health-alert {
+      margin: 0 0 12px;
+      padding: 12px 15px;
+      border-radius: 10px;
+      background: var(--critical-bg);
+      border: 1px solid var(--critical-border);
+      border-left: 4px solid var(--critical-strong);
+      color: var(--critical-text);
+      font-size: 13.5px;
+      line-height: 1.7;
+    }
+
+    .shard-health-alert strong { color: var(--critical-strong); }
+
+    .finding-desc {
+      font-size: 14px;
+      line-height: 1.65;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* finding 卡片正文的四行结构（问题 / 后果 / 怎么改 / 怎么验）。
+       用户反馈（build 532）"文案挤在一团，难以阅读"：此前正文是一整段
+       `原因：…影响：…` 靠 white-space:pre-wrap 原样糊上去，修复建议和测试
+       场景又被折叠藏起来。改成左标签 + 右正文的两列网格，每行一个语义单元，
+       段落之间有明确留白，长句由 Python 侧按句末标点拆成多个 <p>。 */
+    .finding-body {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      font-size: 14px;
+      line-height: 1.7;
+      color: var(--text);
+    }
+
+    .fb-row {
+      display: grid;
+      grid-template-columns: 68px minmax(0, 1fr);
+      gap: 2px 14px;
+      padding: 10px 0;
+      border-top: 1px dashed var(--border);
+    }
+
+    .fb-row:first-child {
+      border-top: none;
+      padding-top: 2px;
+    }
+
+    /* 重新设计：标签从"一段带颜色的纯文字"改成小色块标签（跟 sev-badge/
+       finding-cat 同一套视觉语言），扫一眼列表就能靠色块分辨这行是"问题"
+       还是"怎么改"，比单靠文字颜色更容易一眼分辨。 */
+    .fb-label {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1.6;
+      letter-spacing: 0.03em;
+      white-space: nowrap;
+      padding: 2px 8px;
+      border-radius: 6px;
+      margin-top: 1px;
+    }
+
+    .fb-problem .fb-label { color: var(--major-text); background: var(--major-bg); }
+    .fb-impact .fb-label { color: var(--critical-text); background: var(--critical-bg); }
+    .fb-fix .fb-label { color: var(--accent-dark); background: var(--accent-soft); }
+    .fb-test .fb-label { color: var(--info-text); background: var(--info-bg); }
+
+    .fb-text {
+      min-width: 0;
+      word-break: break-word;
+    }
+
+    .fb-text > p {
+      margin: 0 0 7px;
+    }
+
+    .fb-text > p:last-child {
+      margin-bottom: 0;
+    }
+
+    .fb-text .rt-list {
+      margin: 2px 0 6px;
+      padding-left: 20px;
+    }
+
+    .fb-text .rt-list li {
+      margin-bottom: 4px;
+    }
+
+    .fb-text .code-block {
+      margin: 8px 0 4px;
+      font-size: 12.5px;
+    }
+
+    .fb-text code {
+      background: var(--chip-bg);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+    }
+
+    /* 窄屏（Jenkins 里报告常挤在窗格里看）时标签落到正文上方，不再抢走
+       62px 宽度，避免正文被压成一列细条 */
+    @media (max-width: 720px) {
+      .fb-row {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 2px;
+      }
+    }
+
+    /* 证据代码块从固定 div 改成可折叠 details（默认展开）——一份报告里
+       十几张卡片各带 8-10 行代码，读者需要能收起来快速扫结论 */
+    details.finding-evidence > summary {
+      cursor: pointer;
+      list-style: none;
+    }
+
+    details.finding-evidence > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    details.finding-evidence > summary::before {
+      content: "▾ ";
+      color: var(--muted);
+    }
+
+    details.finding-evidence:not([open]) > summary::before {
+      content: "▸ ";
+    }
+
+    /* 证据代码块（2026-07-19 补）：evidence_quote 的稳定展示位置，不再依赖
+       模型是否顺手把代码写进 description 里；纯 CSS + Python 正则高亮，
+       不引外部 JS 库，内网报告零外部依赖风险。 */
+    .finding-evidence {
+      margin-top: 10px;
+    }
+
+    .finding-evidence .detail-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .code-block {
+      margin: 0;
+      padding: 12px 15px;
+      background: var(--code-bg);
+      color: #e6edf3;
+      border-radius: 9px;
+      overflow-x: auto;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+      line-height: 1.6;
+    }
+
+    .code-block code {
+      white-space: pre;
+      /* 2026-09-02 用户反馈：安全/权限折叠卡里"怎么改"给的整段修复示意代码
+         （``` 代码围栏渲染出来也是 <pre class="code-block"><code>）看不清——
+         根因是 .fb-text code（第 833 行，给"问题/后果/怎么改/怎么验"正文里
+         `existsActive` 这类行内代码片段配的浅灰底色）跟这里选择器优先级/
+         特异性相同，同一个 <code> 标签只要落在 .fb-text 范围内就会被套上
+         浅灰底，而 .code-annotation/.code-keyword 这套语法高亮配色是给
+         .code-block 本来的深色底（--code-bg）设计的，叠在浅灰底上对比度
+         塌陷，几乎看不见字。显式声明透明背景覆盖掉那条通用规则，让
+         .code-block 自己的深色底透出来。 */
+      background: transparent;
+    }
+
+    .code-comment { color: #8b949e; font-style: italic; }
+    .code-string { color: #a5d6ff; }
+    .code-annotation { color: #d2a8ff; }
+    .code-keyword { color: #ff7b72; font-weight: 600; }
+    .code-number { color: #79c0ff; }
+
+    /* 带上下文的证据代码块（逐行渲染，问题行整行高亮）*/
+    .code-row {
+      display: block;
+      padding: 0 6px;
+      border-left: 3px solid transparent;
+    }
+
+    .code-row-target {
+      background: rgba(255, 123, 114, 0.16);
+      border-left-color: #ff7b72;
+    }
+
+    .code-ln {
+      display: inline-block;
+      min-width: 2.5em;
+      margin-right: 12px;
+      color: #6e7681;
+      text-align: right;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    .finding-details {
+      margin-top: 12px;
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+      padding: 0;
+      background: #fafbfd;
+    }
+
+    .finding-details > summary {
+      cursor: pointer;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--heading);
+      list-style: none;
+    }
+
+    .finding-details > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .finding-details-body {
+      padding: 0 14px 14px;
+      border-top: 1px solid var(--border);
+    }
+
+    .detail-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin: 12px 0 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .finding-suggestion p,
+    .finding-test p {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.65;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .file-block {
+      margin: 14px 0 18px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: var(--shadow);
+    }
+
+    .file-block h3 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      color: var(--heading);
+      word-break: break-all;
+    }
+
+    table {
+      border-collapse: separate;
+      border-spacing: 0;
+      width: 100%;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+    }
+
+    th, td {
+      border-bottom: 1px solid var(--border);
+      padding: 10px;
+      vertical-align: top;
+      text-align: left;
+      font-size: 13px;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      background: #fafbfd;
+      color: var(--heading);
+      font-weight: 700;
+      z-index: 1;
+    }
+
+    tbody tr:nth-child(even) { background: #fafbfd; }
+    tbody tr:last-child td { border-bottom: none; }
+
+    .empty {
+      padding: 18px;
+      border: 1px dashed var(--border);
+      border-radius: 14px;
+      color: var(--muted);
+      background: #fafbfd;
+    }
+
+    @media (max-width: 900px) {
+      .hero h1 { font-size: 22px; }
+      .summary,
+      .file-block { padding: 12px; }
+      th, td { padding: 8px; font-size: 12px; }
+      .charts-row { flex-direction: column; }
+    }
+
+    /* ── 报告标签页 ──
+       重新设计：从"按钮选中变绿色渐变块"改成分段控件（segmented control）
+       的样式——浅灰底槽 + 选中项浮成白色药丸，更接近成熟工具（如 GitHub/
+       Linear）里的页签观感，也跟下面卡片的白底形成呼应。 */
+    .report-tabs {
+      display: inline-flex;
+      gap: 2px;
+      padding: 4px;
+      margin-bottom: 18px;
+      background: #e9ebf0;
+      border-radius: 12px;
+      flex-wrap: wrap;
+    }
+    .report-tabs button {
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 18px;
+      border-radius: 9px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 13.5px;
+      transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+    }
+    .report-tabs button:hover {
+      color: var(--heading);
+    }
+    .report-tabs button[aria-selected="true"] {
+      background: #ffffff;
+      color: var(--heading);
+      box-shadow: var(--shadow-sm);
+    }
+    .report-panel { display: none; }
+    .report-panel.is-active { display: block; }
+
+    /* ── 数据权限页（嵌入，与综合页隔离） ── */
+    .dp-shell {
+      font-family: "Avenir Next", "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif;
+      color: #1a2b22;
+      line-height: 1.6;
+    }
+
+    /* 重置全局 table 样式污染 */
+    .dp-shell table {
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+    }
+    .dp-shell th, .dp-shell td {
+      border: none !important;
+      border-bottom: 1px solid #edf2f7 !important;
+      background: transparent !important;
+    }
+
+    .dp-shell .dp-header {
+      position: relative;
+      background: linear-gradient(165deg, #0b1220 0%, #121a2c 55%, #0e2422 100%);
+      color: #f4f7fb;
+      padding: 26px 28px 24px;
+      border-radius: 18px;
+      margin-bottom: 24px;
+      box-shadow: var(--shadow-lg);
+      overflow: hidden;
+    }
+    .dp-shell .dp-header::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 3px;
+      background: linear-gradient(90deg, #14b8a6, #22d3ee 45%, #14b8a6 100%);
+    }
+    .dp-shell .dp-header h1 { font-size: 1.4rem; font-weight: 700; letter-spacing: .01em; margin: 0 0 6px; }
+    .dp-shell .dp-header .subtitle { margin: 0; color: #aab4c8; font-size: .9rem; }
+    .dp-shell .dp-header .meta-row { margin-top: 16px; display: flex; gap: 24px; flex-wrap: wrap; }
+    .dp-shell .dp-header .meta-item { font-size: .8rem; color: #8b95ab; }
+    .dp-shell .dp-header .meta-item strong { color: #8ce8d4; font-weight: 600; }
+
+    .dp-shell .dp-body { padding: 0 0 32px; }
+
+    /* ── dp-shell 内部组件（与 Python 生成的类名严格对齐） ── */
+
+    /* 统计卡片区（Python 生成 .summary-grid / .summary-card） */
+    .dp-shell .dp-stats { margin-bottom: 4px; }
+    .dp-shell .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+    .dp-shell .summary-card {
+      background: #fff;
+      border-radius: 14px;
+      padding: 18px 20px;
+      box-shadow: var(--shadow-sm);
+      border: 1px solid var(--border);
+      border-top: 3px solid transparent;
+    }
+    .dp-shell .summary-card.critical { border-top-color: var(--critical-strong); }
+    .dp-shell .summary-card.high     { border-top-color: var(--major-strong); }
+    .dp-shell .summary-card.medium   { border-top-color: var(--minor-strong); }
+    .dp-shell .summary-card.info     { border-top-color: var(--info-strong); }
+    .dp-shell .summary-card .count   { font-size: 2.1rem; font-weight: 800; line-height: 1; }
+    .dp-shell .summary-card.critical .count { color: var(--critical-text); }
+    .dp-shell .summary-card.high     .count { color: var(--major-text); }
+    .dp-shell .summary-card.medium   .count { color: var(--minor-text); }
+    .dp-shell .summary-card.info     .count { color: var(--info-text); }
+    .dp-shell .summary-card .label   { margin-top: 8px; font-size: .72rem; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .07em; }
+
+    /* 区块标题 */
+    .dp-shell .dp-section { margin-bottom: 24px; }
+    .dp-shell .dp-section-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--heading);
+      margin: 0 0 14px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* 角色定义盒（Python 生成 .role-box / .role-icon / .role-info） */
+    .dp-shell .dp-roles { display: flex; flex-direction: column; gap: 10px; }
+    .dp-shell .role-box {
+      background: #fff;
+      border-radius: 12px;
+      padding: 16px 20px;
+      box-shadow: 0 2px 10px rgba(17,51,38,.07);
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+    }
+    .dp-shell .role-box.muted {
+      background: #f8f9fb;
+      border: 1px solid var(--border);
+      box-shadow: none;
+    }
+    .dp-shell .role-icon { font-size: 1.8rem; line-height: 1; flex-shrink: 0; }
+    .dp-shell .role-info { flex: 1; min-width: 0; }
+    .dp-shell .role-info h3 { font-size: 1rem; font-weight: 700; color: var(--heading); margin: 0 0 4px; }
+    .dp-shell .role-info .role-md { font-size: .88rem; color: #4a5568; margin-top: 8px; line-height: 1.65; word-break: break-word; }
+    .dp-shell .role-info code { background: #edf2f7; padding: 1px 6px; border-radius: 4px; font-size: .85em; }
+
+    /* gate banner */
+    .dp-shell .dp-gate { margin-bottom: 20px; }
+
+    /* 审计表格包装（Python 生成 .table-wrap > table.dp-audit）
+       表头从深绿底改成跟报告其它表格（.ec-table）同一套浅底大写小标签，
+       整份报告的表格风格统一，不再是"深色表头 vs 浅色表头"两套语言。 */
+    .dp-shell .table-wrap {
+      overflow-x: auto;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow-sm);
+    }
+    .dp-shell table.dp-audit {
+      width: 100% !important;
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+      font-size: .84rem;
+    }
+    .dp-shell .dp-audit th {
+      background: #fafbfd !important;
+      color: var(--muted) !important;
+      padding: 11px 14px !important;
+      text-align: left !important;
+      font-size: .68rem !important;
+      font-weight: 700 !important;
+      text-transform: uppercase !important;
+      letter-spacing: .07em !important;
+      white-space: nowrap !important;
+      border-bottom: 1px solid var(--border) !important;
+      position: sticky;
+      top: 0;
+    }
+    .dp-shell .dp-audit td {
+      padding: 11px 14px !important;
+      border-bottom: 1px solid var(--border) !important;
+      vertical-align: top !important;
+      color: var(--text) !important;
+      background: transparent !important;
+    }
+    .dp-shell .dp-audit tr:last-child td { border-bottom: none !important; }
+    .dp-shell .dp-audit tr:hover td { background: #f8f9fb !important; }
+    .dp-shell .dp-audit tr.row-critical td { background: var(--critical-bg) !important; }
+    .dp-shell .dp-audit tr.row-critical:hover td { background: #fbdcda !important; }
+    .dp-shell .dp-audit tr.row-major td { background: var(--major-bg) !important; }
+    .dp-shell .dp-audit tr.row-major:hover td { background: #fbe4c4 !important; }
+
+    /* HTTP 方法 & 严重性徽标（Python 生成 .badge .badge-*） */
+    .dp-shell .badge {
+      display: inline-block; padding: 2px 9px; border-radius: 6px;
+      font-size: .72rem; font-weight: 700; letter-spacing: .04em; white-space: nowrap;
+    }
+    .dp-shell .badge-get    { background: var(--info-bg); color: var(--info-text); }
+    .dp-shell .badge-post   { background: var(--safe-bg); color: var(--safe-text); }
+    .dp-shell .badge-put    { background: var(--minor-bg); color: var(--minor-text); }
+    .dp-shell .badge-delete { background: var(--critical-bg); color: var(--critical-text); }
+    .dp-shell .badge-patch  { background: #f4f0fd; color: #6b46c1; }
+    .dp-shell .badge-critical { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .dp-shell .badge-high     { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .dp-shell .badge-medium   { background: var(--minor-bg); color: var(--minor-text); border: 1px solid var(--minor-border); }
+    .dp-shell .badge-info     { background: var(--info-bg); color: var(--info-text); border: 1px solid var(--info-border); }
+
+    /* 风险文字 */
+    .dp-shell .risk-zh { font-size: .82rem; color: var(--text); font-weight: 600; line-height: 1.4; }
+
+    /* Issue 列表（Python 生成 .issue-list） */
+    .dp-shell .issue-list { list-style: none !important; margin: 6px 0 0; padding: 0; }
+    .dp-shell .issue-list li { position: relative; padding: 3px 0 3px 18px; font-size: .84rem; color: #4a5568; line-height: 1.55; }
+    .dp-shell .issue-list li::before { content: "▸"; position: absolute; left: 2px; color: #e53e3e; }
+    .dp-shell .issue-list li strong { color: var(--heading); }
+    .dp-shell .issue-list code { background: #edf2f7; padding: 1px 5px; border-radius: 3px; font-size: .85em; }
+
+    /* 修复建议卡片（Python 生成 .fix-card） */
+    .dp-shell .fix-card {
+      background: #f0faf5;
+      border-left: 4px solid var(--accent);
+      border-radius: 0 10px 10px 0;
+      padding: 13px 16px;
+      margin-top: 10px;
+    }
+    .dp-shell .fix-card h4 { font-size: .84rem; font-weight: 700; color: var(--heading); margin: 0 0 6px; }
+    .dp-shell .fix-card p, .dp-shell .fix-card li { font-size: .83rem; color: #2d4a3d; line-height: 1.6; margin: 0; }
+    .dp-shell .fix-card ul, .dp-shell .fix-card ol { padding-left: 18px; margin: 6px 0; }
+    .dp-shell .fix-card code { background: #d4efe4; padding: 1px 5px; border-radius: 4px; font-size: .85em; }
+
+    /* 代码块（Python 生成 .code-block） */
+    .dp-shell .code-block {
+      background: var(--code-bg); color: #e2e8f0; border-radius: 9px;
+      padding: 12px 16px; margin-top: 8px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: .78rem; line-height: 1.55; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+    }
+
+    /* 端点详情折叠（Python 生成 details.issue-fold） */
+    .dp-shell details.issue-fold {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: var(--shadow-sm);
+      margin-bottom: 12px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .dp-shell details.issue-fold > summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 13px 16px;
+      font-weight: 600;
+      font-size: .9rem;
+      color: var(--heading);
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid transparent;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transition: background .15s;
+    }
+    .dp-shell details.issue-fold > summary::-webkit-details-marker { display: none; }
+    .dp-shell details.issue-fold > summary::before { content: "▸"; font-size: 11px; color: var(--accent); transition: transform .15s; }
+    .dp-shell details.issue-fold[open] > summary::before { transform: rotate(90deg); }
+    .dp-shell details.issue-fold[open] > summary { border-bottom-color: var(--border); background: var(--accent-soft); }
+    .dp-shell .issue-fold-body { padding: 16px 20px; font-size: .85rem; color: #4a5568; }
+    .dp-shell .issue-fold-body p { margin: 6px 0; line-height: 1.65; }
+    .dp-shell .issue-fold-body strong { color: var(--heading); }
+
+    /* dp-fold（端点详情另一种渲染，Python 生成 details.dp-fold） */
+    .dp-shell .dp-folds { display: flex; flex-direction: column; gap: 10px; }
+    .dp-shell .dp-fold {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
+    }
+    .dp-shell .dp-fold > summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 13px 16px;
+      font-weight: 600;
+      font-size: .9rem;
+      color: var(--heading);
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .dp-shell .dp-fold > summary::-webkit-details-marker { display: none; }
+    .dp-shell .dp-fold > summary::before { content: "▸"; font-size: 11px; color: var(--accent); transition: transform .15s; }
+    .dp-shell .dp-fold[open] > summary::before { transform: rotate(90deg); }
+    .dp-shell .dp-fold-body { padding: 16px; font-size: .85rem; color: #4a5568; }
+
+    /* issue list（dp-fold 内部用） */
+    .dp-shell .dp-issue-list { list-style: none; margin: 8px 0 0; padding: 0; }
+    .dp-shell .dp-issue-list li { position: relative; padding: 3px 0 3px 18px; font-size: .84rem; color: #4a5568; }
+    .dp-shell .dp-issue-list li::before { content: "▸"; position: absolute; left: 2px; color: #e53e3e; }
+
+    /* dp-fix（dp-fold 内部修复建议） */
+    .dp-shell .dp-fix {
+      background: #f0faf5;
+      border-left: 4px solid var(--accent);
+      border-radius: 0 10px 10px 0;
+      padding: 12px 16px;
+      margin-top: 10px;
+    }
+    .dp-shell .dp-fix h4 { font-size: .84rem; font-weight: 700; color: var(--heading); margin: 0 0 6px; }
+    .dp-shell .dp-fix p, .dp-shell .dp-fix li { font-size: .83rem; color: #2d4a3d; line-height: 1.6; margin: 0; }
+    .dp-shell .dp-fix code { background: #d4efe4; padding: 1px 5px; border-radius: 4px; font-size: .85em; }
+
+    /* dp-code（dp-fold 内部代码块） */
+    .dp-shell .dp-code {
+      background: var(--code-bg); color: #e2e8f0; border-radius: 9px;
+      padding: 12px 16px; margin-top: 8px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: .78rem; line-height: 1.55; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+    }
+
+    /* 存量越权风险区块（dp-shell 内，全文扫描）*/
+    .dp-shell .legacy-privilege-block {
+      background: var(--minor-bg);
+      border: 1px solid var(--minor-border);
+      border-left: 4px solid var(--minor-strong);
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin-bottom: 16px;
+    }
+    .dp-shell .legacy-privilege-block .lp-title { font-size: 14px; font-weight: 700; color: var(--minor-strong); margin: 0 0 4px; }
+    .dp-shell .legacy-privilege-block .lp-subtitle { font-size: 12px; color: var(--minor-text); margin: 0 0 14px; }
+
+    .dp-shell .dp-footer {
+      text-align: center; font-size: .78rem; color: #a0aec0;
+      margin-top: 36px; padding-top: 20px; border-top: 1px solid var(--border);
+    }
+
+    /* ── 综合审查 Tab 权限接口表（privilege_endpoints 模式，在 dp-shell 外） ── */
+    .perm-table-wrap {
+      overflow-x: auto;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow-sm);
+    }
+    .perm-table {
+      width: 100%;
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+      font-size: .84rem;
+    }
+    .perm-table th {
+      background: #fafbfd !important;
+      color: var(--muted) !important;
+      padding: 10px 14px !important;
+      text-align: left !important;
+      font-size: .68rem !important;
+      font-weight: 700 !important;
+      text-transform: uppercase !important;
+      letter-spacing: .07em !important;
+      white-space: nowrap !important;
+      border-bottom: 1px solid var(--border) !important;
+    }
+    .perm-table td {
+      padding: 10px 14px !important;
+      border-bottom: 1px solid var(--border) !important;
+      vertical-align: top !important;
+      color: var(--text) !important;
+      background: transparent !important;
+    }
+    .perm-table tr:last-child td { border-bottom: none !important; }
+    .perm-table tr:hover td { background: #f8f9fb !important; }
+    .api-permission-block { overflow-x: auto; }
+
+    /* 存量越权风险区块（综合审查 Tab，全文扫描） */
+    .legacy-privilege-block {
+      background: var(--minor-bg);
+      border: 1px solid var(--minor-border);
+      border-left: 4px solid var(--minor-strong);
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin-bottom: 16px;
+    }
+    .legacy-privilege-block .lp-title { font-size: 14px; font-weight: 700; color: var(--minor-strong); margin: 0 0 4px; }
+    .legacy-privilege-block .lp-subtitle { font-size: 12px; color: var(--minor-text); margin: 0 0 14px; }
+    /* 根因聚合卡片 */
+    .cluster-card { border-left: 4px solid #6366f1; }
+    .cluster-badge {
+      background: #6366f1; color: #fff;
+      font-size: 11px; padding: 2px 8px;
+      border-radius: 10px; margin-left: 8px;
+      font-weight: 600; letter-spacing: .02em;
+    }
+    .cluster-locations { margin: 8px 0 4px; }
+    .cluster-locations > summary {
+      cursor: pointer; color: #6366f1;
+      font-size: 13px; font-weight: 500;
+    }
+    .cluster-locations > summary:hover { text-decoration: underline; }
+    .loc-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+    .loc-table th, .loc-table td {
+      padding: 4px 8px; border: 1px solid #e5e7eb; text-align: left;
+    }
+    .loc-table th { background: #f9fafb; font-weight: 600; }
+    .loc-file { font-family: monospace; color: #374151; }
+    .loc-line { text-align: center; color: #6b7280; white-space: nowrap; }
+    .loc-snippet { color: #4b5563; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* ── Charts Row (并列布局) ── */
+    .charts-row {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    /* ── Chart Section ── */
+    .chart-section {
+      flex: 1 1 0;
+      min-width: 0;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .chart-container {
+      position: relative;
+      height: 260px;
+    }
+
+    /* ── Top 3 Criticals in Hero ── */
+    .top-criticals {
+      position: relative;
+      margin-top: 18px;
+      padding-top: 16px;
+      border-top: 1px solid rgba(255,255,255,0.12);
+    }
+
+    .top-criticals h3 {
+      margin: 0 0 10px;
+      font-size: 13px;
+      font-weight: 700;
+      color: #ff9d94;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .top-criticals ul {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .top-criticals li {
+      font-size: 13px;
+      color: #d6dcea;
+      line-height: 1.5;
+      padding: 9px 12px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.09);
+      border-left: 3px solid #f2645a;
+      border-radius: 0 8px 8px 0;
+    }
+
+    .top-criticals li strong {
+      color: #ffe1dc;
+      font-weight: 700;
+      display: block;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12px;
+    }
+
+    .top-criticals[hidden] { display: none !important; }
+
+    .top-criticals .tc-desc {
+      display: block;
+      margin-top: 3px;
+    }
+
+    .top-criticals .tc-source {
+      display: inline-block;
+      margin-bottom: 4px;
+      padding: 1px 7px;
+      border-radius: 5px;
+      background: rgba(255,255,255,0.14);
+      color: #f4f7fb;
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    /* ── Export Dropdown ── */
+    .export-dropdown {
+      position: relative;
+    }
+
+    .export-menu {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 4px);
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+      min-width: 160px;
+      z-index: 100;
+      overflow: hidden;
+    }
+
+    .export-menu a {
+      display: block;
+      padding: 10px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--heading);
+      text-decoration: none;
+      transition: background 0.12s;
+    }
+
+    .export-menu a:hover {
+      background: #eef5f1;
+    }
+
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <h1>AI Code Review 报告</h1>
+      <p class="hero-meta">服务: trk | 生成时间: 2026-09-14 08:29:00</p>
+      <div class="top-criticals" id="top-criticals" hidden>
+        <h3>最需要先看的问题（Critical）</h3>
+        <ul id="top-criticals-list"></ul>
+      </div>
+    </header>
+
+    <div class="report-tabs" role="tablist" aria-label="报告视图">
+      <button type="button" role="tab" id="tab-general" aria-controls="panel-general" aria-selected="true" onclick="switchReportTab('general')">综合审查</button>
+      <button type="button" role="tab" id="tab-dp" aria-controls="panel-dp" aria-selected="false" onclick="switchReportTab('dp')">权限与业务规则</button>
+    </div>
+
+    <div id="panel-general" class="report-panel is-active" role="tabpanel" aria-labelledby="tab-general">
+    <section class="summary">
+      <h2>总体结论</h2>
+      <div id="summary-text" class="summary-body summary-preformatted"><div class="summary-condensed"><p>合并 <strong>16</strong> 个分片审查，共 <strong>14</strong> 条发现 （Critical 6 · Major 6 · Minor 2 · Info 0）。</p><p>逐条明细见下方「按文件的审查发现」；接口与数据权限维度见顶部「权限与业务规则」页签。</p><details class="summary-raw-details"><summary>展开各分片原文结论</summary><pre class="summary-raw-pre"><strong>分片 1</strong>
+
+本分片仅包含 <code>tracking-api/src/test/java/io/speedx/trk/service/impl/LabelSummaryServiceImplTest.java</code> 的测试代码变更，新增内容只是引入并 mock <code>LabelSearchIndexService</code>，未引入新的生产安全逻辑、HTTP 入口、鉴权路径、数据访问或异常处理分支，未发现可直接归因到新增/修改行的安全问题。
+
+<strong>已审查无风险接口</strong>
+本分片 diff 未新增或修改任何生产 HTTP 入口；提供的全量接口清单对应实现不在本分片 diff 行内，按约束无法基于本分片新增/修改行对这些接口输出权限 finding，需在包含对应生产代码变更的分片中继续审查。
+
+接口覆盖率：清单共 29 个接口，已审查 29 个，0 个存在权限风险，0 个无风险，29 个待确认
+
+<strong>HTTP 入口清单（方法 + 路径）</strong>
+- 本分片 diff 未出现 <code>@GetMapping</code>、<code>@PostMapping</code>、<code>@PutMapping</code>、<code>@DeleteMapping</code>、<code>@PatchMapping</code> 或带路径的 <code>@RequestMapping</code> 新增/修改行，因此无本分片可闭环审查的 HTTP 入口。
+
+<strong>分片 2</strong>
+
+本分片仅看到 <code>tracking-api/src/main/java/io/speedx/trk/api/config/MultiDataSourceConfig.java</code> 的基础设施改动，未发现新增 HTTP 入口，也未看到新增鉴权放行代码；权限维度在本分片无新增可确认风险。主要风险集中在把 <code>@Primary</code> 主数据源切换为 <code>ShardingSphereDataSourceFactory.createDataSource(...)</code> 的高影响配置变更，建议补充分片开关与回退路径后再合入。
+
+<strong>分片 3</strong>
+
+本分片新增了一个外部模糊查询入口，主要安全问题集中在：把完整运单号查询扩展为数字片段查询后，未在模糊命中阶段看到资源归属收敛，导致越权读取与枚举面扩大；同时搜索索引写入失败被吞掉，会放大接口结果不一致。
+
+<strong>已审查无风险接口</strong>
+- <code>POST /label-summary/insert</code> — 本分片仅新增 <code>labelSearchIndexService.saveSearchIndex(...)</code> 调用，未看到该 HTTP 入口新增放宽鉴权或扩大数据范围的代码，权限行为未被本次 diff 削弱。
+- <code>GET /event/external/v2/fuzzy-query</code> — 已在 findings 中报告新增权限风险。
+- <code>QueryEventCmdBridge.toWeb()</code> 对应入口实现未在本分片 diff 内，无法从本次变更断言权限变化，需人工确认。
+- <code>QueryEventCmdBridge.toWebForBi()</code> 对应入口实现未在本分片 diff 内，无法从本次变更断言权限变化，需人工确认。
+- <code>QueryEventCmdBridge.toV2()</code> 对应入口实现未在本分片 diff 内，无法从本次变更断言权限变化，需人工确认。
+- <code>QueryEventCmdBridge.toTemu()</code> 对应入口实现未在本分片 diff 内，无法从本次变更断言权限变化，需人工确认。
+
+接口覆盖率：清单共 6 个接口，已审查 6 个，2 个存在权限风险，1 个无风险，3 个待确认
+
+<strong>HTTP 入口清单（方法 + 路径）</strong>
+- <code>GET /event/external/v2/fuzzy-query</code> — 存在新增权限与数据范围风险：模糊查询能力被直接暴露，diff 中未见额外授权、归属过滤或频控约束，已在 findings 报告。
+- <code>POST /label-summary/insert</code> — 本次 diff 未显示该入口新增权限放宽；新增的是索引写入逻辑，权限层面无新增直接证据，但存在索引失败导致查询结果不一致的问题。
+
+<strong>分片 4</strong>
+
+本分片提供的 diff 仅涉及 <code>trk-common/src/main/java/io/speedx/trk/common/constants/ResponseCode.java</code> 新增常量 <code>MULTIPLE_RESULTS = 614</code>，未引入可见的 SQL、鉴权、异常吞没、并发、配置或 API 面安全风险。该变更属于纯常量扩展，且本分片 diff 中未出现任何 HTTP 映射注解，因此无可列出的新增 HTTP 入口；全局端点清单里关联的 <code>EventExternalController</code> 等入口实现未在本分片 diff 内，无法基于本分片断言其权限行为。
+
+<strong>分片 5</strong>
+
+本分片仅包含 <code>trk-common/src/main/java/io/speedx/trk/common/form/FuzzyTrackingForm.java</code> 的新增 DTO 定义；从新增行看未引入 SQL 拼接、鉴权放行、敏感日志、异常吞没、并发共享状态或其他可直接落在 diff 新增行上的安全问题。该文件本身没有 HTTP 映射，也未出现可判断权限削弱的注解或逻辑；结合当前分片范围，未发现新增安全风险。
+
+<strong>分片 6</strong>
+
+本分片仅看到 <code>trk-job/src/main/java/io/speedx/trk/job/config/MultiDataSourceConfig.java</code> 的新增/修改内容。发现 1 个高风险配置问题：将 <code>@Primary</code> 默认 <code>DataSource</code> 直接替换为 <code>ShardingSphereDataSourceFactory.createDataSource(...)</code>，会把整个 job 模块的数据库访问统一切到新的分片路由层，缺少灰度与兼容性兜底。
+
+<strong>分片 7</strong>
+
+本分片新增的是两个 XXL-JOB 任务，无新增 HTTP 入口，也未看到直接的鉴权放开问题。主要安全/稳定性风险集中在任务异常处理：<code>BackfillSearchIndexJobHandler</code> 会吞掉批次异常后仍上报成功，<code>CleanSearchIndexJobHandler</code> 对分片删除失败缺少显式失败处理；另外 <code>BackfillSearchIndexJobHandler</code> 的深分页全表扫描在大数据量下有明显性能与一致性隐患。
+
+<strong>分片 8</strong>
+
+本分片新增了模糊查询与搜索索引链路，主要风险集中在：一是搜索索引写入失败被静默吞掉，导致主数据与检索数据不一致；二是新增 <code>GET /v2/fuzzy-query</code> 入口在 diff 可见范围内未体现充分的权限与归属校验，存在越权读取可能。
+
+<strong>已审查无风险接口</strong>
+- CreateLabelCmd.setPushLabelForm() — HTTP 入口未在本分片 diff 内新增或修改，且本次改动未改变其权限行为，无法从新增行看出新增权限风险。
+- CreateLabelCmd.validate() — HTTP 入口未在本分片 diff 内新增或修改，且本次改动未改变其权限行为，无法从新增行看出新增权限风险。
+- CreateLabelCmd.initConfig() — HTTP 入口未在本分片 diff 内新增或修改，且本次改动未改变其权限行为，无法从新增行看出新增权限风险。
+- CreateLabelCmd.initEntity() — HTTP 入口未在本分片 diff 内新增或修改，且本次改动未改变其权限行为，无法从新增行看出新增权限风险。
+- CreateLabelCmd.save() — 对应 <code>POST /label-summary/insert</code>，本次仅新增 <code>labelSearchIndexService.saveSearchIndex(labelSummary)</code>，未见新增放宽鉴权或扩大数据范围的代码。
+- QueryEventCmdBridge.toWeb() — 对应内部 Web 查询入口，实现未在本分片 diff 内新增权限放行逻辑，未见新增权限风险。
+- QueryEventCmdBridge.toWebForBi() — 对应内部 BI 查询入口，实现未在本分片 diff 内新增权限放行逻辑，未见新增权限风险。
+- QueryEventCmdBridge.toV2() — 对应外部查询入口，本分片未修改其权限逻辑，未见新增权限风险。
+- QueryEventCmdBridge.toTemu() — 对应外部查询入口，本分片未修改其权限逻辑，未见新增权限风险。
+- LabelSearchIndexServiceImpl.saveSearchIndex() — 无 Controller 调用，非直接 HTTP 权限面。
+- LabelSearchIndexServiceImpl.saveSearchIndexBatch() — 无 Controller 调用，非直接 HTTP 权限面。
+- LabelSearchIndexServiceImpl.searchTrackingNos() — 无 Controller 调用，非直接 HTTP 权限面。
+- LabelSummaryServiceImpl.summary() — 无 Controller 调用，非直接 HTTP 权限面。
+- LabelSummaryServiceImpl.summaryHistory() — 无 Controller 调用，非直接 HTTP 权限面。
+- LabelSummaryServiceImpl.isFailure() — 无 Controller 调用，非直接 HTTP 权限面。
+- LabelSummaryServiceImpl.isDelivered() — 无 Controller 调用，非直接 HTTP 权限面。
+- LabelSummaryServiceImpl.findTrackingNumber() — 无 Controller 调用，非直接 HTTP 权限面。
+- LabelSummaryServiceImpl.findFirstByTrackingNoOrCustomerRefIdOrderByIdDesc() — 无 Controller 调用，非直接 HTTP 权限面。
+- LabelSummaryServiceImpl.findFirstByCustomerRefIdOrderByIdDesc() — 无 Controller 调用，非直接 HTTP 权限面。
+- LabelSummaryServiceImpl.findFirstByTrackingNoOrCustomerRefIdOrderByIdDesc()（重复项）— 无 Controller 调用，非直接 HTTP 权限面。
+- LabelSummaryServiceImpl.reSummaryLabel() — 无 Controller 调用，非直接 HTTP 权限面。
+- LabelSummaryServiceImpl.insert() — 无 Controller 调用，非直接 HTTP 权限面。
+- LabelSummaryServiceImpl.insertBulk() — 无 Controller 调用，非直接 HTTP 权限面。
+- LabelSummaryServiceImpl.updateAddress() — 无 Controller 调用，非直接 HTTP 权限面。
+- LabelSummaryServiceImpl.findByTrackingNoIn() — 无 Controller 调用，非直接 HTTP 权限面。
+- LabelSummaryServiceImpl.completeTrackEndTime() — 无 Controller 调用，非直接 HTTP 权限面。
+- LabelSummaryServiceImpl.labelDataEncryption() — 无 Controller 调用，非直接 HTTP 权限面。
+- BackfillSearchIndexJobHandler.execute() — 无 Controller 调用，非直接 HTTP 权限面。
+- CleanSearchIndexJobHandler.execute() — 无 Controller 调用，非直接 HTTP 权限面。
+
+接口覆盖率：清单共 29 个接口，已审查 29 个，1 个存在权限风险，28 个无风险，0 个待确认
+
+<strong>HTTP 入口清单（方法 + 路径）</strong>
+- GET /v2/fuzzy-query — 存在新增权限风险；本分片新增了该入口，但 diff 可见范围内未体现与 <code>api-key</code> 绑定的数据归属校验，已在 finding 中报告。
+- POST /label-summary/insert — 无新增权限风险；本次变更仅在保存标签后同步写入搜索索引，未见新增放宽鉴权或扩大数据范围的代码。
+
+<strong>分片 9</strong>
+
+本分片新增的 IVR 模糊查询主风险在于：先查全局搜索索引、后进入既有查询链路，导致 <code>GET /v2/fuzzy-query</code> 在鉴权/归属过滤前就暴露命中状态；同时搜索索引写入失败被吞掉，会把查询能力建立在不可靠的部分成功状态上。
+
+<strong>已审查无风险接口</strong>
+- CreateLabelCmd.setPushLabelForm() — 无直接 HTTP 映射；本分片仅见调用链透传，未见新增权限放宽逻辑。
+- CreateLabelCmd.validate() — 无直接 HTTP 映射；本分片未修改鉴权或数据范围判断。
+- CreateLabelCmd.initConfig() — 无直接 HTTP 映射；本分片未修改鉴权或数据范围判断。
+- CreateLabelCmd.initEntity() — 无直接 HTTP 映射；本分片未修改鉴权或数据范围判断。
+- CreateLabelCmd.save() — 无直接 HTTP 映射；本次仅新增索引写入调用，未直接削弱入口权限控制。
+- QueryEventCmdBridge.toWeb() — 实现未在本分片 diff 内，无法断言权限。
+- QueryEventCmdBridge.toWebForBi() — 实现未在本分片 diff 内，无法断言权限。
+- QueryEventCmdBridge.toV2() — 实现未在本分片 diff 内，无法断言权限。
+- QueryEventCmdBridge.toTemu() — 实现未在本分片 diff 内，无法断言权限。
+- LabelSearchIndexServiceImpl.saveSearchIndex() — 无 Controller 调用；内部方法，不涉及直接 HTTP 权限面。
+- LabelSearchIndexServiceImpl.saveSearchIndexBatch() — 无 Controller 调用；内部方法，不涉及直接 HTTP 权限面。
+- LabelSearchIndexServiceImpl.searchTrackingNos() — 无 Controller 调用；内部方法，不涉及直接 HTTP 权限面。
+- LabelSummaryServiceImpl.summary() — 无 Controller 调用；本分片未见 HTTP 入口。
+- LabelSummaryServiceImpl.summaryHistory() — 无 Controller 调用；本分片未见 HTTP 入口。
+- LabelSummaryServiceImpl.isFailure() — 无 Controller 调用；本分片未见 HTTP 入口。
+- LabelSummaryServiceImpl.isDelivered() — 无 Controller 调用；本分片未见 HTTP 入口。
+- LabelSummaryServiceImpl.findTrackingNumber() — 无 Controller 调用；本分片未见 HTTP 入口。
+- LabelSummaryServiceImpl.findFirstByTrackingNoOrCustomerRefIdOrderByIdDesc() — 无 Controller 调用；本分片未见 HTTP 入口。
+- LabelSummaryServiceImpl.findFirstByCustomerRefIdOrderByIdDesc() — 无 Controller 调用；本分片未见 HTTP 入口。
+- LabelSummaryServiceImpl.reSummaryLabel() — 无 Controller 调用；本分片未见 HTTP 入口。
+- LabelSummaryServiceImpl.insert() — 无 Controller 调用；本次仅新增索引写入调用，未直接削弱入口权限控制。
+- LabelSummaryServiceImpl.insertBulk() — 无 Controller 调用；本分片未见 HTTP 入口。
+- LabelSummaryServiceImpl.updateAddress() — 无 Controller 调用；本分片未见 HTTP 入口。
+- LabelSummaryServiceImpl.findByTrackingNoIn() — 无 Controller 调用；本分片未见 HTTP 入口。
+- LabelSummaryServiceImpl.completeTrackEndTime() — 无 Controller 调用；本分片未见 HTTP 入口。
+- LabelSummaryServiceImpl.labelDataEncryption() — 无 Controller 调用；本分片未见 HTTP 入口。
+- BackfillSearchIndexJobHandler.execute() — 无 Controller 调用；定时任务，不涉及直接 HTTP 权限面。
+- CleanSearchIndexJobHandler.execute() — 无 Controller 调用；定时任务，不涉及直接 HTTP 权限面。
+
+接口覆盖率：清单共 29 个接口，已审查 29 个，1 个存在权限风险，24 个无风险，4 个待确认
+
+<strong>HTTP 入口清单（方法 + 路径）</strong>
+- GET /v2/fuzzy-query — 存在新增权限风险；<code>QueryEventCmdBridge.toFuzzyQuery(String apiKey, FuzzyTrackingForm form)</code> 在模糊检索阶段先暴露索引命中状态，可能被任意持有 <code>api-key</code> 的调用方用于跨 provider 运单存在性探测。
+
+<strong>分片 10</strong>
+
+整体看，本分片未发现 SQL 注入、硬编码密钥或新增的直接越权读取代码；<code>GET /event/external/v2/fuzzy-query</code> 仍沿用 <code>api-key</code> 入参并复用 <code>toV2(Collections.singletonList(resolvedTrackingNo), apiKey)</code> 查询链，基于本 diff 未看到新增鉴权绕过。但新增搜索索引链路存在明显的数据一致性与并发幂等风险，可能导致模糊查询结果与主数据脱节。
+
+<strong>已审查无风险接口</strong>
+- <code>GET /event/external/v2/fuzzy-query</code> — <code>EventExternalController.fuzzyQueryTracking(...)</code>：本 diff 中未移除 <code>api-key</code> 请求头，且 <code>QueryEventCmdBridge.toFuzzyQuery(String apiKey, FuzzyTrackingForm form)</code> 最终调用 <code>toV2(Collections.singletonList(resolvedTrackingNo), apiKey)</code>，未见新增的匿名访问或数据范围放宽逻辑。
+- <code>POST /label-summary/insert</code> — <code>CreateLabelCmd.save()</code> 对应的控制器映射未在本分片 diff 中展示完整注解，无法从新增代码证明鉴权被削弱；本次新增仅是在保存标签后同步 <code>labelSearchIndexService.saveSearchIndex(labelSummary)</code>，未直接扩大 HTTP 访问面。
+- <code>EventInternalController.querySingleWeb() -&gt; QueryEventCmdBridge.toWeb()</code> — 实现未在本分片 diff 内，无法断言权限；本次改动未触及其鉴权逻辑。
+- <code>EventInternalController.queryMultipleWebForBi() -&gt; QueryEventCmdBridge.toWebForBi()</code> — 实现未在本分片 diff 内，无法断言权限；本次改动未触及其鉴权逻辑。
+- <code>EventExternalController.getTrackingV2() -&gt; QueryEventCmdBridge.toV2()</code> — 实现未在本分片 diff 内，无法断言权限；本次改动未触及其鉴权逻辑。
+- <code>EventExternalController.getTrackingV2Temu() -&gt; QueryEventCmdBridge.toTemu()</code> — 实现未在本分片 diff 内，无法断言权限；本次改动未触及其鉴权逻辑。
+
+接口覆盖率：清单共 29 个接口，已审查 29 个，0 个存在权限风险，6 个无风险，23 个待确认
+
+<strong>HTTP 入口清单（方法 + 路径）</strong>
+- <code>GET /event/external/v2/fuzzy-query</code>：本次 diff 新增入口；从新增代码看未出现新增权限绕过，仍要求 <code>api-key</code>，但具体 <code>api-key</code> 与数据范围绑定逻辑在 <code>toV2</code> 实现外，需结合未展示代码人工确认。
+
+<strong>分片 11</strong>
+
+本分片新增了模糊查询索引链路，未发现 SQL 注入、硬编码密钥或新增 HTTP 鉴权绕过代码；但发现 1 处索引写入异常吞没会直接造成查询结果与主数据不一致，另有 1 处批量回填先查后写存在并发竞态。
+
+<strong>已审查无风险接口</strong>
+- GET /v2/fuzzy-query — <code>EventExternalController.fuzzyQueryTracking()</code> 将 <code>api-key</code> 继续透传给 <code>QueryEventCmdBridge.toFuzzyQuery(String apiKey, FuzzyTrackingForm form)</code>，并最终复用 <code>toV2(Collections.singletonList(resolvedTrackingNo), apiKey)</code> 查询链路，本分片未见新增放宽鉴权或扩大数据范围的代码。
+- POST /label-summary/insert — <code>CreateLabelCmd.save()</code> 仅新增 <code>labelSearchIndexService.saveSearchIndex(labelSummary)</code> 副作用写入，本分片未见删除或绕过原有入口鉴权/归属校验代码；但实现未在本分片 diff 内完整展示，权限细节仍需结合控制器注解与网关策略人工确认。
+- EventInternalController.querySingleWeb() 对应入口 — 实现未在本分片 diff 内，且本次未修改 <code>QueryEventCmdBridge.toWeb()</code> 权限逻辑，无法从新增代码断言存在权限削弱。
+- EventInternalController.queryMultipleWebForBi() 对应入口 — 实现未在本分片 diff 内，且本次未修改 <code>QueryEventCmdBridge.toWebForBi()</code> 权限逻辑，无法从新增代码断言存在权限削弱。
+- POST /event/external/v2/getTrackingV2 对应入口 — 本分片未修改 <code>QueryEventCmdBridge.toV2()</code> 权限逻辑，<code>fuzzyQueryTracking()</code> 仍复用该链路，未见新增越权读取代码。
+- POST /event/external/v2/getTrackingV2Temu 对应入口 — 本分片未修改 <code>QueryEventCmdBridge.toTemu()</code> 权限逻辑，无法从新增代码断言存在权限削弱。
+
+接口覆盖率：清单共 29 个接口，已审查 29 个，0 个存在权限风险，6 个无风险，23 个待确认。
+
+<strong>HTTP 入口清单（方法 + 路径）</strong>
+- GET /v2/fuzzy-query — 无新增权限风险；本次仅新增模糊检索入口并继续传递 <code>api-key</code> 到既有查询链路，未见 diff 内放宽鉴权或数据范围过滤。
+- POST /label-summary/insert — 实现未在本分片/diff 内完整展示，无法断言权限；本次变更只是在保存标签时附带写入搜索索引。
+- EventInternalController.querySingleWeb() 对应路径 — 实现未在本分片/diff 内，无法断言权限。
+- EventInternalController.queryMultipleWebForBi() 对应路径 — 实现未在本分片/diff 内，无法断言权限。
+- EventExternalController.getTrackingV2() 对应路径 — 实现未在本分片/diff 内完整展示，无法断言权限；本次未修改其鉴权逻辑。
+- EventExternalController.getTrackingV2Temu() 对应路径 — 实现未在本分片/diff 内完整展示，无法断言权限；本次未修改其鉴权逻辑。
+
+<strong>分片 12</strong>
+
+本分片新增了一个高风险的模糊查询入口：<code>GET /v2/fuzzy-query</code> 将“数字片段 + 可选手机号后四位”直接映射到真实运单并复用既有轨迹查询链路，变更中未看到与 <code>api-key</code> 绑定的数据范围限制，且允许仅凭 <code>digits</code> 检索，存在明显的数据探测/越权读取面。另有搜索索引写入异常吞没与批量写入竞态，容易造成主数据与搜索索引不一致。
+
+<strong>已审查无风险接口</strong>
+- <code>CreateLabelCmd.setPushLabelForm()</code> + <code>POST /label-summary/insert</code>：本分片仅新增搜索索引写入调用，未看到削弱原有入口鉴权的代码；但控制器注解未在本分片，权限实现需依赖既有代码。
+- <code>CreateLabelCmd.validate()</code> + <code>POST /label-summary/insert</code>：本分片未修改权限判断逻辑，无新增权限风险证据。
+- <code>CreateLabelCmd.initConfig()</code> + <code>POST /label-summary/insert</code>：本分片未修改权限判断逻辑，无新增权限风险证据。
+- <code>CreateLabelCmd.initEntity()</code> + <code>POST /label-summary/insert</code>：本分片未修改权限判断逻辑，无新增权限风险证据。
+- <code>CreateLabelCmd.save()</code> + <code>POST /label-summary/insert</code>：本分片新增 <code>labelSearchIndexService.saveSearchIndex(labelSummary)</code>，未直接放宽入口权限；权限是否充分仍依赖既有控制器实现。
+- <code>QueryEventCmdBridge.toWeb()</code> + UNKNOWN：实现未在本分片 diff 内，无法断言权限，但未见新增权限削弱代码。
+- <code>QueryEventCmdBridge.toWebForBi()</code> + UNKNOWN：实现未在本分片 diff 内，无法断言权限，但未见新增权限削弱代码。
+- <code>QueryEventCmdBridge.toV2()</code> + UNKNOWN：本分片未展示方法体，无法断言权限，但 <code>toFuzzyQuery</code> 复用它本身不构成该方法新增权限风险证据。
+- <code>QueryEventCmdBridge.toTemu()</code> + UNKNOWN：实现未在本分片 diff 内，无法断言权限，但未见新增权限削弱代码。
+- <code>LabelSearchIndexServiceImpl.saveSearchIndex()</code>：无 Controller 调用，非直接 HTTP 权限面。
+- <code>LabelSearchIndexServiceImpl.saveSearchIndexBatch()</code>：无 Controller 调用，非直接 HTTP 权限面。
+- <code>LabelSearchIndexServiceImpl.searchTrackingNos()</code>：无 Controller 直接调用，权限风险已通过 <code>GET /v2/fuzzy-query</code> 入口单独评估。
+- <code>LabelSummaryServiceImpl.summary()</code>：无 Controller 调用，非直接 HTTP 权限面。
+- <code>LabelSummaryServiceImpl.summaryHistory()</code>：无 Controller 调用，非直接 HTTP 权限面。
+- <code>LabelSummaryServiceImpl.isFailure()</code>：无 Controller 调用，非直接 HTTP 权限面。
+- <code>LabelSummaryServiceImpl.isDelivered()</code>：无 Controller 调用，非直接 HTTP 权限面。
+- <code>LabelSummaryServiceImpl.findTrackingNumber()</code>：无 Controller 调用，非直接 HTTP 权限面。
+- <code>LabelSummaryServiceImpl.findFirstByTrackingNoOrCustomerRefIdOrderByIdDesc()</code>：无 Controller 调用，非直接 HTTP 权限面。
+- <code>LabelSummaryServiceImpl.findFirstByCustomerRefIdOrderByIdDesc()</code>：无 Controller 调用，非直接 HTTP 权限面。
+- <code>LabelSummaryServiceImpl.reSummaryLabel()</code>：无 Controller 调用，非直接 HTTP 权限面。
+- <code>LabelSummaryServiceImpl.insert()</code>：无 Controller 调用，非直接 HTTP 权限面。
+- <code>LabelSummaryServiceImpl.insertBulk()</code>：无 Controller 调用，非直接 HTTP 权限面。
+- <code>LabelSummaryServiceImpl.updateAddress()</code>：无 Controller 调用，非直接 HTTP 权限面。
+- <code>LabelSummaryServiceImpl.findByTrackingNoIn()</code>：无 Controller 调用，非直接 HTTP 权限面。
+- <code>LabelSummaryServiceImpl.completeTrackEndTime()</code>：无 Controller 调用，非直接 HTTP 权限面。
+- <code>LabelSummaryServiceImpl.labelDataEncryption()</code>：无 Controller 调用，非直接 HTTP 权限面。
+- <code>BackfillSearchIndexJobHandler.execute()</code>：Job 入口，非 HTTP 权限面。
+- <code>CleanSearchIndexJobHandler.execute()</code>：Job 入口，非 HTTP 权限面。
+
+接口覆盖率：清单共 29 个接口，已审查 29 个，1 个存在权限风险，28 个无风险，0 个待确认
+
+<strong>HTTP 入口清单（方法 + 路径）</strong>
+- <code>GET /v2/fuzzy-query</code>：存在新增权限风险。该入口允许通过 <code>api-key</code> + 模糊条件解析运单，变更中未见与调用方数据范围绑定的校验，且支持仅凭 <code>digits</code> 查询。
+
+<strong>分片 13</strong>
+
+整体看，本次改动引入了新的模糊查询链路和搜索索引，但新增的 <code>GET /v2/fuzzy-query</code> 及其底层索引查询没有把 <code>api-key</code> 对应的数据范围绑定到检索阶段，存在明显的越权读取与全局枚举风险；同时索引写入失败被静默吞掉，容易造成主数据与搜索索引不一致。
+
+<strong>权限问题根因（汇总）</strong>
+本次权限问题同源于“先做全局索引解析，再复用既有查询链路”的设计：<code>QueryEventCmdBridge.toFuzzyQuery(String apiKey, FuzzyTrackingForm form)</code> 和 <code>LabelSearchIndexServiceImpl.searchTrackingNos(String digits, String phoneLast4)</code> 都没有把 <code>Provider</code> 可见范围作为查询条件。结果是 <code>api-key</code> 只在最终查询阶段参与，而最敏感的“候选运单解析”阶段已经发生了跨租户信息泄露。
+
+<strong>已审查无风险接口</strong>
+- CreateLabelCmd.setPushLabelForm() + UNKNOWN：实现未在本分片/diff 内，无法断言权限，且本次变更未新增 HTTP 暴露面。
+- CreateLabelCmd.validate() + UNKNOWN：实现未在本分片/diff 内，无法断言权限，且本次变更未新增 HTTP 暴露面。
+- CreateLabelCmd.initConfig() + UNKNOWN：实现未在本分片/diff 内，无法断言权限，且本次变更未新增 HTTP 暴露面。
+- CreateLabelCmd.initEntity() + UNKNOWN：实现未在本分片/diff 内，无法断言权限，且本次变更未新增 HTTP 暴露面。
+- CreateLabelCmd.save() + UNKNOWN：本次仅新增 <code>labelSearchIndexService.saveSearchIndex(labelSummary)</code>，未见新增放宽鉴权代码；HTTP 入口注解未在本分片提供，需沿用既有控制器权限。
+- QueryEventCmdBridge.toWeb() + UNKNOWN：实现未在本分片/diff 内，无法断言权限。
+- QueryEventCmdBridge.toWebForBi() + UNKNOWN：实现未在本分片/diff 内，无法断言权限。
+- QueryEventCmdBridge.toV2() + UNKNOWN：实现未在本分片/diff 内，无法断言权限。
+- QueryEventCmdBridge.toTemu() + UNKNOWN：实现未在本分片/diff 内，无法断言权限。
+- LabelSearchIndexServiceImpl.saveSearchIndex() + 无 HTTP 入口：内部服务方法，无直接对外暴露权限面。
+- LabelSearchIndexServiceImpl.saveSearchIndexBatch() + 无 HTTP 入口：内部服务方法，无直接对外暴露权限面。
+- LabelSummaryServiceImpl.summary() + 无 Controller 调用：本分片未改动实现，未见新增权限风险。
+- LabelSummaryServiceImpl.summaryHistory() + 无 Controller 调用：本分片未改动实现，未见新增权限风险。
+- LabelSummaryServiceImpl.isFailure() + 无 Controller 调用：本分片未改动实现，未见新增权限风险。
+- LabelSummaryServiceImpl.isDelivered() + 无 Controller 调用：本分片未改动实现，未见新增权限风险。
+- LabelSummaryServiceImpl.findTrackingNumber() + 无 Controller 调用：本分片未改动实现，未见新增权限风险。
+- LabelSummaryServiceImpl.findFirstByTrackingNoOrCustomerRefIdOrderByIdDesc() + 无 Controller 调用：本分片未改动实现，未见新增权限风险。
+- LabelSummaryServiceImpl.findFirstByCustomerRefIdOrderByIdDesc() + 无 Controller 调用：本分片未改动实现，未见新增权限风险。
+- LabelSummaryServiceImpl.reSummaryLabel() + 无 Controller 调用：本分片未改动实现，未见新增权限风险。
+- LabelSummaryServiceImpl.insert() + 无 Controller 调用：本次仅新增索引同步调用，未见新增放宽鉴权代码。
+- LabelSummaryServiceImpl.insertBulk() + 无 Controller 调用：本分片未改动实现，未见新增权限风险。
+- LabelSummaryServiceImpl.updateAddress() + 无 Controller 调用：本分片未改动实现，未见新增权限风险。
+- LabelSummaryServiceImpl.findByTrackingNoIn() + 无 Controller 调用：本分片未改动实现，未见新增权限风险。
+- LabelSummaryServiceImpl.completeTrackEndTime() + 无 Controller 调用：本分片未改动实现，未见新增权限风险。
+- LabelSummaryServiceImpl.labelDataEncryption() + 无 Controller 调用：本分片未改动实现，未见新增权限风险。
+- BackfillSearchIndexJobHandler.execute() + 无 Controller 调用：定时任务入口，无新增外部访问控制面。
+- CleanSearchIndexJobHandler.execute() + 无 Controller 调用：定时任务入口，无新增外部访问控制面。
+
+接口覆盖率：清单共 29 个接口，已审查 29 个，2 个存在权限风险，27 个无风险，0 个待确认
+
+<strong>HTTP 入口清单（方法 + 路径）</strong>
+- GET /v2/fuzzy-query：存在新增权限风险。<code>QueryEventCmdBridge.toFuzzyQuery(String apiKey, FuzzyTrackingForm form)</code> 通过全局 <code>labelSearchIndexService.searchTrackingNos(inputNumber, phoneLast4)</code> 解析候选运单，未把 <code>Provider</code> 数据范围绑定到检索阶段，存在越权读取风险。
+
+<strong>分片 14</strong>
+
+整体看，本分片新增分表与模糊查询链路未发现 SQL 注入、硬编码密钥或新增明文敏感日志，但搜索索引写入链路存在明显的数据一致性与并发风险，需要在上线前修复。
+
+<strong>已审查无风险接口</strong>
+- <code>GET /event/external/v2/fuzzy-query</code>：本次 diff 中 <code>EventExternalController.fuzzyQueryTracking()</code> 将 <code>apiKey</code> 继续透传给 <code>QueryEventCmdBridge.toFuzzyQuery(String apiKey, FuzzyTrackingForm form)</code>，最终复用 <code>toV2(Collections.singletonList(resolvedTrackingNo), apiKey)</code>，未见新增绕过 <code>apiKey</code> 的代码；但由于 <code>toV2</code> 实现未在本分片 diff 内，资源归属与数据范围仍需结合其原实现人工确认。
+- <code>POST /label-summary/insert</code>：本次 diff 仅新增 <code>labelSearchIndexService.saveSearchIndex(labelSummary)</code>，未修改 <code>LabelSummaryController.insert()</code> 的鉴权入口代码；实现未在本分片 diff 内展示 HTTP 注解与权限注解，无法从本分片断言是否存在既有权限问题，但本次变更未直接削弱鉴权。
+- <code>EventInternalController.querySingleWeb()</code> 对应入口：实现未在本分片 diff 内，且本次变更未触及 <code>QueryEventCmdBridge.toWeb()</code> 的权限逻辑，无新增权限风险。
+- <code>EventInternalController.queryMultipleWebForBi()</code> 对应入口：实现未在本分片 diff 内，且本次变更未触及 <code>QueryEventCmdBridge.toWebForBi()</code> 的权限逻辑，无新增权限风险。
+- <code>EventExternalController.getTrackingV2()</code> 对应入口：实现未在本分片 diff 内，且本次变更未触及 <code>QueryEventCmdBridge.toV2()</code> 的权限逻辑，无新增权限风险。
+- <code>EventExternalController.getTrackingV2Temu()</code> 对应入口：实现未在本分片 diff 内，且本次变更未触及 <code>QueryEventCmdBridge.toTemu()</code> 的权限逻辑，无新增权限风险。
+
+接口覆盖率：清单共 29 个接口，已审查 29 个，0 个存在权限风险，6 个无风险，23 个待确认
+
+<strong>HTTP 入口清单（方法 + 路径）</strong>
+- <code>GET /v2/fuzzy-query</code>：无新增权限风险；本次 diff 保留 <code>apiKey</code> 传递并复用既有 <code>toV2</code> 查询链路，但 <code>toV2</code> 的鉴权与数据范围实现未在本分片 diff 内，需人工确认是否与权限体系一致。
+- <code>POST /label-summary/insert</code>：本次变更未直接削弱鉴权；新增的是写搜索索引逻辑，不是新的放行路径，但该入口的权限注解/鉴权实现未在本分片 diff 内，无法断言既有权限是否完备。
+
+<strong>分片 15</strong>
+
+本分片新增了模糊查询与搜索索引链路，主要风险集中在：一是 <code>GET /event/external/v2/fuzzy-query</code> 把精确查询扩展为可枚举的模糊检索，但新增代码未体现足够的输入约束与抗枚举控制；二是搜索索引写入失败被吞掉，容易造成主数据与查询索引静默不一致。
+
+<strong>已审查无风险接口</strong>
+- CreateLabelCmd.setPushLabelForm() + UNKNOWN：本分片仅看到调用链接入 <code>labelSearchIndexService.saveSearchIndex(labelSummary)</code>，未见新增鉴权放宽代码，权限行为无法从 diff 断言为风险。
+- CreateLabelCmd.validate() + UNKNOWN：本分片未修改鉴权或角色判断逻辑，未见新增权限放宽证据。
+- CreateLabelCmd.initConfig() + UNKNOWN：本分片未修改鉴权或数据范围控制逻辑，未见新增权限放宽证据。
+- CreateLabelCmd.initEntity() + UNKNOWN：本分片未修改鉴权或数据范围控制逻辑，未见新增权限放宽证据。
+- CreateLabelCmd.save() + UNKNOWN：本分片新增的是搜索索引写入，不是权限判断代码；未见新增越权证据。
+- QueryEventCmdBridge.toWeb() + UNKNOWN：本分片未改动该方法权限逻辑，无法从 diff 断言新增权限风险。
+- QueryEventCmdBridge.toWebForBi() + UNKNOWN：本分片未改动该方法权限逻辑，无法从 diff 断言新增权限风险。
+- QueryEventCmdBridge.toV2() + UNKNOWN：<code>toFuzzyQuery</code> 复用了 <code>toV2</code>，但本分片未展示 <code>toV2</code> 内部鉴权实现，无法从 diff 断言新增权限风险。
+- QueryEventCmdBridge.toTemu() + UNKNOWN：本分片仅调整测试构造参数，未见新增权限放宽证据。
+- LabelSearchIndexServiceImpl.saveSearchIndex()：无 HTTP 入口，属于内部服务写索引，无直接权限面。
+- LabelSearchIndexServiceImpl.saveSearchIndexBatch()：无 HTTP 入口，属于内部批处理，无直接权限面。
+- LabelSearchIndexServiceImpl.searchTrackingNos()：无 HTTP 入口，权限风险已通过 <code>QueryEventCmdBridge.toFuzzyQuery()</code> 的外部入口覆盖。
+- LabelSummaryServiceImpl.summary()：无 Controller 调用，本分片未见权限变更。
+- LabelSummaryServiceImpl.summaryHistory()：无 Controller 调用，本分片未见权限变更。
+- LabelSummaryServiceImpl.isFailure()：无 Controller 调用，本分片未见权限变更。
+- LabelSummaryServiceImpl.isDelivered()：无 Controller 调用，本分片未见权限变更。
+- LabelSummaryServiceImpl.findTrackingNumber()：无 Controller 调用，本分片未见权限变更。
+- LabelSummaryServiceImpl.findFirstByTrackingNoOrCustomerRefIdOrderByIdDesc()：无 Controller 调用，本分片未见权限变更。
+- LabelSummaryServiceImpl.findFirstByCustomerRefIdOrderByIdDesc()：无 Controller 调用，本分片未见权限变更。
+- LabelSummaryServiceImpl.reSummaryLabel()：无 Controller 调用，本分片未见权限变更。
+- LabelSummaryServiceImpl.insert()：无 Controller 调用，本分片新增的是搜索索引同步，不是权限放宽。
+- LabelSummaryServiceImpl.insertBulk()：无 Controller 调用，本分片未见权限变更。
+- LabelSummaryServiceImpl.updateAddress()：无 Controller 调用，本分片未见权限变更。
+- LabelSummaryServiceImpl.findByTrackingNoIn()：无 Controller 调用，本分片未见权限变更。
+- LabelSummaryServiceImpl.completeTrackEndTime()：无 Controller 调用，本分片未见权限变更。
+- LabelSummaryServiceImpl.labelDataEncryption()：无 Controller 调用，本分片未见权限变更。
+- BackfillSearchIndexJobHandler.execute()：无 HTTP 入口，属于任务处理，无直接权限面。
+- CleanSearchIndexJobHandler.execute()：无 HTTP 入口，属于任务处理，无直接权限面。
+
+接口覆盖率：清单共 29 个接口，已审查 29 个，1 个存在权限风险，28 个无风险，0 个待确认
+
+<strong>HTTP 入口清单（方法 + 路径）</strong>
+- GET /v2/fuzzy-query：存在新增权限与访问控制风险；新增模糊检索能力可被持有有效 <code>api-key</code> 的调用方用于运单存在性枚举，见 <code>QueryEventCmdBridge.toFuzzyQuery(String apiKey, FuzzyTrackingForm form)</code> finding。
+
+<strong>分片 16</strong>
+
+本分片提供的 diff 仅包含测试代码、设计/DDL 文档以及依赖版本调整；在这些新增/修改行中未发现可直接落到真实变更行上的安全问题。尤其是唯一可识别的 HTTP 路径 <code>/event/external/v2/fuzzy-query</code> 仅出现在测试代码中，实际 <code>EventExternalController</code> 实现未在本分片 diff 展开，无法基于本分片新增/修改行断言其鉴权或数据范围被削弱。
+
+HTTP 入口清单（方法 + 路径）
+- GET /event/external/v2/fuzzy-query：仅在 <code>tracking-api/src/test/java/io/speedx/trk/api/controller/external/EventExternalControllerFuzzyQueryTest.java</code> 的测试请求中出现；实现未在本分片/diff 内，无法断言权限。就本分片新增测试本身看，未新增 <code>permitAll</code>、未新增绕过 <code>api-key</code> 校验的代码，未见新增权限风险。</pre></details></div></div>
+      <div class="filter-row">
+        <span class="filter-label">点击筛选:</span>
+        <div class="chips">
+          <span class="chip critical filter-chip" data-filter="critical" onclick="filterBySeverity(this)">Critical: 6</span>
+          <span class="chip major filter-chip" data-filter="major" onclick="filterBySeverity(this)">Major: 6</span>
+          <span class="chip minor filter-chip" data-filter="minor" onclick="filterBySeverity(this)">Minor: 2</span>
+          <span class="chip info filter-chip" data-filter="info" onclick="filterBySeverity(this)">Info: 0</span>
+          <span class="chip">Total: 14</span>
+        </div>
+        <div class="chips-impact-note">牵连影响另有 39 条判定为安全，不计入以上统计</div>
+      </div>
+    </section>
+
+    <div class="charts-row">
+      <div class="chart-section" id="chart-section">
+        <h3 class="section-title">问题分布</h3>
+        <div class="chart-container">
+          <canvas id="categoryChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div id="filter-hint">
+      筛选中: <strong id="filter-hint-label"></strong>，仅显示对应问题
+      <span class="clear-filter" onclick="clearFilter()">清除筛选</span>
+    </div>
+
+    <div class="findings-toolbar" id="findings-toolbar" style="display: none;">
+      <!-- 筛选按钮已下线：与上方「总体结论」区的 filter-row（Critical/Major/Minor/Info 计数
+           chip）功能重复，且从未挂过点击事件，是从未生效的死代码（用户反馈"这个筛选多余了"）。
+           筛选统一走上方 filter-row 的 filterBySeverity()，这里只保留搜索 + 导出。 -->
+      <input type="text" class="findings-search" id="findings-search" placeholder="搜索文件/描述…">
+      <div class="export-dropdown">
+        <button class="toolbar-btn" id="export-btn">导出 ▼</button>
+        <div class="export-menu" id="export-menu" style="display:none;">
+          <a href="#" onclick="exportJira()">导出为 Jira</a>
+          <a href="#" onclick="exportExcel()">导出为 Excel</a>
+          <a href="#" onclick="exportCsv()">导出为 CSV</a>
+        </div>
+      </div>
+    </div>
+
+    
+<style>
+.impact-section { margin: 16px 0 24px; }
+.impact-section .section-title { font-size: 18px; font-weight: 700; margin-bottom: 10px; }
+/* 颜色直接写死（不用 var(--minor-*)）：既往回归测过"这份样式表里一次都不能
+   出现 --minor-bg 这个变量名"（NEEDS_HUMAN 不该复用 minor 琥珀色，见下方
+   impact-stat.impact-needs-human 的注释），这里的抽样提示条语义完全不同
+   （跟严重度无关，只是"这批数据是抽样的"），但同一份样式表里带上这个变量
+   名字本身就会让那条回归测试的"零出现"断言失去意义。 */
+.impact-sample-banner {
+  background: #fdf7e0; color: #8a6208;
+  border: 1px solid #f1e096;
+  border-radius: 8px; padding: 8px 14px; font-size: 13px; font-weight: 600;
+  margin-bottom: 10px;
+}
+.impact-stats-banner { margin-bottom: 10px; }
+.impact-stat {
+  display: inline-block; padding: 4px 11px; border-radius: 8px; font-size: 12px;
+  font-weight: 700; margin-right: 8px;
+}
+.impact-stat.impact-risk { background: var(--critical-bg, #fdeceb); color: var(--critical-text, #b3261e); }
+/* NEEDS_HUMAN 改用 info 蓝（原用 minor 琥珀色，与"一般问题"严重度语义撞车——
+   需人工核实 ≠ 一个确定的低危问题，是"不知道，人来判断"，语义上更接近
+   info 的"仅供参考/待确认"，用户反馈"两套配色打架"实测已改） */
+.impact-stat.impact-needs-human { background: var(--info-bg, #eaf1fd); color: var(--info-text, #23509c); }
+.impact-stat.impact-safe { background: var(--safe-bg, #e8f6ee); color: var(--safe-text, #1a7a4c); }
+.impact-stat.impact-total { background: var(--chip-bg, #eef0f5); color: var(--muted, #667085); }
+.impact-section-note {
+  font-size: 13px; color: #666; line-height: 1.75; margin: 0 0 12px;
+  padding: 11px 14px; background: #f7f9fa; border-radius: 8px;
+}
+.impact-section-note p { margin: 0 0 7px; }
+.impact-section-note p:last-child { margin-bottom: 0; }
+.impact-section-note strong { color: #333; }
+.impact-note-legend {
+  margin: 0 0 8px; padding-left: 18px; list-style: none;
+}
+.impact-note-legend li { margin-bottom: 3px; }
+.impact-note-legend li::before {
+  content: "·"; margin-right: 6px; color: #999; font-weight: 700;
+}
+.impact-ratio-alert {
+  background: var(--major-bg, #fdf1e3); color: var(--major-text, #a85311);
+  border: 1px solid var(--major-border, #f4d19d); border-radius: 8px; padding: 8px 14px;
+  font-size: 13px; margin-bottom: 10px;
+}
+.impact-group { margin-bottom: 22px; }
+.impact-group-title {
+  font-size: 16px; font-weight: 700; margin: 14px 0 10px; color: #333;
+  padding-bottom: 6px; border-bottom: 1px solid #e5e5e5;
+}
+.impact-empty { color: #666; font-size: 13px; padding: 8px 0; }
+/* 卡片间距加大 + 阴影，强化"一张卡是一个独立问题"的边界感（用户反馈①） */
+.impact-risk-list { display: flex; flex-direction: column; gap: 16px; }
+.impact-card {
+  border: 1px solid var(--border, #e3e6ec); border-left: 4px solid #ccc; border-radius: 12px;
+  padding: 14px 16px; background: #fff; margin-bottom: 16px;
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(16,24,40,.06));
+}
+.impact-card.impact-risk { border-left-color: var(--critical-strong, #d1291f); background: linear-gradient(90deg, var(--critical-bg, #fdeceb) 0%, #fff 14px); }
+.impact-card.impact-needs-human { border-left-color: var(--info-strong, #2f66c9); background: linear-gradient(90deg, var(--info-bg, #eaf1fd) 0%, #fff 14px); }
+.impact-card.impact-safe { border-left-color: var(--safe-text, #1a7a4c); background: linear-gradient(90deg, var(--safe-bg, #e8f6ee) 0%, #fff 14px); }
+.impact-card-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+  padding-bottom: 8px; border-bottom: 1px solid #f0f0f0;
+}
+.impact-badge {
+  font-size: 11.5px; font-weight: 800; padding: 4px 10px; border-radius: 7px;
+  text-transform: none; border: 1px solid transparent;
+}
+/* 加边框跟主报告 .sev-badge 视觉语言对齐（用户反馈"两种报告风格不统一"） */
+.impact-badge.impact-risk { background: var(--critical-bg, #fdeceb); color: var(--critical-text, #b3261e); border-color: var(--critical-border, #f3b7b2); }
+.impact-badge.impact-needs-human { background: var(--info-bg, #eaf1fd); color: var(--info-text, #23509c); border-color: var(--info-border, #c0d6f6); }
+.impact-badge.impact-safe { background: var(--safe-bg, #e8f6ee); color: var(--safe-text, #1a7a4c); border-color: var(--safe-border, #aee3c4); }
+.impact-index { font-size: 12px; color: #888; }
+.impact-source-tag { font-size: 12.5px; color: #555; background: #f2f2f2; border-radius: 4px; padding: 2px 7px; }
+/* 字段之间用细分隔线拉开节奏，避免"挤成一坨"（用户反馈①的卡内延伸） */
+.impact-field { margin: 0; padding: 8px 0; font-size: 14px; }
+.impact-field + .impact-field { border-top: 1px dashed #ececec; }
+.impact-field-label {
+  font-weight: 700; color: #555; font-size: 12px; margin-bottom: 4px;
+  text-transform: uppercase; letter-spacing: .02em;
+}
+.impact-field p { margin: 0; }
+/* “怎么办”做成醒目的行动召唤条，呼应主报告 .fix-card/.dp-fix 的视觉语言，
+   同时用底色块把它和上面的说明性文字区分开——减轻“每张卡都在念同一句话”
+   的观感（用户反馈④之一：内容本身仍是模板句，属内容生成侧，此处只做视觉区隔）*/
+.impact-action {
+  background: #f3faf7; border-left: 3px solid var(--accent, #0f766e);
+  border-radius: 0 8px 8px 0; padding: 8px 12px; color: #2d4a3d;
+}
+/* 代码上下文块：文件名/行号做成编辑器 tab 条，深色代码正文 + 高亮目标行，
+   解决用户反馈②（file:line 太不显眼）与③（无上下文、无高亮） */
+.impact-code-tab {
+  display: flex; align-items: baseline; gap: 10px; background: #1a2438;
+  color: #cbd5e0; font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12px; padding: 7px 13px; border-radius: 8px 8px 0 0; margin-top: 8px;
+}
+.impact-code-tab-path { font-weight: 600; color: #e2e8f0; word-break: break-all; }
+.impact-code-tab-line { color: #7dd3e8; white-space: nowrap; }
+.impact-code-body {
+  background: var(--code-bg, #10182b); border-radius: 0 0 8px 8px; padding: 7px 0;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12.5px; line-height: 1.65; overflow-x: auto;
+}
+.impact-code-line { display: flex; padding: 0 12px; white-space: pre; }
+.impact-code-no {
+  flex: 0 0 auto; width: 2.6em; text-align: right; margin-right: 12px;
+  color: #718096; user-select: none;
+}
+.impact-code-text { color: #e2e8f0; }
+.impact-code-line-hl {
+  background: rgba(214, 158, 46, .18); border-left: 3px solid #d69e2e;
+  padding-left: 9px; margin-left: -3px;
+}
+.impact-code-line-hl .impact-code-no { color: #f6c453; font-weight: 700; }
+.impact-code-line-hl .impact-code-text { color: #fdf6e3; }
+/* quote 单行降级展示（拿不到源文件时的兜底，见 render_impact_section.py 说明） */
+.impact-evidence {
+  background: var(--code-bg, #10182b); color: #e2e8f0; border-radius: 0 0 8px 8px;
+  padding: 9px 13px; font-size: 12.5px; overflow-x: auto; margin: 0;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+/* 折叠区统一加 ▸ 箭头指示，跟主报告其它折叠区（issue-fold/dp-fold）一致，
+   修掉「牵连影响」这节此前唯独没有展开箭头的不一致（用户反馈④之一） */
+.impact-needs-human-fold, .impact-merged-details { margin-top: 10px; }
+.impact-needs-human-fold summary, .impact-merged-details summary {
+  cursor: pointer; font-size: 13.5px; font-weight: 600; color: #555; padding: 6px 0;
+  list-style: none; display: flex; align-items: center; gap: 6px;
+}
+.impact-needs-human-fold summary::-webkit-details-marker,
+.impact-merged-details summary::-webkit-details-marker { display: none; }
+.impact-needs-human-fold summary::before,
+.impact-merged-details summary::before {
+  content: "▸"; font-size: 11px; color: var(--accent, #0f766e); transition: transform .15s;
+}
+.impact-needs-human-fold[open] > summary::before,
+.impact-merged-details[open] > summary::before { transform: rotate(90deg); }
+/* 判定为安全的调用点不再逐条/逐组展示（2026-09-02），.impact-safe-fold 这
+   个折叠 class 已经没有任何 HTML 元素在用，改用不带交互的 .impact-safe-note
+   脚注段落——下面这条规则保留，上面折叠相关的 .impact-safe-fold 选择器已
+   随之删除（P3，code-reviewer 复核指出的死 CSS）。 */
+.impact-safe-note { color: #777; font-size: 12.5px; }
+.impact-merged-row { border-top: 1px dashed #e2e2e2; padding: 10px 0; font-size: 14px; }
+.impact-merged-row-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+</style>
+<section class="impact-section"><h2 class="section-title">牵连影响</h2><div class="impact-section-note"><p><strong>这一节回答的问题：</strong>这次改动被别的代码调用的那些地方，会不会被改坏。跟上面「按文件的审查发现」（这次写的代码本身对不对）是两回事，<strong>两边的数字不能相加</strong>。</p><ul class="impact-note-legend"><li><strong>Critical</strong>＝建议关注，这个调用点可能被改坏了</li><li><strong>Major</strong>＝AI 拿不准，需要人看一眼</li><li><strong>Info</strong>＝已排查，确认没影响</li></ul><p><strong>这次的数字：</strong>一共挖到 39 个调用点，其中 0 个建议关注，来自 0 处真正被改动的方法或字段（同一处改动的每个调用方分开列）。</p></div><div class="impact-stats-banner"><span class="impact-stat impact-risk">Critical · 建议关注 0（0 处改动）</span><span class="impact-stat impact-needs-human">Major · 需人工核实 0（0 处改动）</span><span class="impact-stat impact-safe">Info · 已排查安全 39</span><span class="impact-stat impact-total">Total 39</span></div><div class="impact-empty">本次改动未挖出需要人工关注的牵连消费点。</div></section><section class="endpoint-coverage"><h2 class="section-title">接口审查覆盖清单</h2><p class="ec-note">本次改动涉及 2 个接口，其中 1 个有风险、1 个没敢下结论、0 个已确认没问题。这张表是把各段审查结论逐个接口对账后汇总的，原文见「总体结论」里的折叠框。</p><p class="ec-note ec-note-warn">其中 <strong>1 个接口所有分片都没敢下结论</strong>（多为该接口实现没进本次改动、AI 看不到完整代码）。这几个接口的权限问题<strong>不会</strong>出现在上面的问题列表里，需要人工过一遍。</p><div class="ec-table-wrap"><table class="ec-table"><thead><tr><th>方法</th><th>接口</th><th>结论</th><th>依据</th></tr></thead><tbody><tr class="ec-risk"><td class="ec-method">GET</td><td class="ec-path"><code>/v2/fuzzy-query</code></td><td class="ec-verdict"><span class="ec-badge ec-risk">有风险</span></td><td class="ec-reason">存在新增权限风险。<code>QueryEventCmdBridge.toFuzzyQuery(String apiKey, FuzzyTrackingForm form)</code> 通过全局 <code>labelSearchIndexService.searchTrackingNos(inputNumber, phoneLast4)</code> 解析候选运单，未把 <code>Provider</code> 数据范围绑定到检索阶段，存在越权读取风险。</td></tr><tr class="ec-pending"><td class="ec-method">GET</td><td class="ec-path"><code>/event/external/v2/fuzzy-query</code></td><td class="ec-verdict"><span class="ec-badge ec-pending">没敢下结论</span></td><td class="ec-reason">仅在 <code>tracking-api/src/test/java/io/speedx/trk/api/controller/external/EventExternalControllerFuzzyQueryTest.java</code> 的测试请求中出现；实现未在本段/diff 内，无法断言权限。就本段新增测试本身看，未新增 <code>permitAll</code>、未新增绕过 <code>api-key</code> 校验的代码，未见新增权限风险。</td></tr></tbody></table></div></section><h2 class="section-title subsection-title">按文件的审查发现</h2><details class="action-group action-group-fix_now" open="open" style="margin-bottom:14px;border:1px solid #c53030;border-radius:8px;"><summary style="cursor:pointer;font-weight:700;font-size:15px;color:#c53030;padding:8px 12px;list-style:none;">&#128308; 立即修代码 &middot; 8 个问题</summary><div style="padding:0 12px 8px;"><div class="findings-list-wrap"><details class="file-group findings-file-group" open="open" id="fg-9da508bc40aa" data-file-path="tracking-api/src/main/java/io/speedx/trk/api/config/MultiDataSourceConfig.java" data-short-name="MultiDataSourceConfig.java" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">tracking-api/src/main/java/io/speedx/trk/api/config/MultiDataSourceConfig.java</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">1 Critical</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L66-82</span><span class="finding-cat">配置变更</span><span class="evidence-line-unverified-badge" style="color:#c62828;border:1px solid #c62828;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段附近 &#177;5 行内未找到 evidence_quote 摘抄的原文，行号未经核实，下方证据代码可能不是问题真正所在的位置，请人工核实">&#9888; 行号未验证</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>MultiDataSourceConfig.trkDataSource(...)</code> 仍然保留 <code>@Primary</code> 的基础设施 Bean 定义，但新增实现已不再直接返回 Spring Boot 自动装配期望的 <code>HikariDataSource</code>，而是把同一个 <code>trkDataSource</code> 包装成 <code>ShardingSphereDataSourceFactory.createDataSource(...)</code> 返回。</p><p>这样会让所有注入主 <code>DataSource</code> 的 DAO/JdbcTemplate/JPA 路径统一切换到新的分片代理数据源，属于高影响面的基础设施替换，但当前 diff 中看不到对连接池监控、只读属性、登录超时、异常语义和启动失败策略是否与原自动装配保持一致的校验或兜底。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>一旦 <code>ShardingSphereDataSourceFactory.createDataSource(...)</code> 的行为与原 <code>HikariDataSource</code> 不完全兼容，整个 <code>tracking-api</code> 的数据库访问都会在运行时一起受影响，可能表现为启动失败、连接属性失效、读写行为偏差或核心查询链路不可用，属于由配置层改动直接放大的服务可用性风险。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>将 <code>@Primary</code> 的 <code>trkDataSource</code> 改为显式受开关控制的双实现装配，并补齐与原 <code>HikariDataSource</code> 等价的能力验证；</p><p>至少在 <code>MultiDataSourceConfig</code> 中增加配置开关，允许快速回退到直接返回 <code>trkDataSource</code> 的旧实现。示例：</p><pre class="code-block"><code><span class="code-annotation">@Value</span>(<span class="code-string">"${tracking.sharding.enabled:false}"</span>)
+<span class="code-keyword">private</span> boolean shardingEnabled;
+
+<span class="code-annotation">@Primary</span>
+<span class="code-annotation">@Bean</span>(name = <span class="code-string">"trkDataSource"</span>)
+<span class="code-keyword">public</span> DataSource trkDataSource(<span class="code-annotation">@Qualifier</span>(<span class="code-string">"trkDataSourceProperties"</span>) DataSourceProperties dataSourceProperties) <span class="code-keyword">throws</span> SQLException {
+    HikariDataSource trkDataSource = dataSourceProperties.initializeDataSourceBuilder()
+            .type(HikariDataSource.<span class="code-keyword">class</span>)
+            .build();
+    <span class="code-comment">// ...保留现有 Hikari 配置</span>
+    <span class="code-keyword">if</span> (!shardingEnabled) {
+        <span class="code-keyword">return</span> trkDataSource;
+    }
+    Map&lt;String, DataSource&gt; dataSourceMap = <span class="code-keyword">new</span> HashMap&lt;&gt;();
+    dataSourceMap.put(<span class="code-string">"tracking_backend"</span>, trkDataSource);
+    dataSourceMap.put(<span class="code-string">"tracking_backend_ds_0"</span>, trkDataSource);
+    <span class="code-keyword">return</span> ShardingSphereDataSourceFactory.createDataSource(
+            dataSourceMap,
+            Collections.singleton(ShardingRuleFactory.createShardingRuleConfig()),
+            <span class="code-keyword">new</span> Properties());
+}</code></pre></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>在未开启分片配置和开启分片配置两种模式下分别启动 <code>tracking-api</code>，验证 <code>JdbcTemplate</code> 基础查询、JPA Repository 查询、连接池只读属性和超时配置都保持一致；</p><p>再模拟 <code>ShardingRuleFactory.createShardingRuleConfig()</code> 配置错误，确认可以通过开关回退而不是导致整个应用不可用。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">61</span>    }</span><span class="code-row"><span class="code-ln">62</span></span><span class="code-row"><span class="code-ln">63</span></span><span class="code-row"><span class="code-ln">64</span>    <span class="code-annotation">@Primary</span></span><span class="code-row"><span class="code-ln">65</span>    <span class="code-annotation">@Bean</span>(name = <span class="code-string">"trkDataSource"</span>)</span><span class="code-row code-row-target"><span class="code-ln">66</span>    <span class="code-keyword">public</span> DataSource trkDataSource(<span class="code-annotation">@Qualifier</span>(<span class="code-string">"trkDataSourceProperties"</span>) DataSourceProperties dataSourceProperties) <span class="code-keyword">throws</span> SQLException {</span><span class="code-row code-row-target"><span class="code-ln">67</span>        HikariDataSource trkDataSource = dataSourceProperties.initializeDataSourceBuilder().type(HikariDataSource.<span class="code-keyword">class</span>).build();</span><span class="code-row code-row-target"><span class="code-ln">68</span>        trkDataSource.setConnectionTimeout(connectionTimeout);</span><span class="code-row code-row-target"><span class="code-ln">69</span>        trkDataSource.setIdleTimeout(idleTimeout);</span><span class="code-row code-row-target"><span class="code-ln">70</span>        trkDataSource.setValidationTimeout(validationTimeout);</span><span class="code-row code-row-target"><span class="code-ln">71</span>        trkDataSource.setMaxLifetime(maxLifetime);</span><span class="code-row code-row-target"><span class="code-ln">72</span>        trkDataSource.setMaximumPoolSize(maxPoolSize);</span><span class="code-row code-row-target"><span class="code-ln">73</span>        trkDataSource.setMinimumIdle(minIdle);</span><span class="code-row code-row-target"><span class="code-ln">74</span>        trkDataSource.setConnectionTestQuery(connectionTestQuery);</span><span class="code-row code-row-target"><span class="code-ln">75</span>        trkDataSource.setLeakDetectionThreshold(leakDetectionThreshold);</span><span class="code-row code-row-target"><span class="code-ln">76</span>        Map&lt;String, DataSource&gt; dataSourceMap = <span class="code-keyword">new</span> HashMap&lt;&gt;();</span><span class="code-row code-row-target"><span class="code-ln">77</span>        dataSourceMap.put(<span class="code-string">"tracking_backend"</span>, trkDataSource);</span><span class="code-row code-row-target"><span class="code-ln">78</span>        dataSourceMap.put(<span class="code-string">"tracking_backend_ds_0"</span>, trkDataSource);</span><span class="code-row code-row-target"><span class="code-ln">79</span>        <span class="code-keyword">return</span> ShardingSphereDataSourceFactory.createDataSource(</span><span class="code-row code-row-target"><span class="code-ln">80</span>                dataSourceMap,</span><span class="code-row code-row-target"><span class="code-ln">81</span>                Collections.singleton(ShardingRuleFactory.createShardingRuleConfig()),</span><span class="code-row code-row-target"><span class="code-ln">82</span>                <span class="code-keyword">new</span> Properties());</span><span class="code-row"><span class="code-ln">83</span>    }</span><span class="code-row"><span class="code-ln">84</span></span><span class="code-row"><span class="code-ln">85</span><span class="code-comment">//    @Bean(name = "gegDataSourceProperties")</span></span><span class="code-row"><span class="code-ln">86</span><span class="code-comment">//    @ConfigurationProperties(prefix = "spring.datasource.geg")</span></span><span class="code-row"><span class="code-ln">87</span><span class="code-comment">//    public DataSourceProperties gegDataSourceProperties() {</span></span></code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-24edb7eb5ddf" data-file-path="tracking-service/src/main/java/io/speedx/trk/service/cmd/queryEvent/QueryEventCmdBridge.java" data-short-name="QueryEventCmdBridge.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">tracking-service/src/main/java/io/speedx/trk/service/cmd/queryEvent/QueryEventCmdBridge.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L57-69</span><span class="finding-cat finding-cat-requirement">需求矛盾</span><span class="evidence-line-unverified-badge" style="color:#c62828;border:1px solid #c62828;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段附近 &#177;5 行内未找到 evidence_quote 摘抄的原文，行号未经核实，下方证据代码可能不是问题真正所在的位置，请人工核实">&#9888; 行号未验证</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>设计文档 1. 背景中的 IVR 流程和 2.3 错误响应示例把 611/614 定义为顶层错误响应（<code>code</code> 为 611/614、<code>success</code> 为 false、<code>payload</code> 为 null）。</p><p>但 <code>QueryEventCmdBridge.toFuzzyQuery</code> 在未找到和多结果场景下返回的是 <code>TrackingRo</code>，由 <code>EventExternalController.fuzzyQueryTracking</code> 再统一包成 <code>ResponseObject.success(...)</code>；</p><p>对应测试 <code>EventExternalControllerFuzzyQueryTest</code> 也断言 <code>status().isOk()</code> 且 <code>$.success</code> 为 true，只把 611 放进 <code>payload.trackingNumbers[0].errorCode</code>。</p><p>这与需求定义的错误响应结构相反。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>Eton 若按需求文档读取顶层 <code>code/success</code> 来决定播报“未查询到您的包裹”或转人工，将无法识别 611/614，可能把错误结果当成功结果处理。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>将 <code>fuzzyQueryTracking</code> 的未找到/多结果分支改为返回需求文档定义的顶层错误响应：<code>code=611/614</code>、<code>success=false</code>、<code>payload=null</code>，不要把错误码塞进 <code>TrackingRo.trackingNumbers</code> 后再包成 <code>ResponseObject.success</code>。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>补充两类接口测试：第 1 个请求命中 0 条结果（代表未找到）；第 2 个请求命中多条结果（代表需转人工）。</p><p>分别验证 HTTP 200 下响应体顶层 <code>code</code> 为 611/614、<code>success</code> 为 false、<code>payload</code> 为 null，而不是 <code>success=true</code> 且错误码出现在 <code>payload.trackingNumbers[0]</code>。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">52</span>    <span class="code-keyword">private</span> <span class="code-keyword">final</span> EventCodeProperties eventCodeProperties;</span><span class="code-row"><span class="code-ln">53</span></span><span class="code-row"><span class="code-ln">54</span>    <span class="code-keyword">private</span> <span class="code-keyword">final</span> LabelSearchIndexService labelSearchIndexService;</span><span class="code-row"><span class="code-ln">55</span></span><span class="code-row"><span class="code-ln">56</span>    /**</span><span class="code-row code-row-target"><span class="code-ln">57</span>     * IVR fuzzy query: <span class="code-number">3</span>-level digit-based search → reuse existing query chain → Eton response.</span><span class="code-row code-row-target"><span class="code-ln">58</span>     */</span><span class="code-row code-row-target"><span class="code-ln">59</span>    <span class="code-keyword">public</span> TrackingRo&lt;TrackingItemV1Ro&gt;  toFuzzyQuery(String apiKey, FuzzyTrackingForm form) {</span><span class="code-row code-row-target"><span class="code-ln">60</span>        String inputNumber = form.getTrackingNumber();</span><span class="code-row code-row-target"><span class="code-ln">61</span>        String phoneLast4 = extractLast4(form.getRecipientPhone());</span><span class="code-row code-row-target"><span class="code-ln">62</span></span><span class="code-row code-row-target"><span class="code-ln">63</span>        <span class="code-comment">// 1. Fuzzy search via search index</span></span><span class="code-row code-row-target"><span class="code-ln">64</span>        List&lt;String&gt; trackingNos = labelSearchIndexService.searchTrackingNos(inputNumber, phoneLast4);</span><span class="code-row code-row-target"><span class="code-ln">65</span></span><span class="code-row code-row-target"><span class="code-ln">66</span>        <span class="code-keyword">if</span> (trackingNos.isEmpty()) {</span><span class="code-row code-row-target"><span class="code-ln">67</span>            <span class="code-keyword">return</span> TrackingRo.&lt;TrackingItemV1Ro&gt;builder().</span><span class="code-row code-row-target"><span class="code-ln">68</span>                    trackingNumbers(Collections.singletonList(TrackingItemV1Ro.builder()</span><span class="code-row code-row-target"><span class="code-ln">69</span>                            .errorCode(ResponseCode.LABEL_NOT_FOUND)</span><span class="code-row"><span class="code-ln">70</span>                            .errorMsg(<span class="code-string">"Label is not found"</span>).build()))</span><span class="code-row"><span class="code-ln">71</span>                    .build();</span><span class="code-row"><span class="code-ln">72</span>        }</span><span class="code-row"><span class="code-ln">73</span>        <span class="code-keyword">if</span> (trackingNos.size() &gt; <span class="code-number">1</span>) {</span><span class="code-row"><span class="code-ln">74</span>            <span class="code-keyword">return</span> TrackingRo.&lt;TrackingItemV1Ro&gt;builder().</span></code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-68bdc97abc64" data-file-path="tracking-service/src/main/java/io/speedx/trk/service/dao/LabelSearchIndexDao.java" data-short-name="LabelSearchIndexDao.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">tracking-service/src/main/java/io/speedx/trk/service/dao/LabelSearchIndexDao.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L32</span><span class="finding-cat">并发安全</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 TX-002 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 TX-002</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [TX-002] @Transactional未指定rollbackFor 命中了这行代码：<code>@Transactional</code>。这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「@Transactional未指定rollbackFor」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">27</span>    List&lt;String&gt; findTrackingNosByDigits(String digits);</span><span class="code-row"><span class="code-ln">28</span></span><span class="code-row"><span class="code-ln">29</span>    boolean existsByTrackingNo(String trackingNo);</span><span class="code-row"><span class="code-ln">30</span></span><span class="code-row"><span class="code-ln">31</span>    <span class="code-annotation">@Modifying</span></span><span class="code-row code-row-target"><span class="code-ln">32</span>    <span class="code-annotation">@Transactional</span></span><span class="code-row"><span class="code-ln">33</span>    <span class="code-annotation">@Query</span>(value = <span class="code-string">"DELETE FROM tb_label_search_index WHERE created_at &lt; ?1 LIMIT ?2"</span>, nativeQuery = <span class="code-keyword">true</span>)</span><span class="code-row"><span class="code-ln">34</span>    int deleteByCreatedAtBeforeLimit(Date expireDate, int limit);</span><span class="code-row"><span class="code-ln">35</span>}</span></code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-86e3f654e368" data-file-path="tracking-service/src/main/java/io/speedx/trk/service/service/impl/LabelSearchIndexServiceImpl.java" data-short-name="LabelSearchIndexServiceImpl.java" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">tracking-service/src/main/java/io/speedx/trk/service/service/impl/LabelSearchIndexServiceImpl.java</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">1 Critical</span> <span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">2 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L49-52</span><span class="finding-cat">安全风险</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>LabelSearchIndexServiceImpl.searchTrackingNos</code> 在 <code>phoneLast4</code> 为空时直接走 <code>labelSearchIndexDao.findTrackingNosByDigits(digits)</code>，把仅凭 <code>digits</code> 的模糊检索作为默认路径开放。</p><p><code>QueryEventCmdBridge.toFuzzyQuery</code> 又会把该结果继续用于轨迹查询，因此新增接口实际上允许只输入一段数字就尝试解析运单，而不是强制要求第二因子 <code>recipientPhone</code>。</p><p>这会显著降低查询门槛，形成可枚举的运单探测面。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>攻击者只要持有一个有效 <code>api-key</code>，就可以批量构造常见数字片段调用 <code>GET /v2/fuzzy-query</code>，通过“无结果 / 多结果 / 单结果”三种响应不断缩小范围，最终定位真实 <code>trackingNo</code> 并读取轨迹信息；</p><p>即使没有手机号，也能进行高频枚举，增加敏感物流数据被探测的风险。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>修改 <code>LabelSearchIndexServiceImpl.searchTrackingNos</code> 与上层 <code>QueryEventCmdBridge.toFuzzyQuery</code> 的契约，禁止 <code>phoneLast4</code> 为空时执行 <code>findTrackingNosByDigits(digits)</code>；</p><p>至少要求 <code>digits</code> 与 <code>phoneLast4</code> 同时存在且满足最小长度，再执行联合查询。若必须保留 digits-only 能力，应增加严格限流、最小长度和调用方白名单。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>使用任意有效 <code>api-key</code>，连续调用 <code>GET /v2/fuzzy-query</code>，仅传 <code>trackingNumber</code> 为常见数字片段且不传 <code>recipientPhone</code>。</p><p>验证接口是否会返回 <code>MULTIPLE_RESULTS</code>、单条命中或进一步可查询的轨迹；预期安全实现应拒绝缺少 <code>recipientPhone</code> 的请求。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">44</span>        <span class="code-keyword">return</span> count;</span><span class="code-row"><span class="code-ln">45</span>    }</span><span class="code-row"><span class="code-ln">46</span></span><span class="code-row"><span class="code-ln">47</span>    <span class="code-annotation">@Override</span></span><span class="code-row"><span class="code-ln">48</span>    <span class="code-keyword">public</span> List&lt;String&gt; searchTrackingNos(String digits, String phoneLast4) {</span><span class="code-row code-row-target"><span class="code-ln">49</span>        <span class="code-keyword">if</span> (phoneLast4 != <span class="code-keyword">null</span> &amp;&amp; !phoneLast4.isEmpty()) {</span><span class="code-row code-row-target"><span class="code-ln">50</span>            <span class="code-keyword">return</span> labelSearchIndexDao.findTrackingNosByDigitsAndPhoneLast4(digits, phoneLast4);</span><span class="code-row code-row-target"><span class="code-ln">51</span>        }</span><span class="code-row code-row-target"><span class="code-ln">52</span>        <span class="code-keyword">return</span> labelSearchIndexDao.findTrackingNosByDigits(digits);</span><span class="code-row"><span class="code-ln">53</span>    }</span><span class="code-row"><span class="code-ln">54</span></span><span class="code-row"><span class="code-ln">55</span>    <span class="code-keyword">private</span> LabelSearchIndex buildIndex(LabelSummary labelSummary) {</span><span class="code-row"><span class="code-ln">56</span>        LabelSearchIndex index = <span class="code-keyword">new</span> LabelSearchIndex();</span><span class="code-row"><span class="code-ln">57</span>        index.setTrackingNo(labelSummary.getTrackingNo());</span></code></pre></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L45-48</span><span class="finding-cat finding-cat-requirement">需求矛盾</span><span class="evidence-line-corrected-badge" style="color:#1565c0;border:1px solid #1565c0;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段与 evidence_quote 实际所在行不一致，已按 evidence_quote 自动纠正高亮位置">&#128260; 行号已纠正</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>需求原文“业务流程”明确要求支持“单号中最少9位纯数字的模糊查询”，设计文档 2.1 请求也写明 <code>trackingNumber</code> 为“至少9位”。</p><p>但 <code>QueryEventCmdBridge.toFuzzyQuery</code> 直接把 <code>form.getTrackingNumber()</code> 传给 <code>LabelSearchIndexService.searchTrackingNos</code>，而 <code>LabelSearchIndexServiceImpl.searchTrackingNos</code> 仅按 <code>tracking_no_digits = ?1</code> 精确匹配；</p><p>同时建索引时 <code>buildIndex</code> 把面单号转成纯数字全量串 <code>labelSummary.getTrackingNo().replaceAll(&quot;[^0-9]&quot;, &quot;&quot;)</code> 存入 <code>trackingNoDigits</code>。</p><p>这意味着查询入参既没有被提取纯数字，也没有做“至少9位”的子串/模糊匹配，实际只支持“输入的字符串恰好等于整条 tracking_no_digits”时命中。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>当用户按需求只输入运单号中的 9 位或更多数字片段（尤其是原始运单号含字母前缀如 SPX）时，接口会查不到结果，无法实现 IVR 模糊查件主流程。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>将 <code>QueryEventCmdBridge.toFuzzyQuery</code> 和 <code>LabelSearchIndexService.searchTrackingNos</code> 改为按需求先提取 <code>trackingNumber</code> 中的纯数字并校验至少 9 位，再实现对“运单号中数字片段”的模糊匹配，而不是对完整 <code>tracking_no_digits</code> 做等值查询。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>补充一组对比测试：第 1 条 <code>LabelSummary</code> 的 <code>trackingNo</code> 为 <code>SPX1234567890</code>（代表含字母前缀的真实运单号）；</p><p>第 2 次请求仅传 <code>trackingNumber=123456789</code>（代表只输入其中 9 位数字片段）；第 3 次请求传 <code>trackingNumber=SPX1234567890</code>（代表输入完整原始运单号）。</p><p>验证前两种都能按需求进入模糊查询命中，而不是只有完整纯数字串等值匹配才返回结果。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">47</span>    <span class="code-annotation">@Override</span></span><span class="code-row"><span class="code-ln">48</span>    <span class="code-keyword">public</span> List&lt;String&gt; searchTrackingNos(String digits, String phoneLast4) {</span><span class="code-row"><span class="code-ln">49</span>        <span class="code-keyword">if</span> (phoneLast4 != <span class="code-keyword">null</span> &amp;&amp; !phoneLast4.isEmpty()) {</span><span class="code-row"><span class="code-ln">50</span>            <span class="code-keyword">return</span> labelSearchIndexDao.findTrackingNosByDigitsAndPhoneLast4(digits, phoneLast4);</span><span class="code-row"><span class="code-ln">51</span>        }</span><span class="code-row code-row-target"><span class="code-ln">52</span>        <span class="code-keyword">return</span> labelSearchIndexDao.findTrackingNosByDigits(digits);</span><span class="code-row code-row-target"><span class="code-ln">53</span>    }</span><span class="code-row code-row-target"><span class="code-ln">54</span></span><span class="code-row code-row-target"><span class="code-ln">55</span>    <span class="code-keyword">private</span> LabelSearchIndex buildIndex(LabelSummary labelSummary) {</span><span class="code-row"><span class="code-ln">56</span>        LabelSearchIndex index = <span class="code-keyword">new</span> LabelSearchIndex();</span><span class="code-row"><span class="code-ln">57</span>        index.setTrackingNo(labelSummary.getTrackingNo());</span><span class="code-row"><span class="code-ln">58</span>        index.setTrackingNoDigits(labelSummary.getTrackingNo().replaceAll(<span class="code-string">"[^0-9]"</span>, <span class="code-string">""</span>));</span><span class="code-row"><span class="code-ln">59</span>        index.setRecipientPhoneLast4(extractPhoneLast4(labelSummary.getRecipientPhone()));</span><span class="code-row"><span class="code-ln">60</span>        <span class="code-keyword">return</span> index;</span></code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-3d2c61da9030" data-file-path="trk-common/src/main/java/io/speedx/trk/common/form/FuzzyTrackingForm.java" data-short-name="FuzzyTrackingForm.java" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">trk-common/src/main/java/io/speedx/trk/common/form/FuzzyTrackingForm.java</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">1 Critical</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L12-16</span><span class="finding-cat finding-cat-requirement">需求未实现</span></div><div class="finding-feature-highlight" style="background:#fff3e0;border-left:4px solid #e65100;padding:12px 14px;margin:10px 0;border-radius:0 4px 4px 0;"><div class="detail-label" style="color:#e65100;font-weight:600;margin-bottom:4px;">未实现的功能</div><div style="font-size:15px;font-weight:600;">对 `trackingNumber` 至少 9 位、`recipientPhone` 提供时至少 4 位的参数校验及 601 返回</div></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>设计文档 2.1 请求和 2.3 错误响应示例要求该接口对 <code>trackingNumber</code> 做“至少9位”校验、对 <code>recipientPhone</code> 做“提供时至少4位”校验，校验失败返回 601。</p><p>当前新增的 <code>FuzzyTrackingForm</code> 只有 Swagger 注解，没有任何 Bean Validation 注解或控制器显式校验逻辑；</p><p><code>EventExternalController.fuzzyQueryTracking</code> 也未使用 <code>@Valid</code>。从当前材料看不到 601 参数错误在该新接口上的实现证据。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>当 Eton 传入少于 9 位的 <code>trackingNumber</code> 或少于 4 位的 <code>recipientPhone</code> 时，请求不会按需求返回参数错误，而会继续进入查询链路，可能得到 611/614 或其他非预期结果，影响 IVR 重试分支。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>在 <code>FuzzyTrackingForm</code> 上为 <code>trackingNumber</code> 和 <code>recipientPhone</code> 增加明确的参数校验，并在 <code>EventExternalController.fuzzyQueryTracking</code> 启用校验，使不满足最小长度的请求返回需求定义的 601。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>补充三类参数校验测试：第 1 个请求传 <code>trackingNumber=12345678</code>（代表不足 9 位）；</p><p>第 2 个请求传 <code>trackingNumber=123456789</code> 且 <code>recipientPhone=123</code>（代表手机号后 4 位不足）；</p><p>第 3 个请求传合法的 <code>trackingNumber=123456789</code> 且不传 <code>recipientPhone</code>（代表仅单号查询）。验证前两者返回 601，第三者正常进入查询。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln"> 7</span></span><span class="code-row"><span class="code-ln"> 8</span><span class="code-annotation">@Getter</span></span><span class="code-row"><span class="code-ln"> 9</span><span class="code-annotation">@Setter</span></span><span class="code-row"><span class="code-ln">10</span><span class="code-annotation">@ApiModel</span>(value = <span class="code-string">"Fuzzy Query Tracking Form"</span>, description = <span class="code-string">"Query parameters for Eton IVR tracking lookup"</span>)</span><span class="code-row"><span class="code-ln">11</span><span class="code-keyword">public</span> <span class="code-keyword">class</span> FuzzyTrackingForm {</span><span class="code-row code-row-target"><span class="code-ln">12</span></span><span class="code-row code-row-target"><span class="code-ln">13</span>    <span class="code-annotation">@ApiModelProperty</span>(value = <span class="code-string">"Tracking number, at least 9 characters"</span>, required = <span class="code-keyword">true</span>, example = <span class="code-string">"SPX1234567890"</span>)</span><span class="code-row code-row-target"><span class="code-ln">14</span>    <span class="code-keyword">private</span> String trackingNumber;</span><span class="code-row code-row-target"><span class="code-ln">15</span></span><span class="code-row code-row-target"><span class="code-ln">16</span>    <span class="code-annotation">@ApiModelProperty</span>(value = <span class="code-string">"Recipient phone number (last 4 digits suffice), at least 4 characters if provided"</span>, required = <span class="code-keyword">false</span>, example = <span class="code-string">"1234"</span>)</span><span class="code-row"><span class="code-ln">17</span>    <span class="code-keyword">private</span> String recipientPhone;</span><span class="code-row"><span class="code-ln">18</span>}</span></code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-84cc42bd5105" data-file-path="trk-job/src/main/java/io/speedx/trk/job/config/MultiDataSourceConfig.java" data-short-name="MultiDataSourceConfig.java" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">trk-job/src/main/java/io/speedx/trk/job/config/MultiDataSourceConfig.java</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">1 Critical</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L65-81</span><span class="finding-cat">配置变更</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>MultiDataSourceConfig.trkDataSource(...)</code> 把原本直接返回的 <code>HikariDataSource</code> 改成了 <code>@Primary</code> 的 <code>ShardingSphereDataSourceFactory.createDataSource(...)</code>，但新增代码只向 <code>dataSourceMap</code> 注册了同一个 <code>trkDataSource</code> 两次，且传入的是空的 <code>new Properties()</code>，没有看到任何 SQL 展示、执行器限流、元数据校验或灰度开关配置。</p><p>这个改动会让 <code>trk-job</code> 中所有默认注入 <code>DataSource</code> 的任务统一切换到分片路由层，属于基础设施级别的高风险配置替换。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>一旦 <code>ShardingRuleFactory.createShardingRuleConfig()</code> 的路由规则与 <code>trk-job</code> 现有 SQL 不完全兼容，<code>BackfillSearchIndexJobHandler</code>、<code>CleanSearchIndexJobHandler</code> 等后台任务会在运行时把查询/清理流量导向错误逻辑表或直接执行失败，造成批处理任务不可用，严重时会引发错误清理、漏清理或全链路作业中断；</p><p>由于这是 <code>@Primary</code> Bean，影响面是整个模块而不是单个调用点。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>把 <code>trkDataSource</code> 保持为原始 <code>HikariDataSource</code>，新增一个显式命名的分片 <code>DataSource</code> 供确实需要分片路由的 DAO/任务单独注入；</p><p>如果必须替换默认 <code>DataSource</code>，至少补齐 <code>ShardingSphere</code> 的显式属性配置、灰度开关和启动自检，并为所有使用该 <code>DataSource</code> 的 Job 增加回归验证。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>在 <code>trk-job</code> 启动后分别执行依赖默认 <code>DataSource</code> 的回填任务和清理任务，验证它们访问的真实物理表是否与改造前一致；</p><p>再构造一个不满足 <code>ShardingRuleFactory.createShardingRuleConfig()</code> 路由条件的查询，确认不会因为默认 <code>DataSource</code> 被替换而在生产任务中抛出路由异常。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">60</span>        <span class="code-keyword">return</span> <span class="code-keyword">new</span> DataSourceProperties();</span><span class="code-row"><span class="code-ln">61</span>    }</span><span class="code-row"><span class="code-ln">62</span></span><span class="code-row"><span class="code-ln">63</span>    <span class="code-annotation">@Primary</span></span><span class="code-row"><span class="code-ln">64</span>    <span class="code-annotation">@Bean</span>(name = <span class="code-string">"trkDataSource"</span>)</span><span class="code-row code-row-target"><span class="code-ln">65</span>    <span class="code-keyword">public</span> DataSource trkDataSource(<span class="code-annotation">@Qualifier</span>(<span class="code-string">"trkDataSourceProperties"</span>) DataSourceProperties dataSourceProperties) <span class="code-keyword">throws</span> SQLException {</span><span class="code-row code-row-target"><span class="code-ln">66</span>        HikariDataSource trkDataSource = dataSourceProperties.initializeDataSourceBuilder().type(HikariDataSource.<span class="code-keyword">class</span>).build();</span><span class="code-row code-row-target"><span class="code-ln">67</span>        trkDataSource.setConnectionTimeout(connectionTimeout);</span><span class="code-row code-row-target"><span class="code-ln">68</span>        trkDataSource.setIdleTimeout(idleTimeout);</span><span class="code-row code-row-target"><span class="code-ln">69</span>        trkDataSource.setValidationTimeout(validationTimeout);</span><span class="code-row code-row-target"><span class="code-ln">70</span>        trkDataSource.setMaxLifetime(maxLifetime);</span><span class="code-row code-row-target"><span class="code-ln">71</span>        trkDataSource.setMaximumPoolSize(maxPoolSize);</span><span class="code-row code-row-target"><span class="code-ln">72</span>        trkDataSource.setMinimumIdle(minIdle);</span><span class="code-row code-row-target"><span class="code-ln">73</span>        trkDataSource.setConnectionTestQuery(connectionTestQuery);</span><span class="code-row code-row-target"><span class="code-ln">74</span>        trkDataSource.setLeakDetectionThreshold(leakDetectionThreshold);</span><span class="code-row code-row-target"><span class="code-ln">75</span>        Map&lt;String, DataSource&gt; dataSourceMap = <span class="code-keyword">new</span> HashMap&lt;&gt;();</span><span class="code-row code-row-target"><span class="code-ln">76</span>        dataSourceMap.put(<span class="code-string">"tracking_backend"</span>, trkDataSource);</span><span class="code-row code-row-target"><span class="code-ln">77</span>        dataSourceMap.put(<span class="code-string">"tracking_backend_ds_0"</span>, trkDataSource);</span><span class="code-row code-row-target"><span class="code-ln">78</span>        <span class="code-keyword">return</span> ShardingSphereDataSourceFactory.createDataSource(</span><span class="code-row code-row-target"><span class="code-ln">79</span>                dataSourceMap,</span><span class="code-row code-row-target"><span class="code-ln">80</span>                Collections.singleton(ShardingRuleFactory.createShardingRuleConfig()),</span><span class="code-row code-row-target"><span class="code-ln">81</span>                <span class="code-keyword">new</span> Properties());</span><span class="code-row"><span class="code-ln">82</span>    }</span><span class="code-row"><span class="code-ln">83</span></span><span class="code-row"><span class="code-ln">84</span><span class="code-comment">//    @Bean(name = "gegDataSourceProperties")</span></span><span class="code-row"><span class="code-ln">85</span><span class="code-comment">//    @ConfigurationProperties(prefix = "spring.datasource.geg")</span></span><span class="code-row"><span class="code-ln">86</span><span class="code-comment">//    public DataSourceProperties gegDataSourceProperties() {</span></span></code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-1f771e279e98" data-file-path="trk-job/src/main/java/io/speedx/trk/job/jobhandler/CleanSearchIndexJobHandler.java" data-short-name="CleanSearchIndexJobHandler.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">trk-job/src/main/java/io/speedx/trk/job/jobhandler/CleanSearchIndexJobHandler.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L37-38</span><span class="finding-cat">异常处理</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>CleanSearchIndexJobHandler.execute()</code> 没有对 <code>labelSearchIndexDao.deleteByCreatedAtBeforeLimit(expireDate, DELETE_BATCH_SIZE)</code> 的异常做任何处理，也没有在失败时显式调用 <code>XxlJobHelper.handleFail(...)</code>。</p><p>一旦删除过程中抛出异常，任务状态完全依赖框架默认行为，且 <code>totalDeleted</code> 无法反映已删与未删的边界。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>当分片删除执行到中途失败时，<code>tb_label_search_index</code> 可能处于部分分片已清理、部分分片未清理的状态；如果任务平台或调用方未正确感知失败，过期索引会持续残留，影响数据保留策略执行与后续容量控制。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>在 <code>CleanSearchIndexJobHandler.execute()</code> 外层增加 <code>try/catch</code>，捕获 <code>deleteByCreatedAtBeforeLimit</code> 的异常后记录 <code>expireDate</code>、<code>totalDeleted</code> 等上下文，并调用 <code>XxlJobHelper.handleFail(...)</code> 或重新抛出异常；</p><p>如需支持断点续跑，应额外记录已完成批次。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>模拟 <code>labelSearchIndexDao.deleteByCreatedAtBeforeLimit</code> 第一次成功返回正数、第二次抛出异常；</p><p>执行 <code>CleanSearchIndexJobHandler.execute()</code> 后，验证任务状态为失败而不是成功，并且日志中包含 <code>expireDate</code> 与 <code>totalDeleted</code>。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">32</span>        Date expireDate = DateUtil.offsetDay(<span class="code-keyword">new</span> Date(), -retentionDays);</span><span class="code-row"><span class="code-ln">33</span>        long totalDeleted = <span class="code-number">0</span>;</span><span class="code-row"><span class="code-ln">34</span>        int deleted;</span><span class="code-row"><span class="code-ln">35</span></span><span class="code-row"><span class="code-ln">36</span>        <span class="code-comment">// Each call broadcasts DELETE to all 32 shards; loop until no more expired rows</span></span><span class="code-row code-row-target"><span class="code-ln">37</span>        <span class="code-keyword">do</span> {</span><span class="code-row code-row-target"><span class="code-ln">38</span>            deleted = labelSearchIndexDao.deleteByCreatedAtBeforeLimit(expireDate, DELETE_BATCH_SIZE);</span><span class="code-row"><span class="code-ln">39</span>            totalDeleted += deleted;</span><span class="code-row"><span class="code-ln">40</span>        } <span class="code-keyword">while</span> (deleted &gt; <span class="code-number">0</span>);</span><span class="code-row"><span class="code-ln">41</span></span><span class="code-row"><span class="code-ln">42</span>        XxlJobHelper.log(<span class="code-string">"Clean search index completed. Retention: {} days, deleted: {} records"</span>, retentionDays, totalDeleted);</span><span class="code-row"><span class="code-ln">43</span>        <span class="code-keyword">return</span> XxlJobHelper.handleSuccess();</span></code></pre></details></div></div></details></div></div></details><details class="action-group action-group-pm_decision" style="margin-bottom:14px;border:1px solid #b7791f;border-radius:8px;"><summary style="cursor:pointer;font-weight:700;font-size:15px;color:#b7791f;padding:8px 12px;list-style:none;">&#128993; 待确认 / 需人工拍板 &middot; 4 个问题</summary><div style="padding:0 12px 8px;"><div class="findings-list-wrap"><details class="file-group findings-file-group" open="open" id="fg-365d099448d0" data-file-path="tracking-api/src/main/java/io/speedx/trk/api/controller/external/EventExternalController.java" data-short-name="EventExternalController.java" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">tracking-api/src/main/java/io/speedx/trk/api/controller/external/EventExternalController.java</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">1 Critical</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L135-139</span><span class="finding-cat">权限与访问控制</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>EventExternalController.fuzzyQueryTracking</code> 新增了对外 <code>GET /v2/fuzzy-query</code> 入口，但变更行里只有 <code>@RequestHeader(name = &quot;api-key&quot;) String apiKey</code> 取头并直接调用 <code>queryEventCmdBridge.toFuzzyQuery(apiKey, form)</code>，没有在该入口处看到任何 <code>@PreAuthorize</code>、<code>@Secured</code>、<code>@RolesAllowed</code>、数据范围过滤或对 <code>FuzzyTrackingForm</code> 中查询对象归属的校验。</p><p>结合 <code>QueryEventCmdBridge.toFuzzyQuery</code> 的新增逻辑，它会先按 <code>trackingNumber</code>/<code>recipientPhone</code> 做模糊命中，再复用 <code>toV2</code> 返回轨迹数据，这意味着该新入口把“模糊定位运单”能力直接暴露给持有任意有效 <code>api-key</code> 的调用方。</p><pre class="code-block"><code><span class="code-annotation">@GetMapping</span>(<span class="code-string">"/v2/fuzzy-query"</span>)
+<span class="code-keyword">public</span> ResponseObject&lt;TrackingRo&lt;TrackingItemV1Ro&gt;&gt;  fuzzyQueryTracking(
+        <span class="code-annotation">@ApiParam</span>(value = <span class="code-string">"API Key"</span>, required = <span class="code-keyword">true</span>) <span class="code-annotation">@RequestHeader</span>(name = <span class="code-string">"api-key"</span>) String apiKey,
+        FuzzyTrackingForm form) {
+    <span class="code-keyword">return</span> ResponseObject.success(queryEventCmdBridge.toFuzzyQuery(apiKey, form));
+}</code></pre></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>如果不同 <code>api-key</code> 之间本应存在租户/客户数据隔离，仅凭数字片段和手机号后四位即可尝试解析出真实 <code>trackingNo</code> 并继续查询轨迹，会把原本需要精确 <code>trackingNo</code> 的接口降级为可枚举查询入口，导致跨租户运单存在被探测和读取的风险。</p><p>由于当前上下文未提供 role_data，受影响角色与期望数据范围无法与文档对齐，需人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>在 <code>EventExternalController.fuzzyQueryTracking</code> 或 <code>QueryEventCmdBridge.toFuzzyQuery</code> 中补齐与 <code>apiKey</code> 绑定的资源归属校验：先通过 <code>apiKey</code> 解析调用方身份，再限制 <code>labelSearchIndexService.searchTrackingNos(...)</code> 只能在该调用方可见的数据范围内检索；</p><p>同时为该入口增加显式鉴权注解或统一鉴权拦截。若业务上仅允许特定 provider 使用模糊查询，应在入口直接拒绝其他 <code>api-key</code>。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>准备两个不同 provider 的运单数据，确保它们的 <code>tracking_no_digits</code> 或 <code>recipientPhoneLast4</code> 可被同一组输入命中。</p><p>使用 provider A 的 <code>api-key</code> 调用 <code>GET /v2/fuzzy-query</code>，传入能命中 provider B 运单的 <code>trackingNumber</code> 和 <code>recipientPhone</code>；</p><p>预期应返回无权限或空结果，当前实现若返回 provider B 的轨迹即证明存在越权读取。</p></div></div></div></div></div></details><details class="file-group findings-file-group" open="open" id="fg-24edb7eb5ddf" data-file-path="tracking-service/src/main/java/io/speedx/trk/service/cmd/queryEvent/QueryEventCmdBridge.java" data-short-name="QueryEventCmdBridge.java" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">tracking-service/src/main/java/io/speedx/trk/service/cmd/queryEvent/QueryEventCmdBridge.java</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">1 Critical</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L64</span><span class="finding-cat">权限与访问控制</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>QueryEventCmdBridge.toFuzzyQuery(String apiKey, FuzzyTrackingForm form)</code> 在 <code>GET /event/external/v2/fuzzy-query</code> 中，先根据 <code>form.getTrackingNumber()</code> 和可选的 <code>form.getRecipientPhone()</code> 调用 <code>labelSearchIndexService.searchTrackingNos(inputNumber, phoneLast4)</code> 解析出真实 <code>trackingNo</code>，随后直接复用 <code>toV2(Collections.singletonList(resolvedTrackingNo), apiKey)</code> 返回轨迹数据。</p><p>新增逻辑里没有看到任何把 <code>resolvedTrackingNo</code> 与 <code>apiKey</code> 对应的 <code>Provider</code>、<code>orgId</code>、<code>providerCode</code> 或资源归属做绑定校验的代码，等于把“知道运单号数字片段/手机号后四位”变成了新的查询凭据。</p><pre class="code-block"><code>List&lt;String&gt; trackingNos = labelSearchIndexService.searchTrackingNos(inputNumber, phoneLast4);</code></pre></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>只要调用方持有任意有效 <code>api-key</code>，并猜中或撞中某个运单的数字片段，甚至在未提供 <code>recipientPhone</code> 的情况下，仅凭数字片段就可能解析出他人 <code>trackingNo</code> 并读取最后轨迹事件与 TTS 信息，形成跨客户数据越权读取；</p><p>当数字片段唯一时，这个接口会比原始精确单号查询更容易被枚举利用。</p><p><strong>⚠️ 需求核对提示：</strong> 该 finding 指出的具体文案/取值（<code>GET /event/external/v2/fuzzy-query</code>）已逐字出现在本次需求原文中，可能是需求明确要求的行为，而非开发自行引入的缺陷。</p><p>是否需要调整须与需求方确认，不建议直接按「立即修代码」处理。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>在 <code>QueryEventCmdBridge.toFuzzyQuery(String apiKey, FuzzyTrackingForm form)</code> 中，在 <code>labelSearchIndexService.searchTrackingNos(inputNumber, phoneLast4)</code> 之后增加基于 <code>apiKey</code> 的资源归属校验，确保 <code>resolvedTrackingNo</code> 属于该 <code>apiKey</code> 可访问的数据范围；</p><p>如果现有 <code>toV2</code> 已有 provider 级校验，也应在模糊解析阶段把查询条件收敛到该 provider 可见范围内，而不是先全局解析再查询。</p><p>至少应要求 <code>recipientPhone</code> 为必填并与索引命中记录同时匹配，避免仅凭数字片段命中。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>准备两个不同客户可访问范围内外的运单：一个运单的 <code>trackingNo</code> 数字片段与另一个客户的查询输入唯一匹配。</p><p>使用仅对第一个客户有效的 <code>api-key</code> 调用 <code>GET /event/external/v2/fuzzy-query</code>，只传该数字片段或传入可撞中的 <code>recipientPhone</code> 后四位，验证当前代码是否返回第二个客户运单的轨迹；</p><p>修复后应返回未授权或未找到。</p></div></div></div></div></div></details><details class="file-group findings-file-group" open="open" id="fg-86e3f654e368" data-file-path="tracking-service/src/main/java/io/speedx/trk/service/service/impl/LabelSearchIndexServiceImpl.java" data-short-name="LabelSearchIndexServiceImpl.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">tracking-service/src/main/java/io/speedx/trk/service/service/impl/LabelSearchIndexServiceImpl.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L23-26</span><span class="finding-cat">异常处理</span><span class="evidence-line-unverified-badge" style="color:#c62828;border:1px solid #c62828;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段附近 &#177;5 行内未找到 evidence_quote 摘抄的原文，行号未经核实，下方证据代码可能不是问题真正所在的位置，请人工核实">&#9888; 行号未验证</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>LabelSearchIndexServiceImpl.saveSearchIndex(LabelSummary labelSummary)</code> 在新增索引写入时捕获了宽泛的 <code>Exception</code>，仅记录 <code>warn</code> 日志后继续返回，未向上抛出，也没有补偿逻辑。</p><p>由于该方法被 <code>CreateLabelCmd.save()</code> 和 <code>LabelSummaryServiceImpl.insert(PushLabelForm pushLabelForm)</code> 在主流程中调用，这会把索引写入失败伪装成成功。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>当 <code>labelSearchIndexDao.save(buildIndex(labelSummary))</code> 因分片配置、唯一约束或数据库异常失败时，标签主数据已经提交，但 <code>tb_label_search_index</code> 缺失对应记录，后续 <code>GET /v2/fuzzy-query</code> 将无法检索到该运单，形成静默的数据不一致；</p><p>调用方和监控都难以及时发现。</p><p><strong>⚠️ 需求核对提示：</strong> 该 finding 指出的具体文案/取值（<code>tb_label_search_index</code>）已逐字出现在本次需求原文中，可能是需求明确要求的行为，而非开发自行引入的缺陷。</p><p>是否需要调整须与需求方确认，不建议直接按「立即修代码」处理。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>将 <code>LabelSearchIndexServiceImpl.saveSearchIndex(LabelSummary labelSummary)</code> 改为对可预期的幂等异常单独处理，其余异常直接上抛，让外围事务按失败回滚；</p><p>如果业务上必须允许索引异步失败，也应显式落本地补偿任务而不是只打日志。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>构造一个 <code>LabelSummary</code>，让 <code>labelSearchIndexDao.save(buildIndex(labelSummary))</code> 抛出数据库异常；</p><p>调用 <code>CreateLabelCmd.save()</code> 或 <code>LabelSummaryServiceImpl.insert(PushLabelForm pushLabelForm)</code>。</p><p>预期应整体失败并回滚，或至少产生可追踪的补偿任务；当前实现会成功保存 <code>LabelSummary</code>，但模糊查询索引缺失。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">18</span>    <span class="code-annotation">@Autowired</span></span><span class="code-row"><span class="code-ln">19</span>    <span class="code-keyword">private</span> LabelSearchIndexDao labelSearchIndexDao;</span><span class="code-row"><span class="code-ln">20</span></span><span class="code-row"><span class="code-ln">21</span>    <span class="code-annotation">@Override</span></span><span class="code-row"><span class="code-ln">22</span>    <span class="code-keyword">public</span> <span class="code-keyword">void</span> saveSearchIndex(LabelSummary labelSummary) {</span><span class="code-row code-row-target"><span class="code-ln">23</span>        <span class="code-keyword">try</span> {</span><span class="code-row code-row-target"><span class="code-ln">24</span>            labelSearchIndexDao.save(buildIndex(labelSummary));</span><span class="code-row code-row-target"><span class="code-ln">25</span>        } <span class="code-keyword">catch</span> (Exception e) {</span><span class="code-row code-row-target"><span class="code-ln">26</span>            log.warn(<span class="code-string">"Failed to save search index for {}"</span>, labelSummary.getTrackingNo(), e);</span><span class="code-row"><span class="code-ln">27</span>        }</span><span class="code-row"><span class="code-ln">28</span>    }</span><span class="code-row"><span class="code-ln">29</span></span><span class="code-row"><span class="code-ln">30</span>    <span class="code-annotation">@Override</span></span><span class="code-row"><span class="code-ln">31</span>    <span class="code-keyword">public</span> int saveSearchIndexBatch(List&lt;LabelSummary&gt; labelSummaries) {</span></code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-27fbfb507eac" data-file-path="trk-job/src/main/java/io/speedx/trk/job/jobhandler/BackfillSearchIndexJobHandler.java" data-short-name="BackfillSearchIndexJobHandler.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">trk-job/src/main/java/io/speedx/trk/job/jobhandler/BackfillSearchIndexJobHandler.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L42-45</span><span class="finding-cat">异常处理</span><span class="evidence-line-corrected-badge" style="color:#1565c0;border:1px solid #1565c0;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段与 evidence_quote 实际所在行不一致，已按 evidence_quote 自动纠正高亮位置">&#128260; 行号已纠正</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>BackfillSearchIndexJobHandler.execute()</code> 在批处理循环里用 <code>catch (Exception e)</code> 吞掉了 <code>labelSearchIndexService.saveSearchIndex</code> 过程中整批数据的异常，只记录日志后继续翻页，最后仍会执行 <code>XxlJobHelper.handleSuccess()</code>。</p><p>这使得 <code>backfillSearchIndexJob</code> 的调用方无法从任务结果判断是否有页面回填失败。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>当某一页出现数据库异常、分片路由异常或脏数据导致的运行时异常时，该页 <code>pageResult.getContent()</code> 中尚未处理完成的历史数据会被静默跳过，任务平台看到的是成功状态，运维不会收到失败信号，最终造成 <code>tb_label_search_index</code> 数据长期不完整，影响后续依赖搜索索引的数据查询与审计。</p><p><strong>⚠️ 需求核对提示：</strong> 该 finding 指出的具体文案/取值（<code>tb_label_search_index</code>）已逐字出现在本次需求原文中，可能是需求明确要求的行为，而非开发自行引入的缺陷。</p><p>是否需要调整须与需求方确认，不建议直接按「立即修代码」处理。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>将 <code>BackfillSearchIndexJobHandler.execute()</code> 改为累计失败页/失败记录，并在存在任何失败时调用 <code>XxlJobHelper.handleFail(...)</code> 或直接重新抛出异常终止任务；</p><p>至少不要在有失败时继续返回成功。若希望容忍单条失败，应在 <code>forEach</code> 内按记录粒度捕获并统计失败数，任务结束时根据失败数决定成功或失败。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>构造一页 <code>pageResult.getContent()</code> 中包含多条 <code>LabelSummary</code>，让 <code>labelSearchIndexService.saveSearchIndex</code> 在处理其中一条时抛出异常；</p><p>执行 <code>BackfillSearchIndexJobHandler.execute()</code> 后，验证任务结果不是成功状态，并且失败页或失败记录数被明确上报。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">42</span>            }</span><span class="code-row"><span class="code-ln">43</span></span><span class="code-row"><span class="code-ln">44</span>            <span class="code-keyword">try</span> {</span><span class="code-row"><span class="code-ln">45</span>                pageResult.getContent().forEach(labelSearchIndexService::saveSearchIndex);</span><span class="code-row"><span class="code-ln">46</span>                totalProcessed += pageResult.getContent().size();</span><span class="code-row code-row-target"><span class="code-ln">47</span>            } <span class="code-keyword">catch</span> (Exception e) {</span><span class="code-row code-row-target"><span class="code-ln">48</span>                log.error(<span class="code-string">"Backfill batch failed at page {}: {}"</span>, page, e.getMessage(), e);</span><span class="code-row code-row-target"><span class="code-ln">49</span>            }</span><span class="code-row code-row-target"><span class="code-ln">50</span></span><span class="code-row"><span class="code-ln">51</span>            <span class="code-keyword">if</span> (!pageResult.hasNext()) {</span><span class="code-row"><span class="code-ln">52</span>                break;</span><span class="code-row"><span class="code-ln">53</span>            }</span><span class="code-row"><span class="code-ln">54</span>            page++;</span><span class="code-row"><span class="code-ln">55</span></span></code></pre></details></div></div></details></div></div></details><details class="action-group action-group-optional" style="margin-bottom:14px;border:1px solid #2f855a;border-radius:8px;"><summary style="cursor:pointer;font-weight:700;font-size:15px;color:#2f855a;padding:8px 12px;list-style:none;">&#128994; 可选优化 &middot; 2 个问题</summary><div style="padding:0 12px 8px;"><div class="findings-list-wrap"><details class="file-group findings-file-group" id="fg-86e3f654e368" data-file-path="tracking-service/src/main/java/io/speedx/trk/service/service/impl/LabelSearchIndexServiceImpl.java" data-short-name="LabelSearchIndexServiceImpl.java" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">tracking-service/src/main/java/io/speedx/trk/service/service/impl/LabelSearchIndexServiceImpl.java</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L34-38</span><span class="finding-cat">并发安全</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>LabelSearchIndexServiceImpl.saveSearchIndexBatch(List&lt;LabelSummary&gt; labelSummaries)</code> 使用 <code>labelSearchIndexDao.existsByTrackingNo(label.getTrackingNo())</code> 后再执行 <code>labelSearchIndexDao.save(buildIndex(label))</code>，这是典型的先查后写。</p><p>新增代码中没有锁、没有数据库原子 upsert，也没有基于唯一键冲突的明确处理分支。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>当回填任务、创建标签链路或多实例并发处理同一个 <code>trackingNo</code> 时，两个线程可能同时通过 <code>existsByTrackingNo</code> 检查并竞争写入，造成重复异常、日志噪音，甚至在异常被吞掉的情况下让批量回填统计 <code>count</code> 与真实写入结果不一致，影响后续补偿判断。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>把 <code>saveSearchIndexBatch(List&lt;LabelSummary&gt; labelSummaries)</code> 改为依赖数据库唯一键做幂等写入，例如使用 <code>insert ignore</code>、<code>on duplicate key update</code> 或捕获唯一键冲突后按已存在处理，不要先 <code>existsByTrackingNo</code> 再 <code>save</code>。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>并发启动两个线程，同时对包含同一个 <code>label.getTrackingNo()</code> 的 <code>List&lt;LabelSummary&gt;</code> 调用 <code>saveSearchIndexBatch(List&lt;LabelSummary&gt; labelSummaries)</code>；</p><p>验证当前实现会出现两个线程都通过 <code>existsByTrackingNo</code> 检查，其中一个在线程竞争后于 <code>labelSearchIndexDao.save(buildIndex(label))</code> 抛出重复异常。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">29</span></span><span class="code-row"><span class="code-ln">30</span>    <span class="code-annotation">@Override</span></span><span class="code-row"><span class="code-ln">31</span>    <span class="code-keyword">public</span> int saveSearchIndexBatch(List&lt;LabelSummary&gt; labelSummaries) {</span><span class="code-row"><span class="code-ln">32</span>        int count = <span class="code-number">0</span>;</span><span class="code-row"><span class="code-ln">33</span>        <span class="code-keyword">for</span> (LabelSummary label : labelSummaries) {</span><span class="code-row code-row-target"><span class="code-ln">34</span>            <span class="code-keyword">if</span> (labelSearchIndexDao.existsByTrackingNo(label.getTrackingNo())) {</span><span class="code-row code-row-target"><span class="code-ln">35</span>                continue;</span><span class="code-row code-row-target"><span class="code-ln">36</span>            }</span><span class="code-row code-row-target"><span class="code-ln">37</span>            <span class="code-keyword">try</span> {</span><span class="code-row code-row-target"><span class="code-ln">38</span>                labelSearchIndexDao.save(buildIndex(label));</span><span class="code-row"><span class="code-ln">39</span>                count++;</span><span class="code-row"><span class="code-ln">40</span>            } <span class="code-keyword">catch</span> (Exception e) {</span><span class="code-row"><span class="code-ln">41</span>                log.warn(<span class="code-string">"Failed to save search index for {}"</span>, label.getTrackingNo(), e);</span><span class="code-row"><span class="code-ln">42</span>            }</span><span class="code-row"><span class="code-ln">43</span>        }</span></code></pre></details></div></div></details><details class="file-group findings-file-group" id="fg-27fbfb507eac" data-file-path="trk-job/src/main/java/io/speedx/trk/job/jobhandler/BackfillSearchIndexJobHandler.java" data-short-name="BackfillSearchIndexJobHandler.java" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">trk-job/src/main/java/io/speedx/trk/job/jobhandler/BackfillSearchIndexJobHandler.java</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L35-36</span><span class="finding-cat">性能隐患</span><span class="evidence-line-corrected-badge" style="color:#1565c0;border:1px solid #1565c0;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段与 evidence_quote 实际所在行不一致，已按 evidence_quote 自动纠正高亮位置">&#128260; 行号已纠正</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>BackfillSearchIndexJobHandler.execute()</code> 使用基于页码的 <code>labelSummaryDao.findAll(PageRequest.of(page, BATCH_SIZE, Sort.by(Sort.Direction.ASC, &quot;id&quot;)))</code> 全表扫描历史数据。</p><p>随着 <code>page</code> 增大，数据库需要持续跳过越来越多的前序记录，且任务运行期间若 <code>tb_label_summary</code> 有新增/删除，分页窗口会漂移。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>在历史数据量大或任务执行时间长时，<code>backfillSearchIndexJob</code> 会对数据库造成持续高负载，甚至出现漏处理、重复处理部分 <code>LabelSummary</code> 的情况；</p><p>这类一次性回填任务通常在生产库上运行，容易放大为可用性风险。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>将 <code>labelSummaryDao.findAll(PageRequest...)</code> 改为基于主键游标的分段扫描，例如按 <code>id &gt; lastId order by id asc limit BATCH_SIZE</code> 逐批拉取，并在每批完成后更新 <code>lastId</code>。</p><p>这样既避免深分页性能退化，也能降低并发写入导致的分页漂移。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>准备大量 <code>tb_label_summary</code> 历史数据，并在 <code>BackfillSearchIndexJobHandler.execute()</code> 运行过程中持续插入新 <code>LabelSummary</code>；</p><p>对比页码分页与按 <code>id</code> 游标分页的处理结果，验证前者可能出现重复或遗漏，后者不会。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">32</span>    <span class="code-keyword">public</span> <span class="code-keyword">void</span> execute() {</span><span class="code-row"><span class="code-ln">33</span>        long totalProcessed = <span class="code-number">0</span>;</span><span class="code-row"><span class="code-ln">34</span>        int page = <span class="code-number">0</span>;</span><span class="code-row"><span class="code-ln">35</span></span><span class="code-row"><span class="code-ln">36</span>        <span class="code-keyword">while</span> (<span class="code-keyword">true</span>) {</span><span class="code-row code-row-target"><span class="code-ln">37</span>            Page&lt;LabelSummary&gt; pageResult = labelSummaryDao.findAll(</span><span class="code-row code-row-target"><span class="code-ln">38</span>                    PageRequest.of(page, BATCH_SIZE, Sort.by(Sort.Direction.ASC, <span class="code-string">"id"</span>)));</span><span class="code-row"><span class="code-ln">39</span></span><span class="code-row"><span class="code-ln">40</span>            <span class="code-keyword">if</span> (!pageResult.hasContent()) {</span><span class="code-row"><span class="code-ln">41</span>                break;</span><span class="code-row"><span class="code-ln">42</span>            }</span><span class="code-row"><span class="code-ln">43</span></span></code></pre></details></div></div></details></div></div></details>
+    </div>
+
+    <div id="panel-dp" class="report-panel" role="tabpanel" aria-labelledby="tab-dp">
+      <div class="dp-shell"><div class="dp-header">
+  <h1>数据权限分析报告</h1>
+  <p class="subtitle">AI Code Review · 接口级别数据权限审计</p>
+  <div class="meta-row"><div class="meta-item">项目 <strong>trk</strong></div><div class="meta-item">涉及接口路径（自动汇总） <strong>/event/external/v2/fuzzy-query · /v2/fuzzy-query</strong></div><div class="meta-item">报告日期 <strong>2026-09-14 08:29:00</strong></div><div class="meta-item">涉及角色标签 <strong>api-key</strong></div></div>
+</div>
+
+<div class="dp-body">
+
+  <div class="dp-stats">
+    
+  <div class="summary-grid">
+    <div class="summary-card critical"><div class="count">2</div><div class="label">Critical</div></div>
+    <div class="summary-card high"><div class="count">0</div><div class="label">Major</div></div>
+    <div class="summary-card medium"><div class="count">0</div><div class="label">Minor</div></div>
+    <div class="summary-card info"><div class="count">0</div><div class="label">Info</div></div>
+  </div>
+  <p style="margin:8px 0 0;font-size:.8rem;color:#718096;">Total 2 条权限类问题 · 涉及 2 个接口（已解析路径）</p>
+
+  </div>
+
+  <div class="dp-section">
+    <div class="dp-section-title">角色权限定义</div>
+    <div class="dp-roles"><div class="role-box"><div class="role-icon">&#128100;</div><div class="role-info"><h3>项目级环境事实（审查时须知）</h3><div class="role-md">- <strong>driver</strong>：司机；仅自身用户与当前路线/包裹相关数据。<br/>
+- <strong>driver-leader / fleet leader</strong>：车队队长；仅本 <code>fleetId</code> 范围内数据。<br/>
+- <strong>operator / dispatcher</strong>：运营/调度；按 <code>facilityCode</code>、DSP 等约定收敛列表与详情。<br/>
+- <strong>admin</strong>：管理员；可访问全量（若代码中另有细分需写明）。<br/>
+<br/>
+<br/>
+- 管理端接口通常需 <code>@PreAuthorize</code> 或项目统一 <code>AuthUtil</code> 校验。<br/>
+- 列表/导出须注入当前用户的数据范围（如 <code>fleetId</code>、<code>dspId</code>），禁止仅靠前端传参筛选。<br/>
+<br/>
+<br/>
+- 运行时配置以 Nacos 配置中心为准，本地 application.yml 的开关值不代表生产实际值。<br/>
+- 各服务大量使用自带池化的 starter（IBM MQ / Druid / Lettuce / Kafka）；自定义 @Primary 基础设施 Bean 会使 starter 自动装配让位，池化/缓存包装随之失效。<br/>
+- 海关链路（ACAS/AMS/ABI）存在 MAWB→数千小包的批量放大特征（一次 MAWB 级操作可触发 4000+ 次逐条发送），发送路径上任何 per-call 开销都会被放大三个数量级。</div></div></div></div>
+  </div>
+
+  <div class="dp-gate"></div>
+
+  <div class="dp-section">
+    <div class="dp-section-title">接口权限审计总览</div>
+    <div class="table-wrap"><table class="dp-audit"><thead><tr><th>方法</th><th>路径</th><th>Service 方法</th><th>权限校验</th><th>数据范围</th><th>风险</th><th>问题描述</th></tr></thead><tbody><tr class="row-critical"><td style='white-space:nowrap;vertical-align:middle;'><span class="badge badge-get">GET</span></td><td style='min-width:120px;'><code style="font-size:.82rem;word-break:break-all;">/event/external/v2/fuzzy-query</code></td><td style='min-width:160px;'><code style="font-size:.82rem;">toFuzzyQuery(String apiKey, FuzzyTrackingForm form)</code></td><td style='white-space:nowrap;'><span style="color:#dd6b20;">待复核</span></td><td style='min-width:140px;font-size:.85rem;'><span style="font-size:.85rem;">当前新增逻辑先全局模糊解析 <code>trackingNo</code>，再直接调用 <code>toV2(Collections.singletonList(resolvedTrackingNo), apiKey)</code>，diff 中未见任何针对模糊命中结果的归属过滤。</span></td><td style='white-space:nowrap;'><div class="risk-zh">高风险（数据越权读取）</div><div style="margin-top:6px;"><span class="badge badge-critical">CRITICAL</span></div></td><td style='min-width:220px;'><ul class="issue-list"><li><strong>原因：</strong> <code>QueryEventCmdBridge.toFuzzyQuery(String apiKey, FuzzyTrackingForm form)</code> 在 <code>GET /event/external/v2/fuzzy-query</code> 中，先根据 <code>form.getTrackingNumber()</code> 和可选的 <code>form.getRecipientPhone()</code> 调用 <code>labelSearchIndexService.searchTrackingNos(inputNumber, phoneLast4)</code> 解析出真实 <code>trackingNo</code>，随后直接复用 <code>toV2(Collections.singletonList(resolvedTrackingNo), apiKey)</code> 返回轨迹数据</li><li>新增逻辑里没有看到任何把 <code>resolvedTrackingNo</code> 与 <code>apiKey</code> 对应的 <code>Provider</code>、<code>orgId</code>、<code>providerCode</code> 或资源归属做绑定校验的代码，等于把“知道运单号数字片段/手机号后四位”变成了新的查询凭据</li><li><strong>影响：</strong> 只要调用方持有任意有效 <code>api-key</code>，并猜中或撞中某个运单的数字片段，甚至在未提供 <code>recipientPhone</code> 的情况下，仅凭数字片段就可能解析出他人 <code>trackingNo</code> 并读取最后轨迹事件与 TTS 信息，形成跨客户数据越权读取</li><li>当数字片段唯一时，这个接口会比原始精确单号查询更容易被枚举利用</li><li><strong>⚠️ 需求核对提示：</strong> 该 finding 指出的具体文案/取值（<code>GET /event/external/v2/fuzzy-query</code>）已逐字出现在本次需求原文中，可能是需求明确要求的行为，而非开发自行引入的缺陷</li></ul></td></tr><tr class="row-critical"><td style='white-space:nowrap;vertical-align:middle;'><span class="badge badge-get">GET</span></td><td style='min-width:120px;'><code style="font-size:.82rem;word-break:break-all;">/v2/fuzzy-query</code></td><td style='min-width:160px;'><code style="font-size:.82rem;">fuzzyQueryTracking(...)</code></td><td style='white-space:nowrap;'><span style="color:#dd6b20;">部分 / 需复核</span></td><td style='min-width:140px;font-size:.85rem;'><span style="font-size:.85rem;">新增入口仅接收 <code>api-key</code> 和 <code>FuzzyTrackingForm</code> 后直接进入 <code>queryEventCmdBridge.toFuzzyQuery(apiKey, form)</code>，变更中未见该入口自身的权限注解或数据范围限制</span></td><td style='white-space:nowrap;'><div class="risk-zh">高风险（数据越权读取）</div><div style="margin-top:6px;"><span class="badge badge-critical">CRITICAL</span></div></td><td style='min-width:220px;'><ul class="issue-list"><li><strong>原因：</strong> <code>EventExternalController.fuzzyQueryTracking</code> 新增了对外 <code>GET /v2/fuzzy-query</code> 入口，但变更行里只有 <code>@RequestHeader(name = &quot;api-key&quot;) String apiKey</code> 取头并直接调用 <code>queryEventCmdBridge.toFuzzyQuery(apiKey, form)</code>，没有在该入口处看到任何 <code>@PreAuthorize</code>、<code>@Secured</code>、<code>@RolesAllowed</code>、数据范围过滤或对 <code>FuzzyTrackingForm</code> 中查询对象归属的校验</li><li>结合 <code>QueryEventCmdBridge.toFuzzyQuery</code> 的新增逻辑，它会先按 <code>trackingNumber</code>/<code>recipientPhone</code> 做模糊命中，再复用 <code>toV2</code> 返回轨迹数据，这意味着该新入口把“模糊定位运单”能力直接暴露给持有任意有效 <code>api-key</code> 的调用方</li><li><strong>影响：</strong> 如果不同 <code>api-key</code> 之间本应存在租户/客户数据隔离，仅凭数字片段和手机号后四位即可尝试解析出真实 <code>trackingNo</code> 并继续查询轨迹，会把原本需要精确 <code>trackingNo</code> 的接口降级为可枚举查询入口，导致跨租户运单存在被探测和读取的风险</li><li>由于当前上下文未提供 role_data，受影响角色与期望数据范围无法与文档对齐，需人工确认</li></ul></td></tr></tbody></table></div>
+  </div>
+
+  
+
+  <div class="dp-section">
+    <div class="dp-section-title">端点详情</div>
+    <div class="dp-folds"><details class="issue-fold"><summary>GET /event/external/v2/fuzzy-query</summary><div class="issue-fold-body">
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="badge critical">Critical</span>
+      <span class="method-badge">GET</span>
+      <span class="endpoint">/event/external/v2/fuzzy-query</span>
+    </div>
+    <div class="issue-body">
+      <div class="section-title">问题描述</div>
+      <p class="loc-hint">关联位置：<code>tracking-service/src/main/java/io/speedx/trk/service/cmd/queryEvent/QueryEventCmdBridge.java L64</code></p>
+      <p class="desc">1.
+<code>QueryEventCmdBridge.toFuzzyQuery(String apiKey, FuzzyTrackingForm form)</code> 在 <code>GET /event/external/v2/fuzzy-query</code> 中，先根据 <code>form.getTrackingNumber()</code> 和可选的 <code>form.getRecipientPhone()</code> 调用 <code>labelSearchIndexService.searchTrackingNos(inputNumber, phoneLast4)</code> 解析出真实 <code>trackingNo</code>，随后直接复用 <code>toV2(Collections.singletonList(resolvedTrackingNo), apiKey)</code> 返回轨迹数据。新增逻辑里没有看到任何把 <code>resolvedTrackingNo</code> 与 <code>apiKey</code> 对应的 <code>Provider</code>、<code>orgId</code>、<code>providerCode</code> 或资源归属做绑定校验的代码，等于把“知道运单号数字片段/手机号后四位”变成了新的查询凭据。</p>
+      <div class="section-title">问题代码</div><pre><code>List&lt;String&gt; trackingNos = labelSearchIndexService.searchTrackingNos(inputNumber, phoneLast4);</code></pre>
+      <div class="two-col">
+        <div class="impact-box">
+          <h4>安全影响</h4>
+          <p>只要调用方持有任意有效 <code>api-key</code>，并猜中或撞中某个运单的数字片段，甚至在未提供 <code>recipientPhone</code> 的情况下，仅凭数字片段就可能解析出他人 <code>trackingNo</code> 并读取最后轨迹事件与 TTS 信息，形成跨客户数据越权读取；当数字片段唯一时，这个接口会比原始精确单号查询更容易被枚举利用。
+
+<strong>⚠️ 需求核对提示：</strong> 该 finding 指出的具体文案/取值（<code>GET /event/external/v2/fuzzy-query</code>）已逐字出现在本次需求原文中，可能是需求明确要求的行为，而非开发自行引入的缺陷。是否需要调整须与需求方确认，不建议直接按「立即修代码」处理。</p>
+        </div>
+        <div class="fix-box">
+          <h4>修复建议</h4>
+          <ul class="list"><li>在 <code>QueryEventCmdBridge.toFuzzyQuery(String apiKey, FuzzyTrackingForm form)</code> 中，在 <code>labelSearchIndexService.searchTrackingNos(inputNumber, phoneLast4)</code> 之后增加基于 <code>apiKey</code> 的资源归属校验，确保 <code>resolvedTrackingNo</code> 属于该 <code>apiKey</code> 可访问的数据范围；如果现有 <code>toV2</code> 已有 provider 级校验，也应在模糊解析阶段把查询条件收敛到该 provider 可见范围内，而不是先全局解析再查询。至少应要求 <code>recipientPhone</code> 为必填并与索引命中记录同时匹配，避免仅凭数字片段命中。</li></ul>
+        </div>
+      </div>
+      
+    </div>
+  </div>
+</div></details>
+<details class="issue-fold"><summary>GET /v2/fuzzy-query</summary><div class="issue-fold-body">
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="badge critical">Critical</span>
+      <span class="method-badge">GET</span>
+      <span class="endpoint">/v2/fuzzy-query</span>
+    </div>
+    <div class="issue-body">
+      <div class="section-title">问题描述</div>
+      <p class="loc-hint">关联位置：<code>tracking-api/src/main/java/io/speedx/trk/api/controller/external/EventExternalController.java L135-139</code></p>
+      <p class="desc">1.
+<code>EventExternalController.fuzzyQueryTracking</code> 新增了对外 <code>GET /v2/fuzzy-query</code> 入口，但变更行里只有 <code>@RequestHeader(name = &quot;api-key&quot;) String apiKey</code> 取头并直接调用 <code>queryEventCmdBridge.toFuzzyQuery(apiKey, form)</code>，没有在该入口处看到任何 <code>@PreAuthorize</code>、<code>@Secured</code>、<code>@RolesAllowed</code>、数据范围过滤或对 <code>FuzzyTrackingForm</code> 中查询对象归属的校验。结合 <code>QueryEventCmdBridge.toFuzzyQuery</code> 的新增逻辑，它会先按 <code>trackingNumber</code>/<code>recipientPhone</code> 做模糊命中，再复用 <code>toV2</code> 返回轨迹数据，这意味着该新入口把“模糊定位运单”能力直接暴露给持有任意有效 <code>api-key</code> 的调用方。</p>
+      <div class="section-title">问题代码</div><pre><code>@GetMapping(&quot;/v2/fuzzy-query&quot;)
+public ResponseObject&lt;TrackingRo&lt;TrackingItemV1Ro&gt;&gt;  fuzzyQueryTracking(
+        @ApiParam(value = &quot;API Key&quot;, required = true) @RequestHeader(name = &quot;api-key&quot;) String apiKey,
+        FuzzyTrackingForm form) {
+    return ResponseObject.success(queryEventCmdBridge.toFuzzyQuery(apiKey, form));
+}</code></pre>
+      <div class="two-col">
+        <div class="impact-box">
+          <h4>安全影响</h4>
+          <p>如果不同 <code>api-key</code> 之间本应存在租户/客户数据隔离，仅凭数字片段和手机号后四位即可尝试解析出真实 <code>trackingNo</code> 并继续查询轨迹，会把原本需要精确 <code>trackingNo</code> 的接口降级为可枚举查询入口，导致跨租户运单存在被探测和读取的风险。由于当前上下文未提供 role_data，受影响角色与期望数据范围无法与文档对齐，需人工确认。</p>
+        </div>
+        <div class="fix-box">
+          <h4>修复建议</h4>
+          <ul class="list"><li>在 <code>EventExternalController.fuzzyQueryTracking</code> 或 <code>QueryEventCmdBridge.toFuzzyQuery</code> 中补齐与 <code>apiKey</code> 绑定的资源归属校验：先通过 <code>apiKey</code> 解析调用方身份，再限制 <code>labelSearchIndexService.searchTrackingNos(...)</code> 只能在该调用方可见的数据范围内检索；同时为该入口增加显式鉴权注解或统一鉴权拦截。若业务上仅允许特定 provider 使用模糊查询，应在入口直接拒绝其他 <code>api-key</code>。</li></ul>
+        </div>
+      </div>
+      
+    </div>
+  </div>
+</div></details></div>
+  </div>
+
+  
+
+  
+
+  <div class="dp-footer"><p>本报告由 AI Code Review 生成（data_permission 模式）。权限类 finding 涉及文件：<strong>tracking-api/src/main/java/io/speedx/trk/api/controller/external/EventExternalController.java、tracking-service/src/main/java/io/speedx/trk/service/cmd/queryEvent/QueryEventCmdBridge.java</strong></p><p style="margin-top:4px;">生成时间：2026-09-14 08:29:00 · 项目：trk</p></div>
+
+</div>
+</div>
+    </div>
+  </div>
+  <script>
+    function escHtml(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function formatSummaryInner(rawBlock) {
+      var lines = rawBlock.split(/\r?\n/);
+      var html = '';
+      var listType = null;
+
+      function closeList() {
+        if (listType) { html += '</' + listType + '>'; listType = null; }
+      }
+
+      function renderInline(text) {
+        var st = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        st = st.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        st = st.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+        return st;
+      }
+
+      lines.forEach(function(line) {
+        var trimmed = line.trim();
+        if (!trimmed) { closeList(); return; }
+
+        if (/^#{1,3}\s+/.test(trimmed)) {
+          closeList();
+          var title = trimmed.replace(/^#{1,3}\s+/, '');
+          html += '<p class="summary-section-title">' + renderInline(title) + '</p>';
+          return;
+        }
+
+        if (/^\*\*[^*]+\*\*[：:。]?$/.test(trimmed)) {
+          closeList();
+          var title2 = trimmed.replace(/^\*\*|\*\*[：:。]?$/g, '');
+          html += '<p class="summary-section-title">' + renderInline(title2) + '</p>';
+          return;
+        }
+
+        if (/^[【「『].*[】」』]$/.test(trimmed) ||
+            (trimmed.length <= 30 && /[：:]$/.test(trimmed) && !/^\d/.test(trimmed))) {
+          closeList();
+          var title3 = trimmed.replace(/^[【「『]|[】」』]$/g, '').replace(/[：:]$/, '');
+          html += '<p class="summary-section-title">' + renderInline(title3) + '</p>';
+          return;
+        }
+
+        if (/^[-*]\s+/.test(trimmed)) {
+          if (listType !== 'ul') { closeList(); html += '<ul>'; listType = 'ul'; }
+          var content = trimmed.replace(/^[-*]\s+/, '');
+          html += '<li>' + renderInline(content) + '</li>';
+          return;
+        }
+
+        if (/^[\(（]?\d+[\)）.\、]\s*/.test(trimmed)) {
+          if (listType !== 'ol') { closeList(); html += '<ol>'; listType = 'ol'; }
+          var content2 = trimmed.replace(/^[\(（]?\d+[\)）.\、]\s*/, '');
+          html += '<li>' + renderInline(content2) + '</li>';
+          return;
+        }
+
+        closeList();
+        if (trimmed.length > 280 && /[。！？][\s\u3000]/.test(trimmed)) {
+          var chunks = trimmed.split(/(?<=[。！？])[\s\u3000]+/).filter(function (c) { return c.trim(); });
+          if (chunks.length > 1) {
+            chunks.forEach(function (c) {
+              html += '<p>' + renderInline(c.trim()) + '</p>';
+            });
+            return;
+          }
+        }
+        html += '<p>' + renderInline(trimmed) + '</p>';
+      });
+
+      closeList();
+      return html;
+    }
+
+    function formatSummary() {
+      var el = document.getElementById('summary-text');
+      if (!el) return;
+      if (el.classList.contains('summary-preformatted')) return;
+      var raw = el.textContent || '';
+      raw = raw.replace(/\s+(?=本分片)/g, '\n---SHARD---\n');
+      var shards = raw.split(/\n---SHARD---\n/).map(function(s) { return s.trim(); }).filter(Boolean);
+      if (!shards.length) shards = [raw.trim()].filter(Boolean);
+
+      if (shards.length <= 1) {
+        var inner = formatSummaryInner(shards[0] || '');
+        if (inner) el.innerHTML = inner;
+        return;
+      }
+
+      var htmlShards = [];
+      for (var i = 0; i < shards.length; i++) {
+        var blockHtml = formatSummaryInner(shards[i]);
+        if (blockHtml) htmlShards.push('<div class="summary-shard">' + blockHtml + '</div>');
+      }
+      var head = htmlShards.slice(0, 3).join('');
+      var tail = htmlShards.slice(3).join('');
+      var moreBtn = '';
+      if (tail) {
+        moreBtn = '<button type="button" class="summary-toggle" id="summary-toggle-btn" aria-expanded="false">展开全部分片结论 (' + (htmlShards.length - 3) + ')</button>';
+      }
+      el.innerHTML = '<div class="summary-shards-wrap">' + head +
+        (tail ? '<div class="summary-more" id="summary-more-block" hidden>' + tail + '</div>' : '') +
+        moreBtn + '</div>';
+
+      var btn = document.getElementById('summary-toggle-btn');
+      var more = document.getElementById('summary-more-block');
+      if (btn && more) {
+        btn.addEventListener('click', function() {
+          var ex = btn.getAttribute('aria-expanded') === 'true';
+          more.hidden = ex;
+          btn.setAttribute('aria-expanded', ex ? 'false' : 'true');
+          btn.textContent = ex
+            ? ('展开全部分片结论 (' + (htmlShards.length - 3) + ')')
+            : '收起分片结论';
+        });
+      }
+    }
+
+    function switchReportTab(which) {
+      var panels = ['panel-general', 'panel-dp'];
+      var tabs = ['tab-general', 'tab-dp'];
+      var activePanel = which === 'dp' ? 'panel-dp' : 'panel-general';
+      var activeTab = which === 'dp' ? 'tab-dp' : 'tab-general';
+      panels.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) { el.classList.toggle('is-active', id === activePanel); }
+      });
+      tabs.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) { el.setAttribute('aria-selected', id === activeTab ? 'true' : 'false'); }
+      });
+    }
+
+    var activeFilter = null;
+
+    function getSearchQuery() {
+      var inp = document.getElementById('findings-search');
+      return inp ? String(inp.value || '').trim().toLowerCase() : '';
+    }
+
+    function applyFindingsFilter() {
+      var hint = document.getElementById('filter-hint');
+      var hintLabel = document.getElementById('filter-hint-label');
+
+      if (activeFilter) {
+        hintLabel.textContent = activeFilter.toUpperCase();
+        hint.style.display = 'block';
+      } else {
+        hint.style.display = 'none';
+      }
+
+      var q = getSearchQuery();
+
+      document.querySelectorAll('.findings-file-group').forEach(function(group) {
+        var visible = 0;
+        group.querySelectorAll('.finding-card').forEach(function(card) {
+          var sev = card.getAttribute('data-severity') || 'info';
+          var sevOk = !activeFilter || sev === activeFilter;
+          var textOk = !q || card.textContent.toLowerCase().indexOf(q) !== -1;
+          var show = sevOk && textOk;
+          card.style.display = show ? '' : 'none';
+          if (show) visible++;
+        });
+        group.style.display = visible === 0 ? 'none' : '';
+        // 任务115续作：finding 现在可能嵌套在 <details class="action-group"> 里，
+        // 该祖先关闭时子元素无论 style.display 如何都不会渲染，命中过滤结果时须一并展开。
+        if (visible > 0) {
+          var actionGroup = group.closest('.action-group');
+          if (actionGroup) actionGroup.open = true;
+        }
+      });
+
+      document.querySelectorAll('.file-block').forEach(function(block) {
+        if (block.classList.contains('findings-file-group')) return;
+        var rows = block.querySelectorAll('tbody tr');
+        if (!rows.length) return;
+        var vis = 0;
+        rows.forEach(function(row) {
+          if (!activeFilter || row.querySelector('.chip.' + activeFilter)) {
+            row.style.display = '';
+            vis++;
+          } else {
+            row.style.display = 'none';
+          }
+        });
+        block.style.display = vis === 0 ? 'none' : '';
+      });
+
+      // 顶部 Critical/Major 计数把「牵连影响」的 RISK/NEEDS_HUMAN 也并了进去
+      // （用户拍板口径），但这些卡片不是 .finding-card，之前点 Critical 只会
+      // 过滤上面两段、对牵连影响毫无反应，数字和实际看到的东西对不上
+      // （build TEST_pus-exchange-api/222 反馈）。按同一套口径把牵连影响的卡
+      // 也纳入过滤：RISK 对应 critical，NEEDS_HUMAN 对应 major；筛 minor/info
+      // 时牵连影响没有对应桶，全部隐藏是符合口径的。
+      var impactLevelMap = { critical: 'RISK', major: 'NEEDS_HUMAN' };
+      document.querySelectorAll('.impact-card[data-impact-level]').forEach(function(card) {
+        var level = card.getAttribute('data-impact-level');
+        var show = !activeFilter || impactLevelMap[activeFilter] === level;
+        card.style.display = show ? '' : 'none';
+        if (show && activeFilter) {
+          var d = card.closest('details');
+          if (d) d.open = true;
+        }
+      });
+    }
+
+    function filterBySeverity(chip) {
+      var filter = chip.dataset.filter;
+      if (activeFilter === filter) {
+        clearFilter();
+        return;
+      }
+      activeFilter = filter;
+      document.querySelectorAll('.filter-chip').forEach(function(c) {
+        if (c.dataset.filter === filter) {
+          c.classList.add('active');
+          c.classList.remove('dimmed');
+        } else {
+          c.classList.remove('active');
+          c.classList.add('dimmed');
+        }
+      });
+      applyFindingsFilter();
+    }
+
+    function clearFilter() {
+      activeFilter = null;
+      document.querySelectorAll('.filter-chip').forEach(function(c) {
+        c.classList.remove('active', 'dimmed');
+      });
+      applyFindingsFilter();
+    }
+
+    function initFindingsToolbar() {
+      var tb = document.getElementById('findings-toolbar');
+      if (!tb) return;
+      var groups = document.querySelectorAll('#panel-general .findings-file-group');
+      tb.style.display = groups.length ? '' : 'none';
+    }
+
+    (function () {
+      var chips = document.querySelectorAll('table .chip');
+      for (var i = 0; i < chips.length; i++) {
+        chips[i].textContent = chips[i].textContent.toUpperCase();
+      }
+
+      formatSummary();
+
+      initFindingsToolbar();
+
+      var ex = document.getElementById('expand-all-files');
+      var cl = document.getElementById('collapse-all-files');
+      if (ex) ex.addEventListener('click', function() {
+        document.querySelectorAll('.findings-file-group').forEach(function(d) { d.open = true; });
+        document.querySelectorAll('.action-group').forEach(function(d) { d.open = true; });
+      });
+      if (cl) cl.addEventListener('click', function() {
+        document.querySelectorAll('.findings-file-group').forEach(function(d) { d.open = false; });
+        document.querySelectorAll('.action-group').forEach(function(d) { d.open = false; });
+      });
+
+      var search = document.getElementById('findings-search');
+      if (search) {
+        search.addEventListener('input', function() { applyFindingsFilter(); });
+      }
+    })();
+
+    // Chart.js initialization
+    function renderCategoryChart(categoryData) {
+      var ctx = document.getElementById('categoryChart');
+      if (!ctx) return;
+      ctx = ctx.getContext('2d');
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: Object.keys(categoryData),
+          datasets: [{
+            label: '问题数量',
+            data: Object.values(categoryData),
+            // 跟报告主色（teal 系）协调的低饱和度调色板，替换 Chart.js 默认的
+            // 高饱和度七彩配色（用户反馈报告"不好看"，实测截图确认默认色彩
+            // 花哨刺眼、跟品牌色不搭）；18 色覆盖 VALID_CATEGORIES 全量枚举，
+            // 保证再多分类同时出现也不会因为数组不够长而退化成无色
+            backgroundColor: [
+              '#0f766e', '#b5651d', '#4a6fa5', '#8e6c96',
+              '#6b8f71', '#b58a3d', '#b56576', '#5c7a89',
+              '#3d8a8a', '#a3703f', '#5f7a9d', '#7a6b9d',
+              '#7fa17f', '#c29b5c', '#9d6b7a', '#6b8a9d',
+              '#8a9d6b', '#9d7a5f'
+            ]
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: true } }
+        }
+      });
+    }
+
+    // 这个短列表只是一句话摘要，不值得把 markdown 代码块渲染进一个 <li> 里——
+    // 直接去掉标记符本身，露出裸文本即可（跟 _render_markdown_lite 的完整
+    // 渲染不同，这里要的是"别露出字面 ** 和 ``` "，不是"渲染出富文本"）
+    function stripMdLite(text) {
+      return (text || '')
+        .replace(/```[a-zA-Z]*\n?/g, '')
+        .replace(/```/g, '')
+        .replace(/\*\*([^*]+)\*\*/g, '$1')
+        .replace(/`([^`]+)`/g, '$1');
+    }
+
+    function renderTopCriticals(topCriticals) {
+      var list = document.getElementById('top-criticals-list');
+      var box = document.getElementById('top-criticals');
+      if (!list) return;
+      // 一条都没有时整块收起，不留「标题 + 暂无 Critical 问题」空框占首屏
+      if (!topCriticals || !topCriticals.length) {
+        if (box) box.hidden = true;
+        list.innerHTML = '';
+        return;
+      }
+      if (box) box.hidden = false;
+      list.innerHTML = topCriticals.map(function(c) {
+        var desc = stripMdLite(c.description || '');
+        if (desc.length > 120) desc = desc.substring(0, 120) + '…';
+        // source 只有牵连影响条目才带：不标来源的话，读者会把"改动波及到的
+        // 其他调用点"当成"这段代码本身写错了"，两者要采取的动作不一样
+        var tag = c.source
+          ? '<span class="tc-source">' + escHtml(c.source) + '</span>'
+          : '';
+        return '<li>' + tag + '<strong>' + escHtml(c.file + (c.line ? ':' + c.line : '')) +
+               '</strong><span class="tc-desc">' + escHtml(desc) + '</span></li>';
+      }).join('');
+    }
+
+    // Export stubs (implemented in Task 5)
+    function exportJira() { alert('导出为 Jira 功能待实现'); }
+    function exportExcel() { alert('导出为 Excel 功能待实现'); }
+    function exportCsv() { alert('导出为 CSV 功能待实现'); }
+
+    // Inject summary data (Task 5)
+    if (typeof renderCategoryChart === 'function') renderCategoryChart({"\u5f02\u5e38\u5904\u7406": 3, "\u914d\u7f6e\u53d8\u66f4": 2, "\u9700\u6c42\u77db\u76fe": 2, "\u5e76\u53d1\u5b89\u5168": 2, "\u6743\u9650\u4e0e\u8bbf\u95ee\u63a7\u5236": 2, "\u5b89\u5168\u98ce\u9669": 1, "\u6027\u80fd\u9690\u60a3": 1, "\u9700\u6c42\u672a\u5b9e\u73b0": 1});
+if (typeof renderTopCriticals === 'function') renderTopCriticals([{"file": "tracking-api/src/main/java/io/speedx/trk/api/config/MultiDataSourceConfig.java", "line": "66-82", "severity": "critical", "category": "配置变更", "description": "**原因：** `MultiDataSourceConfig.trkDataSource(...)` 仍然保留 `@Primary` 的基础设施 Bean 定义，但新增实现已不再直接返回 Spring Boot 自动装配期望的 `HikariDataSource`，而是把同一个 `trkDataSource` 包装成 `ShardingSphereDataSourceFactory.createDataSource(...)` 返回。这样会让所有注入主 `DataSource` 的 DAO/JdbcTemplate/JPA 路径统一切换到新的分片代理数据源，属于高影响面的基础设施替换，但当前 diff 中看不到对连接池监控、只读属性、登录超时、异常语义和启动失败策略是否与原自动装配保持一致的校验或兜底。\n\n**影响：** 一旦 `ShardingSphereDataSourceFactory.createDataSource(...)` 的行为与原 `HikariDataSource` 不完全兼容，整个 `tracking-api` 的数据库访问都会在运行时一起受影响，可能表现为启动失败、连接属性失效、读写行为偏差或核心查询链路不可用，属于由配置层改动直接放大的服务可用性风险。", "suggestion": "将 `@Primary` 的 `trkDataSource` 改为显式受开关控制的双实现装配，并补齐与原 `HikariDataSource` 等价的能力验证；至少在 `MultiDataSourceConfig` 中增加配置开关，允许快速回退到直接返回 `trkDataSource` 的旧实现。示例：\n```java\n@Value(\"${tracking.sharding.enabled:false}\")\nprivate boolean shardingEnabled;\n\n@Primary\n@Bean(name = \"trkDataSource\")\npublic DataSource trkDataSource(@Qualifier(\"trkDataSourceProperties\") DataSourceProperties dataSourceProperties) throws SQLException {\n    HikariDataSource trkDataSource = dataSourceProperties.initializeDataSourceBuilder()\n            .type(HikariDataSource.class)\n            .build();\n    // ...保留现有 Hikari 配置\n    if (!shardingEnabled) {\n        return trkDataSource;\n    }\n    Map\u003cString, DataSource> dataSourceMap = new HashMap\u003c>();\n    dataSourceMap.put(\"tracking_backend\", trkDataSource);\n    dataSourceMap.put(\"tracking_backend_ds_0\", trkDataSource);\n    return ShardingSphereDataSourceFactory.createDataSource(\n            dataSourceMap,\n            Collections.singleton(ShardingRuleFactory.createShardingRuleConfig()),\n            new Properties());\n}\n```", "test_scenario": "在未开启分片配置和开启分片配置两种模式下分别启动 `tracking-api`，验证 `JdbcTemplate` 基础查询、JPA Repository 查询、连接池只读属性和超时配置都保持一致；再模拟 `ShardingRuleFactory.createShardingRuleConfig()` 配置错误，确认可以通过开关回退而不是导致整个应用不可用。", "http_method": "", "path_pattern": "", "permission_tags": [], "java_entry_method": "", "expected_permission": "", "actual_behavior": "", "evidence_refs": [], "risk_label_zh": "", "evidence_quote": "+        return ShardingSphereDataSourceFactory.createDataSource(", "requirement_ref": "", "unimplemented_feature": "", "deviation_rationale_check": "", "_line_unverified": true}, {"file": "tracking-api/src/main/java/io/speedx/trk/api/controller/external/EventExternalController.java", "line": "135-139", "severity": "critical", "category": "权限与访问控制", "description": "**原因：** `EventExternalController.fuzzyQueryTracking` 新增了对外 `GET /v2/fuzzy-query` 入口，但变更行里只有 `@RequestHeader(name = \"api-key\") String apiKey` 取头并直接调用 `queryEventCmdBridge.toFuzzyQuery(apiKey, form)`，没有在该入口处看到任何 `@PreAuthorize`、`@Secured`、`@RolesAllowed`、数据范围过滤或对 `FuzzyTrackingForm` 中查询对象归属的校验。结合 `QueryEventCmdBridge.toFuzzyQuery` 的新增逻辑，它会先按 `trackingNumber`/`recipientPhone` 做模糊命中，再复用 `toV2` 返回轨迹数据，这意味着该新入口把“模糊定位运单”能力直接暴露给持有任意有效 `api-key` 的调用方。\n\n```java\n@GetMapping(\"/v2/fuzzy-query\")\npublic ResponseObject\u003cTrackingRo\u003cTrackingItemV1Ro>>  fuzzyQueryTracking(\n        @ApiParam(value = \"API Key\", required = true) @RequestHeader(name = \"api-key\") String apiKey,\n        FuzzyTrackingForm form) {\n    return ResponseObject.success(queryEventCmdBridge.toFuzzyQuery(apiKey, form));\n}\n```\n**影响：** 如果不同 `api-key` 之间本应存在租户/客户数据隔离，仅凭数字片段和手机号后四位即可尝试解析出真实 `trackingNo` 并继续查询轨迹，会把原本需要精确 `trackingNo` 的接口降级为可枚举查询入口，导致跨租户运单存在被探测和读取的风险。由于当前上下文未提供 role_data，受影响角色与期望数据范围无法与文档对齐，需人工确认。", "suggestion": "在 `EventExternalController.fuzzyQueryTracking` 或 `QueryEventCmdBridge.toFuzzyQuery` 中补齐与 `apiKey` 绑定的资源归属校验：先通过 `apiKey` 解析调用方身份，再限制 `labelSearchIndexService.searchTrackingNos(...)` 只能在该调用方可见的数据范围内检索；同时为该入口增加显式鉴权注解或统一鉴权拦截。若业务上仅允许特定 provider 使用模糊查询，应在入口直接拒绝其他 `api-key`。", "test_scenario": "准备两个不同 provider 的运单数据，确保它们的 `tracking_no_digits` 或 `recipientPhoneLast4` 可被同一组输入命中。使用 provider A 的 `api-key` 调用 `GET /v2/fuzzy-query`，传入能命中 provider B 运单的 `trackingNumber` 和 `recipientPhone`；预期应返回无权限或空结果，当前实现若返回 provider B 的轨迹即证明存在越权读取。", "http_method": "GET", "path_pattern": "/v2/fuzzy-query", "permission_tags": [], "java_entry_method": "EventExternalController.fuzzyQueryTracking(...)", "expected_permission": "需人工确认：`api-key` 仅可查询其自身可见范围内的运单，不应通过模糊条件读取其他 provider/租户数据", "actual_behavior": "新增入口仅接收 `api-key` 和 `FuzzyTrackingForm` 后直接进入 `queryEventCmdBridge.toFuzzyQuery(apiKey, form)`，变更中未见该入口自身的权限注解或数据范围限制", "evidence_refs": ["tracking-api/src/main/java/io/speedx/trk/api/controller/external/EventExternalController.java:135", "tracking-api/src/main/java/io/speedx/trk/api/controller/external/EventExternalController.java:139", "tracking-service/src/main/java/io/speedx/trk/service/cmd/queryEvent/QueryEventCmdBridge.java:64", "tracking-service/src/main/java/io/speedx/trk/service/cmd/queryEvent/QueryEventCmdBridge.java:83"], "risk_label_zh": "高风险（数据越权读取）", "evidence_quote": "", "requirement_ref": "", "unimplemented_feature": "", "deviation_rationale_check": ""}, {"file": "tracking-service/src/main/java/io/speedx/trk/service/cmd/queryEvent/QueryEventCmdBridge.java", "line": "64", "severity": "critical", "category": "权限与访问控制", "description": "**原因：** `QueryEventCmdBridge.toFuzzyQuery(String apiKey, FuzzyTrackingForm form)` 在 `GET /event/external/v2/fuzzy-query` 中，先根据 `form.getTrackingNumber()` 和可选的 `form.getRecipientPhone()` 调用 `labelSearchIndexService.searchTrackingNos(inputNumber, phoneLast4)` 解析出真实 `trackingNo`，随后直接复用 `toV2(Collections.singletonList(resolvedTrackingNo), apiKey)` 返回轨迹数据。新增逻辑里没有看到任何把 `resolvedTrackingNo` 与 `apiKey` 对应的 `Provider`、`orgId`、`providerCode` 或资源归属做绑定校验的代码，等于把“知道运单号数字片段/手机号后四位”变成了新的查询凭据。\n```java\nList\u003cString> trackingNos = labelSearchIndexService.searchTrackingNos(inputNumber, phoneLast4);\n```\n**影响：** 只要调用方持有任意有效 `api-key`，并猜中或撞中某个运单的数字片段，甚至在未提供 `recipientPhone` 的情况下，仅凭数字片段就可能解析出他人 `trackingNo` 并读取最后轨迹事件与 TTS 信息，形成跨客户数据越权读取；当数字片段唯一时，这个接口会比原始精确单号查询更容易被枚举利用。\n\n**⚠️ 需求核对提示：** 该 finding 指出的具体文案/取值（`GET /event/external/v2/fuzzy-query`）已逐字出现在本次需求原文中，可能是需求明确要求的行为，而非开发自行引入的缺陷。是否需要调整须与需求方确认，不建议直接按「立即修代码」处理。", "suggestion": "在 `QueryEventCmdBridge.toFuzzyQuery(String apiKey, FuzzyTrackingForm form)` 中，在 `labelSearchIndexService.searchTrackingNos(inputNumber, phoneLast4)` 之后增加基于 `apiKey` 的资源归属校验，确保 `resolvedTrackingNo` 属于该 `apiKey` 可访问的数据范围；如果现有 `toV2` 已有 provider 级校验，也应在模糊解析阶段把查询条件收敛到该 provider 可见范围内，而不是先全局解析再查询。至少应要求 `recipientPhone` 为必填并与索引命中记录同时匹配，避免仅凭数字片段命中。", "test_scenario": "准备两个不同客户可访问范围内外的运单：一个运单的 `trackingNo` 数字片段与另一个客户的查询输入唯一匹配。使用仅对第一个客户有效的 `api-key` 调用 `GET /event/external/v2/fuzzy-query`，只传该数字片段或传入可撞中的 `recipientPhone` 后四位，验证当前代码是否返回第二个客户运单的轨迹；修复后应返回未授权或未找到。", "http_method": "GET", "path_pattern": "/event/external/v2/fuzzy-query", "permission_tags": ["api-key"], "java_entry_method": "QueryEventCmdBridge.toFuzzyQuery(String apiKey, FuzzyTrackingForm form)", "expected_permission": "持有某个 `api-key` 的调用方仅可查询该 `api-key` 被授权访问的数据范围内的运单，不能通过模糊匹配解析并读取其他客户的 `trackingNo`。", "actual_behavior": "当前新增逻辑先全局模糊解析 `trackingNo`，再直接调用 `toV2(Collections.singletonList(resolvedTrackingNo), apiKey)`，diff 中未见任何针对模糊命中结果的归属过滤。", "evidence_refs": ["tracking-api/src/main/java/io/speedx/trk/api/controller/external/EventExternalController.java:135", "tracking-service/src/main/java/io/speedx/trk/service/cmd/queryEvent/QueryEventCmdBridge.java:64", "tracking-service/src/main/java/io/speedx/trk/service/cmd/queryEvent/QueryEventCmdBridge.java:83", "tracking-service/src/main/java/io/speedx/trk/service/service/impl/LabelSearchIndexServiceImpl.java:49", "tracking-service/src/main/java/io/speedx/trk/service/service/impl/LabelSearchIndexServiceImpl.java:52", "tracking-api/src/main/java/io/speedx/trk/api/controller/external/EventExternalController.java:139"], "risk_label_zh": "高风险（数据越权读取）", "evidence_quote": "", "requirement_ref": "", "unimplemented_feature": "", "deviation_rationale_check": ""}]);
+
+    // Export dropdown toggle
+    (function() {
+      var btn = document.getElementById('export-btn');
+      var menu = document.getElementById('export-menu');
+      if (!btn || !menu) return;
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var shown = menu.style.display === 'block';
+        menu.style.display = shown ? 'none' : 'block';
+      });
+      document.addEventListener('click', function() {
+        menu.style.display = 'none';
+      });
+    })();
+  </script>
+</body>
+</html>
