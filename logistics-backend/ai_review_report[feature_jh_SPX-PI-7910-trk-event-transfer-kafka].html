@@ -1,0 +1,2324 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Code Review Report</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      /* 重新设计（用户反馈"前端样式不好看"）：底色/正文/次要文字/边框/标题
+         此前全部带一层绿色调（跟 --accent 撞在一起，显得到处都是同一种绿），
+         改成中性板岩灰基调 + 一个teal 强调色，层次更清楚，也更耐看。 */
+      --bg: #f3f4f7;
+      --card: #ffffff;
+      --text: #1c2333;
+      --muted: #667085;
+      --border: #e3e6ec;
+      --heading: #0f1420;
+      --accent: #0f766e;
+      --accent-dark: #0b5850;
+      --accent-soft: #e6f4f2;
+
+      --critical-bg: #fdeceb;
+      --critical-text: #b3261e;
+      --critical-border: #f3b7b2;
+      --critical-strong: #d1291f;
+
+      --major-bg: #fdf1e3;
+      --major-text: #a85311;
+      --major-border: #f4d19d;
+      --major-strong: #d5720f;
+
+      --minor-bg: #fdf7e0;
+      --minor-text: #8a6208;
+      --minor-border: #f1e096;
+      --minor-strong: #a37d0a;
+
+      --info-bg: #eaf1fd;
+      --info-text: #23509c;
+      --info-border: #c0d6f6;
+      --info-strong: #2f66c9;
+
+      --safe-bg: #e8f6ee;
+      --safe-text: #1a7a4c;
+      --safe-border: #aee3c4;
+
+      --chip-bg: #eef0f5;
+      --code-bg: #10182b;
+      --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+      --shadow: 0 8px 24px rgba(16, 24, 40, 0.08);
+      --shadow-lg: 0 20px 44px rgba(16, 24, 40, 0.14);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans SC", Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .page {
+      max-width: 1180px;
+      margin: 28px auto 48px;
+      padding: 0 20px;
+    }
+
+    /* 重新设计：原来是一大片高饱和绿色渐变斜切块，视觉上很"闹"；
+       改成深板岩底色 + 顶部一条细 teal 强调线，克制一些，也更像专业
+       研发工具的报告头，而不是营销落地页banner。 */
+    .hero {
+      position: relative;
+      background: linear-gradient(165deg, #0b1220 0%, #121a2c 55%, #0e2422 100%);
+      color: #f4f7fb;
+      border-radius: 18px;
+      padding: 26px 28px 24px;
+      box-shadow: var(--shadow-lg);
+      margin-bottom: 18px;
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 3px;
+      background: linear-gradient(90deg, #14b8a6, #22d3ee 45%, #14b8a6 100%);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -60px;
+      top: -60px;
+      width: 220px;
+      height: 220px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(20, 184, 166, 0.22), transparent 70%);
+      pointer-events: none;
+    }
+
+    .hero h1 {
+      margin: 0 0 10px;
+      font-size: 24px;
+      font-weight: 700;
+      line-height: 1.25;
+      letter-spacing: 0.1px;
+    }
+
+    .hero-meta {
+      margin: 0;
+      font-size: 13.5px;
+      color: #aab4c8;
+      letter-spacing: 0.01em;
+    }
+
+    .summary {
+      background: var(--card);
+      padding: 16px 18px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      margin-bottom: 20px;
+    }
+
+    .summary h2,
+    .section-title {
+      margin: 0 0 12px;
+      font-size: 18px;
+      color: var(--heading);
+    }
+
+    .subsection-title {
+      margin-top: 28px;
+    }
+
+    .api-permission-block code {
+      font-size: 12px;
+      word-break: break-all;
+    }
+
+    .api-surface-sub {
+      margin: 18px 0 8px;
+      font-size: 16px;
+      color: var(--heading);
+    }
+
+    .inferred-hint {
+      margin: 0 0 12px;
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    /* 总体结论正文区 */
+    .summary-body {
+      margin: 0 0 16px;
+      font-size: 14px;
+      color: var(--text);
+      line-height: 1.75;
+    }
+
+    .summary-body p {
+      margin: 0 0 10px;
+    }
+
+    .summary-body p:last-child {
+      margin-bottom: 0;
+    }
+
+    .summary-body ol,
+    .summary-body ul {
+      margin: 4px 0 12px;
+      padding-left: 22px;
+    }
+
+    .summary-body ol li,
+    .summary-body ul li {
+      margin-bottom: 6px;
+      line-height: 1.65;
+    }
+
+    .summary-body .summary-section-title {
+      font-weight: 700;
+      color: var(--heading);
+      margin: 16px 0 6px;
+      font-size: 13px;
+      letter-spacing: 0.3px;
+      padding-left: 8px;
+      border-left: 3px solid var(--accent);
+    }
+
+    .summary-body .summary-section-title:first-child {
+      margin-top: 0;
+    }
+
+    .summary-body strong {
+      color: var(--heading);
+      font-weight: 700;
+    }
+
+    /* 严重级别筛选区 */
+    .filter-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-top: 6px;
+    }
+
+    .filter-label {
+      font-size: 12px;
+      color: var(--muted);
+      margin-right: 2px;
+    }
+
+    .chips-impact-note {
+      width: 100%;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 5px 13px;
+      border-radius: 9px;
+      font-size: 12.5px;
+      font-weight: 700;
+      background: var(--chip-bg);
+      color: var(--heading);
+      border: 1px solid transparent;
+    }
+
+    .filter-chip {
+      cursor: pointer;
+      transition: transform 0.12s, box-shadow 0.12s, opacity 0.12s;
+      user-select: none;
+    }
+
+    .filter-chip:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 3px 8px rgba(0,0,0,0.12);
+    }
+
+    .filter-chip.active {
+      box-shadow: 0 0 0 2.5px currentColor;
+      transform: translateY(-1px);
+    }
+
+    .filter-chip.dimmed {
+      opacity: 0.4;
+    }
+
+    .critical { background: var(--critical-bg); color: var(--critical-text); border-color: var(--critical-border); }
+    .major { background: var(--major-bg); color: var(--major-text); border-color: var(--major-border); }
+    .minor { background: var(--minor-bg); color: var(--minor-text); border-color: var(--minor-border); }
+    .info { background: var(--info-bg); color: var(--info-text); border-color: var(--info-border); }
+
+    /* 筛选状态提示条 */
+    #filter-hint {
+      display: none;
+      margin: -10px 0 14px;
+      padding: 8px 14px;
+      background: var(--accent-soft);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    #filter-hint .clear-filter {
+      margin-left: 8px;
+      color: var(--accent);
+      cursor: pointer;
+      font-weight: 600;
+      text-decoration: underline;
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    /* 工具栏：搜索 + 展开折叠 */
+    .findings-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+      padding: 12px 14px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+    }
+
+    .findings-search {
+      flex: 1 1 220px;
+      min-width: 0;
+      padding: 10px 14px;
+      font: inherit;
+      font-size: 14px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+      color: var(--text);
+    }
+
+    .findings-search:focus {
+      outline: none;
+      box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.35);
+      border-color: var(--accent);
+    }
+
+    .findings-toolbar-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .toolbar-btn {
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--chip-bg);
+      color: var(--heading);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .toolbar-btn:hover {
+      background: #e3e6ec;
+    }
+
+    /* 文件 TOC */
+    .findings-toc {
+      margin-bottom: 16px;
+      padding: 10px 12px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+    }
+
+    .toc-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 8px;
+      letter-spacing: 0.04em;
+    }
+
+    .toc-pill-wrap {
+      display: flex;
+      flex-wrap: nowrap;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .toc-pill {
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      text-decoration: none;
+      color: var(--heading);
+      background: var(--chip-bg);
+      border: 1px solid var(--border);
+      transition: transform 0.12s, box-shadow 0.12s;
+    }
+
+    .toc-pill:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+
+    .toc-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .toc-dot.sev-critical { background: var(--critical-text); }
+    .toc-dot.sev-major { background: var(--major-text); }
+    .toc-dot.sev-minor { background: var(--minor-text); }
+    .toc-dot.sev-info { background: var(--info-text); }
+
+    /* 总体结论：多分片 */
+    .summary-shards-wrap {
+      margin-bottom: 4px;
+    }
+
+    .summary-shard {
+      margin-bottom: 14px;
+      padding: 12px 14px;
+      background: #fafbfd;
+      border-radius: 10px;
+      border-left: 4px solid var(--accent);
+    }
+
+    .summary-shard:last-of-type {
+      margin-bottom: 10px;
+    }
+
+    .summary-more[hidden] {
+      display: none !important;
+    }
+
+    .summary-toggle {
+      display: inline-block;
+      margin-top: 4px;
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 16px;
+      border-radius: 8px;
+      border: 1px solid var(--accent);
+      background: #fff;
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .summary-toggle:hover {
+      background: #eef8f5;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details {
+      margin-top: 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0 12px 10px;
+      background: #fafbfc;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details summary {
+      cursor: pointer;
+      padding: 10px 0;
+      font-weight: 600;
+      color: var(--accent);
+      list-style: none;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .summary-raw-pre {
+      margin: 0;
+      max-height: 420px;
+      overflow: auto;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* 按文件 findings：可折叠组 + 卡片 */
+    .findings-list-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    details.file-group.findings-file-group {
+      margin: 0;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .file-group-summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 14px;
+      padding: 14px 16px;
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .file-group-summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .file-group-title {
+      display: inline-flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 14px;
+      color: var(--heading);
+      flex: 1 1 200px;
+      min-width: 0;
+    }
+
+    .file-path-text {
+      word-break: break-all;
+      line-height: 1.45;
+    }
+
+    .sev-indicator {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      margin-top: 4px;
+    }
+
+    .sev-indicator.sev-critical { background: var(--critical-text); box-shadow: 0 0 0 2px var(--critical-bg); }
+    .sev-indicator.sev-major { background: var(--major-text); box-shadow: 0 0 0 2px var(--major-bg); }
+    .sev-indicator.sev-minor { background: var(--minor-text); box-shadow: 0 0 0 2px var(--minor-bg); }
+    .sev-indicator.sev-info { background: var(--info-text); box-shadow: 0 0 0 2px var(--info-bg); }
+
+    .file-group-stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .stat-chip {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 999px;
+    }
+
+    .stat-chip.stat-critical { background: var(--critical-bg); color: var(--critical-text); }
+    .stat-chip.stat-major { background: var(--major-bg); color: var(--major-text); }
+    .stat-chip.stat-minor { background: var(--minor-bg); color: var(--minor-text); }
+    .stat-chip.stat-info { background: var(--info-bg); color: var(--info-text); }
+
+    .file-group-count {
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .file-group-body {
+      padding: 12px 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .finding-card {
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: #fff;
+      padding: 15px 17px;
+      border-left-width: 4px;
+      border-left-style: solid;
+      box-shadow: var(--shadow-sm);
+      transition: box-shadow 0.15s;
+    }
+
+    .finding-card:hover { box-shadow: var(--shadow); }
+
+    .finding-card.severity-critical { border-left-color: var(--critical-strong); background: linear-gradient(90deg, var(--critical-bg) 0%, #fff 14px); }
+    .finding-card.severity-major { border-left-color: var(--major-strong); background: linear-gradient(90deg, var(--major-bg) 0%, #fff 14px); }
+    .finding-card.severity-minor { border-left-color: var(--minor-strong); background: linear-gradient(90deg, var(--minor-bg) 0%, #fff 14px); }
+    .finding-card.severity-info { border-left-color: var(--info-strong); background: linear-gradient(90deg, var(--info-bg) 0%, #fff 14px); }
+
+    .finding-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .sev-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 4px 12px;
+      border-radius: 7px;
+      font-size: 11.5px;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .sev-badge.critical { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .sev-badge.major { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .sev-badge.minor { background: var(--minor-bg); color: var(--minor-text); border: 1px solid var(--minor-border); }
+    .sev-badge.info { background: var(--info-bg); color: var(--info-text); border: 1px solid var(--info-border); }
+
+    .finding-line {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      background: var(--chip-bg);
+      padding: 4px 8px;
+      border-radius: 6px;
+    }
+
+    .finding-cat {
+      font-size: 12.5px;
+      font-weight: 700;
+      color: var(--accent-dark);
+      background: var(--accent-soft);
+      padding: 3px 9px;
+      border-radius: 6px;
+    }
+
+    /* 需求对账三类（需求未实现/需求矛盾/需求外动作）用色块徽章而非纯文字，
+       跟严重级别徽章一样醒目——用户反馈普通文字分类容易在列表里被漏看，
+       尤其"需求未实现"现在总是 Critical。*/
+    .finding-cat-requirement {
+      background: var(--critical-bg);
+      color: var(--critical-text);
+      border: 1px solid var(--critical-border);
+      border-radius: 6px;
+      padding: 3px 10px;
+    }
+
+    /* ── 接口审查覆盖清单 ── */
+    .endpoint-coverage {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px 18px;
+      box-shadow: var(--shadow);
+      margin-bottom: 20px;
+    }
+
+    .ec-note {
+      margin: 0 0 10px;
+      font-size: 13px;
+      line-height: 1.7;
+      color: var(--muted);
+    }
+
+    .ec-note-warn {
+      padding: 9px 12px;
+      border-radius: 8px;
+      background: var(--major-bg);
+      border-left: 4px solid var(--major-strong);
+      color: var(--major-text);
+    }
+
+    .ec-note-warn strong { color: var(--major-strong); }
+
+    .ec-table-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid var(--border); }
+
+    .ec-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .ec-table th {
+      text-align: left;
+      padding: 9px 12px;
+      background: #fafbfd;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .ec-table td {
+      padding: 10px 12px;
+      border-top: 1px solid var(--border);
+      vertical-align: top;
+      line-height: 1.65;
+    }
+
+    .ec-table tbody tr:first-child td { border-top: none; }
+
+    .ec-table .ec-method,
+    .ec-table .ec-verdict { white-space: nowrap; }
+
+    .ec-table .ec-path code {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+      word-break: break-all;
+    }
+
+    .ec-table .ec-reason { color: var(--muted); }
+
+    .ec-badge {
+      display: inline-block;
+      padding: 2px 9px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .ec-badge.ec-risk { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .ec-badge.ec-pending { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .ec-badge.ec-safe { background: var(--safe-bg); color: var(--safe-text); border: 1px solid var(--safe-border); }
+
+    tr.ec-risk td { background: #fffbfa; }
+    tr.ec-pending td { background: #fffdf9; }
+
+    /* 分片没审成时的披露条：必须比正文更抢眼，否则读者会把
+       「报告里没写」误当成「这里没问题」 */
+    .shard-health-alert {
+      margin: 0 0 12px;
+      padding: 12px 15px;
+      border-radius: 10px;
+      background: var(--critical-bg);
+      border: 1px solid var(--critical-border);
+      border-left: 4px solid var(--critical-strong);
+      color: var(--critical-text);
+      font-size: 13.5px;
+      line-height: 1.7;
+    }
+
+    .shard-health-alert strong { color: var(--critical-strong); }
+
+    .finding-desc {
+      font-size: 14px;
+      line-height: 1.65;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* finding 卡片正文的四行结构（问题 / 后果 / 怎么改 / 怎么验）。
+       用户反馈（build 532）"文案挤在一团，难以阅读"：此前正文是一整段
+       `原因：…影响：…` 靠 white-space:pre-wrap 原样糊上去，修复建议和测试
+       场景又被折叠藏起来。改成左标签 + 右正文的两列网格，每行一个语义单元，
+       段落之间有明确留白，长句由 Python 侧按句末标点拆成多个 <p>。 */
+    .finding-body {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      font-size: 14px;
+      line-height: 1.7;
+      color: var(--text);
+    }
+
+    .fb-row {
+      display: grid;
+      grid-template-columns: 68px minmax(0, 1fr);
+      gap: 2px 14px;
+      padding: 10px 0;
+      border-top: 1px dashed var(--border);
+    }
+
+    .fb-row:first-child {
+      border-top: none;
+      padding-top: 2px;
+    }
+
+    /* 重新设计：标签从"一段带颜色的纯文字"改成小色块标签（跟 sev-badge/
+       finding-cat 同一套视觉语言），扫一眼列表就能靠色块分辨这行是"问题"
+       还是"怎么改"，比单靠文字颜色更容易一眼分辨。 */
+    .fb-label {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1.6;
+      letter-spacing: 0.03em;
+      white-space: nowrap;
+      padding: 2px 8px;
+      border-radius: 6px;
+      margin-top: 1px;
+    }
+
+    .fb-problem .fb-label { color: var(--major-text); background: var(--major-bg); }
+    .fb-impact .fb-label { color: var(--critical-text); background: var(--critical-bg); }
+    .fb-fix .fb-label { color: var(--accent-dark); background: var(--accent-soft); }
+    .fb-test .fb-label { color: var(--info-text); background: var(--info-bg); }
+
+    .fb-text {
+      min-width: 0;
+      word-break: break-word;
+    }
+
+    .fb-text > p {
+      margin: 0 0 7px;
+    }
+
+    .fb-text > p:last-child {
+      margin-bottom: 0;
+    }
+
+    .fb-text .rt-list {
+      margin: 2px 0 6px;
+      padding-left: 20px;
+    }
+
+    .fb-text .rt-list li {
+      margin-bottom: 4px;
+    }
+
+    .fb-text .code-block {
+      margin: 8px 0 4px;
+      font-size: 12.5px;
+    }
+
+    .fb-text code {
+      background: var(--chip-bg);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+    }
+
+    /* 窄屏（Jenkins 里报告常挤在窗格里看）时标签落到正文上方，不再抢走
+       62px 宽度，避免正文被压成一列细条 */
+    @media (max-width: 720px) {
+      .fb-row {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 2px;
+      }
+    }
+
+    /* 证据代码块从固定 div 改成可折叠 details（默认展开）——一份报告里
+       十几张卡片各带 8-10 行代码，读者需要能收起来快速扫结论 */
+    details.finding-evidence > summary {
+      cursor: pointer;
+      list-style: none;
+    }
+
+    details.finding-evidence > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    details.finding-evidence > summary::before {
+      content: "▾ ";
+      color: var(--muted);
+    }
+
+    details.finding-evidence:not([open]) > summary::before {
+      content: "▸ ";
+    }
+
+    /* 证据代码块（2026-07-19 补）：evidence_quote 的稳定展示位置，不再依赖
+       模型是否顺手把代码写进 description 里；纯 CSS + Python 正则高亮，
+       不引外部 JS 库，内网报告零外部依赖风险。 */
+    .finding-evidence {
+      margin-top: 10px;
+    }
+
+    .finding-evidence .detail-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .code-block {
+      margin: 0;
+      padding: 12px 15px;
+      background: var(--code-bg);
+      color: #e6edf3;
+      border-radius: 9px;
+      overflow-x: auto;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+      line-height: 1.6;
+    }
+
+    .code-block code {
+      white-space: pre;
+      /* 2026-09-02 用户反馈：安全/权限折叠卡里"怎么改"给的整段修复示意代码
+         （``` 代码围栏渲染出来也是 <pre class="code-block"><code>）看不清——
+         根因是 .fb-text code（第 833 行，给"问题/后果/怎么改/怎么验"正文里
+         `existsActive` 这类行内代码片段配的浅灰底色）跟这里选择器优先级/
+         特异性相同，同一个 <code> 标签只要落在 .fb-text 范围内就会被套上
+         浅灰底，而 .code-annotation/.code-keyword 这套语法高亮配色是给
+         .code-block 本来的深色底（--code-bg）设计的，叠在浅灰底上对比度
+         塌陷，几乎看不见字。显式声明透明背景覆盖掉那条通用规则，让
+         .code-block 自己的深色底透出来。 */
+      background: transparent;
+    }
+
+    .code-comment { color: #8b949e; font-style: italic; }
+    .code-string { color: #a5d6ff; }
+    .code-annotation { color: #d2a8ff; }
+    .code-keyword { color: #ff7b72; font-weight: 600; }
+    .code-number { color: #79c0ff; }
+
+    /* 带上下文的证据代码块（逐行渲染，问题行整行高亮）*/
+    .code-row {
+      display: block;
+      padding: 0 6px;
+      border-left: 3px solid transparent;
+    }
+
+    .code-row-target {
+      background: rgba(255, 123, 114, 0.16);
+      border-left-color: #ff7b72;
+    }
+
+    .code-ln {
+      display: inline-block;
+      min-width: 2.5em;
+      margin-right: 12px;
+      color: #6e7681;
+      text-align: right;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    .finding-details {
+      margin-top: 12px;
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+      padding: 0;
+      background: #fafbfd;
+    }
+
+    .finding-details > summary {
+      cursor: pointer;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--heading);
+      list-style: none;
+    }
+
+    .finding-details > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .finding-details-body {
+      padding: 0 14px 14px;
+      border-top: 1px solid var(--border);
+    }
+
+    .detail-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin: 12px 0 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .finding-suggestion p,
+    .finding-test p {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.65;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .file-block {
+      margin: 14px 0 18px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: var(--shadow);
+    }
+
+    .file-block h3 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      color: var(--heading);
+      word-break: break-all;
+    }
+
+    table {
+      border-collapse: separate;
+      border-spacing: 0;
+      width: 100%;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+    }
+
+    th, td {
+      border-bottom: 1px solid var(--border);
+      padding: 10px;
+      vertical-align: top;
+      text-align: left;
+      font-size: 13px;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      background: #fafbfd;
+      color: var(--heading);
+      font-weight: 700;
+      z-index: 1;
+    }
+
+    tbody tr:nth-child(even) { background: #fafbfd; }
+    tbody tr:last-child td { border-bottom: none; }
+
+    .empty {
+      padding: 18px;
+      border: 1px dashed var(--border);
+      border-radius: 14px;
+      color: var(--muted);
+      background: #fafbfd;
+    }
+
+    @media (max-width: 900px) {
+      .hero h1 { font-size: 22px; }
+      .summary,
+      .file-block { padding: 12px; }
+      th, td { padding: 8px; font-size: 12px; }
+      .charts-row { flex-direction: column; }
+    }
+
+    /* ── 报告标签页 ──
+       重新设计：从"按钮选中变绿色渐变块"改成分段控件（segmented control）
+       的样式——浅灰底槽 + 选中项浮成白色药丸，更接近成熟工具（如 GitHub/
+       Linear）里的页签观感，也跟下面卡片的白底形成呼应。 */
+    .report-tabs {
+      display: inline-flex;
+      gap: 2px;
+      padding: 4px;
+      margin-bottom: 18px;
+      background: #e9ebf0;
+      border-radius: 12px;
+      flex-wrap: wrap;
+    }
+    .report-tabs button {
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 18px;
+      border-radius: 9px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 13.5px;
+      transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+    }
+    .report-tabs button:hover {
+      color: var(--heading);
+    }
+    .report-tabs button[aria-selected="true"] {
+      background: #ffffff;
+      color: var(--heading);
+      box-shadow: var(--shadow-sm);
+    }
+    .report-panel { display: none; }
+    .report-panel.is-active { display: block; }
+
+    /* ── 数据权限页（嵌入，与综合页隔离） ── */
+    .dp-shell {
+      font-family: "Avenir Next", "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif;
+      color: #1a2b22;
+      line-height: 1.6;
+    }
+
+    /* 重置全局 table 样式污染 */
+    .dp-shell table {
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+    }
+    .dp-shell th, .dp-shell td {
+      border: none !important;
+      border-bottom: 1px solid #edf2f7 !important;
+      background: transparent !important;
+    }
+
+    .dp-shell .dp-header {
+      position: relative;
+      background: linear-gradient(165deg, #0b1220 0%, #121a2c 55%, #0e2422 100%);
+      color: #f4f7fb;
+      padding: 26px 28px 24px;
+      border-radius: 18px;
+      margin-bottom: 24px;
+      box-shadow: var(--shadow-lg);
+      overflow: hidden;
+    }
+    .dp-shell .dp-header::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 3px;
+      background: linear-gradient(90deg, #14b8a6, #22d3ee 45%, #14b8a6 100%);
+    }
+    .dp-shell .dp-header h1 { font-size: 1.4rem; font-weight: 700; letter-spacing: .01em; margin: 0 0 6px; }
+    .dp-shell .dp-header .subtitle { margin: 0; color: #aab4c8; font-size: .9rem; }
+    .dp-shell .dp-header .meta-row { margin-top: 16px; display: flex; gap: 24px; flex-wrap: wrap; }
+    .dp-shell .dp-header .meta-item { font-size: .8rem; color: #8b95ab; }
+    .dp-shell .dp-header .meta-item strong { color: #8ce8d4; font-weight: 600; }
+
+    .dp-shell .dp-body { padding: 0 0 32px; }
+
+    /* ── dp-shell 内部组件（与 Python 生成的类名严格对齐） ── */
+
+    /* 统计卡片区（Python 生成 .summary-grid / .summary-card） */
+    .dp-shell .dp-stats { margin-bottom: 4px; }
+    .dp-shell .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+    .dp-shell .summary-card {
+      background: #fff;
+      border-radius: 14px;
+      padding: 18px 20px;
+      box-shadow: var(--shadow-sm);
+      border: 1px solid var(--border);
+      border-top: 3px solid transparent;
+    }
+    .dp-shell .summary-card.critical { border-top-color: var(--critical-strong); }
+    .dp-shell .summary-card.high     { border-top-color: var(--major-strong); }
+    .dp-shell .summary-card.medium   { border-top-color: var(--minor-strong); }
+    .dp-shell .summary-card.info     { border-top-color: var(--info-strong); }
+    .dp-shell .summary-card .count   { font-size: 2.1rem; font-weight: 800; line-height: 1; }
+    .dp-shell .summary-card.critical .count { color: var(--critical-text); }
+    .dp-shell .summary-card.high     .count { color: var(--major-text); }
+    .dp-shell .summary-card.medium   .count { color: var(--minor-text); }
+    .dp-shell .summary-card.info     .count { color: var(--info-text); }
+    .dp-shell .summary-card .label   { margin-top: 8px; font-size: .72rem; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .07em; }
+
+    /* 区块标题 */
+    .dp-shell .dp-section { margin-bottom: 24px; }
+    .dp-shell .dp-section-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--heading);
+      margin: 0 0 14px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* 角色定义盒（Python 生成 .role-box / .role-icon / .role-info） */
+    .dp-shell .dp-roles { display: flex; flex-direction: column; gap: 10px; }
+    .dp-shell .role-box {
+      background: #fff;
+      border-radius: 12px;
+      padding: 16px 20px;
+      box-shadow: 0 2px 10px rgba(17,51,38,.07);
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+    }
+    .dp-shell .role-box.muted {
+      background: #f8f9fb;
+      border: 1px solid var(--border);
+      box-shadow: none;
+    }
+    .dp-shell .role-icon { font-size: 1.8rem; line-height: 1; flex-shrink: 0; }
+    .dp-shell .role-info { flex: 1; min-width: 0; }
+    .dp-shell .role-info h3 { font-size: 1rem; font-weight: 700; color: var(--heading); margin: 0 0 4px; }
+    .dp-shell .role-info .role-md { font-size: .88rem; color: #4a5568; margin-top: 8px; line-height: 1.65; word-break: break-word; }
+    .dp-shell .role-info code { background: #edf2f7; padding: 1px 6px; border-radius: 4px; font-size: .85em; }
+
+    /* gate banner */
+    .dp-shell .dp-gate { margin-bottom: 20px; }
+
+    /* 审计表格包装（Python 生成 .table-wrap > table.dp-audit）
+       表头从深绿底改成跟报告其它表格（.ec-table）同一套浅底大写小标签，
+       整份报告的表格风格统一，不再是"深色表头 vs 浅色表头"两套语言。 */
+    .dp-shell .table-wrap {
+      overflow-x: auto;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow-sm);
+    }
+    .dp-shell table.dp-audit {
+      width: 100% !important;
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+      font-size: .84rem;
+    }
+    .dp-shell .dp-audit th {
+      background: #fafbfd !important;
+      color: var(--muted) !important;
+      padding: 11px 14px !important;
+      text-align: left !important;
+      font-size: .68rem !important;
+      font-weight: 700 !important;
+      text-transform: uppercase !important;
+      letter-spacing: .07em !important;
+      white-space: nowrap !important;
+      border-bottom: 1px solid var(--border) !important;
+      position: sticky;
+      top: 0;
+    }
+    .dp-shell .dp-audit td {
+      padding: 11px 14px !important;
+      border-bottom: 1px solid var(--border) !important;
+      vertical-align: top !important;
+      color: var(--text) !important;
+      background: transparent !important;
+    }
+    .dp-shell .dp-audit tr:last-child td { border-bottom: none !important; }
+    .dp-shell .dp-audit tr:hover td { background: #f8f9fb !important; }
+    .dp-shell .dp-audit tr.row-critical td { background: var(--critical-bg) !important; }
+    .dp-shell .dp-audit tr.row-critical:hover td { background: #fbdcda !important; }
+    .dp-shell .dp-audit tr.row-major td { background: var(--major-bg) !important; }
+    .dp-shell .dp-audit tr.row-major:hover td { background: #fbe4c4 !important; }
+
+    /* HTTP 方法 & 严重性徽标（Python 生成 .badge .badge-*） */
+    .dp-shell .badge {
+      display: inline-block; padding: 2px 9px; border-radius: 6px;
+      font-size: .72rem; font-weight: 700; letter-spacing: .04em; white-space: nowrap;
+    }
+    .dp-shell .badge-get    { background: var(--info-bg); color: var(--info-text); }
+    .dp-shell .badge-post   { background: var(--safe-bg); color: var(--safe-text); }
+    .dp-shell .badge-put    { background: var(--minor-bg); color: var(--minor-text); }
+    .dp-shell .badge-delete { background: var(--critical-bg); color: var(--critical-text); }
+    .dp-shell .badge-patch  { background: #f4f0fd; color: #6b46c1; }
+    .dp-shell .badge-critical { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .dp-shell .badge-high     { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .dp-shell .badge-medium   { background: var(--minor-bg); color: var(--minor-text); border: 1px solid var(--minor-border); }
+    .dp-shell .badge-info     { background: var(--info-bg); color: var(--info-text); border: 1px solid var(--info-border); }
+
+    /* 风险文字 */
+    .dp-shell .risk-zh { font-size: .82rem; color: var(--text); font-weight: 600; line-height: 1.4; }
+
+    /* Issue 列表（Python 生成 .issue-list） */
+    .dp-shell .issue-list { list-style: none !important; margin: 6px 0 0; padding: 0; }
+    .dp-shell .issue-list li { position: relative; padding: 3px 0 3px 18px; font-size: .84rem; color: #4a5568; line-height: 1.55; }
+    .dp-shell .issue-list li::before { content: "▸"; position: absolute; left: 2px; color: #e53e3e; }
+    .dp-shell .issue-list li strong { color: var(--heading); }
+    .dp-shell .issue-list code { background: #edf2f7; padding: 1px 5px; border-radius: 3px; font-size: .85em; }
+
+    /* 修复建议卡片（Python 生成 .fix-card） */
+    .dp-shell .fix-card {
+      background: #f0faf5;
+      border-left: 4px solid var(--accent);
+      border-radius: 0 10px 10px 0;
+      padding: 13px 16px;
+      margin-top: 10px;
+    }
+    .dp-shell .fix-card h4 { font-size: .84rem; font-weight: 700; color: var(--heading); margin: 0 0 6px; }
+    .dp-shell .fix-card p, .dp-shell .fix-card li { font-size: .83rem; color: #2d4a3d; line-height: 1.6; margin: 0; }
+    .dp-shell .fix-card ul, .dp-shell .fix-card ol { padding-left: 18px; margin: 6px 0; }
+    .dp-shell .fix-card code { background: #d4efe4; padding: 1px 5px; border-radius: 4px; font-size: .85em; }
+
+    /* 代码块（Python 生成 .code-block） */
+    .dp-shell .code-block {
+      background: var(--code-bg); color: #e2e8f0; border-radius: 9px;
+      padding: 12px 16px; margin-top: 8px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: .78rem; line-height: 1.55; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+    }
+
+    /* 端点详情折叠（Python 生成 details.issue-fold） */
+    .dp-shell details.issue-fold {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: var(--shadow-sm);
+      margin-bottom: 12px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .dp-shell details.issue-fold > summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 13px 16px;
+      font-weight: 600;
+      font-size: .9rem;
+      color: var(--heading);
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid transparent;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transition: background .15s;
+    }
+    .dp-shell details.issue-fold > summary::-webkit-details-marker { display: none; }
+    .dp-shell details.issue-fold > summary::before { content: "▸"; font-size: 11px; color: var(--accent); transition: transform .15s; }
+    .dp-shell details.issue-fold[open] > summary::before { transform: rotate(90deg); }
+    .dp-shell details.issue-fold[open] > summary { border-bottom-color: var(--border); background: var(--accent-soft); }
+    .dp-shell .issue-fold-body { padding: 16px 20px; font-size: .85rem; color: #4a5568; }
+    .dp-shell .issue-fold-body p { margin: 6px 0; line-height: 1.65; }
+    .dp-shell .issue-fold-body strong { color: var(--heading); }
+
+    /* dp-fold（端点详情另一种渲染，Python 生成 details.dp-fold） */
+    .dp-shell .dp-folds { display: flex; flex-direction: column; gap: 10px; }
+    .dp-shell .dp-fold {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
+    }
+    .dp-shell .dp-fold > summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 13px 16px;
+      font-weight: 600;
+      font-size: .9rem;
+      color: var(--heading);
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .dp-shell .dp-fold > summary::-webkit-details-marker { display: none; }
+    .dp-shell .dp-fold > summary::before { content: "▸"; font-size: 11px; color: var(--accent); transition: transform .15s; }
+    .dp-shell .dp-fold[open] > summary::before { transform: rotate(90deg); }
+    .dp-shell .dp-fold-body { padding: 16px; font-size: .85rem; color: #4a5568; }
+
+    /* issue list（dp-fold 内部用） */
+    .dp-shell .dp-issue-list { list-style: none; margin: 8px 0 0; padding: 0; }
+    .dp-shell .dp-issue-list li { position: relative; padding: 3px 0 3px 18px; font-size: .84rem; color: #4a5568; }
+    .dp-shell .dp-issue-list li::before { content: "▸"; position: absolute; left: 2px; color: #e53e3e; }
+
+    /* dp-fix（dp-fold 内部修复建议） */
+    .dp-shell .dp-fix {
+      background: #f0faf5;
+      border-left: 4px solid var(--accent);
+      border-radius: 0 10px 10px 0;
+      padding: 12px 16px;
+      margin-top: 10px;
+    }
+    .dp-shell .dp-fix h4 { font-size: .84rem; font-weight: 700; color: var(--heading); margin: 0 0 6px; }
+    .dp-shell .dp-fix p, .dp-shell .dp-fix li { font-size: .83rem; color: #2d4a3d; line-height: 1.6; margin: 0; }
+    .dp-shell .dp-fix code { background: #d4efe4; padding: 1px 5px; border-radius: 4px; font-size: .85em; }
+
+    /* dp-code（dp-fold 内部代码块） */
+    .dp-shell .dp-code {
+      background: var(--code-bg); color: #e2e8f0; border-radius: 9px;
+      padding: 12px 16px; margin-top: 8px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: .78rem; line-height: 1.55; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+    }
+
+    /* 存量越权风险区块（dp-shell 内，全文扫描）*/
+    .dp-shell .legacy-privilege-block {
+      background: var(--minor-bg);
+      border: 1px solid var(--minor-border);
+      border-left: 4px solid var(--minor-strong);
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin-bottom: 16px;
+    }
+    .dp-shell .legacy-privilege-block .lp-title { font-size: 14px; font-weight: 700; color: var(--minor-strong); margin: 0 0 4px; }
+    .dp-shell .legacy-privilege-block .lp-subtitle { font-size: 12px; color: var(--minor-text); margin: 0 0 14px; }
+
+    .dp-shell .dp-footer {
+      text-align: center; font-size: .78rem; color: #a0aec0;
+      margin-top: 36px; padding-top: 20px; border-top: 1px solid var(--border);
+    }
+
+    /* ── 综合审查 Tab 权限接口表（privilege_endpoints 模式，在 dp-shell 外） ── */
+    .perm-table-wrap {
+      overflow-x: auto;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow-sm);
+    }
+    .perm-table {
+      width: 100%;
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+      font-size: .84rem;
+    }
+    .perm-table th {
+      background: #fafbfd !important;
+      color: var(--muted) !important;
+      padding: 10px 14px !important;
+      text-align: left !important;
+      font-size: .68rem !important;
+      font-weight: 700 !important;
+      text-transform: uppercase !important;
+      letter-spacing: .07em !important;
+      white-space: nowrap !important;
+      border-bottom: 1px solid var(--border) !important;
+    }
+    .perm-table td {
+      padding: 10px 14px !important;
+      border-bottom: 1px solid var(--border) !important;
+      vertical-align: top !important;
+      color: var(--text) !important;
+      background: transparent !important;
+    }
+    .perm-table tr:last-child td { border-bottom: none !important; }
+    .perm-table tr:hover td { background: #f8f9fb !important; }
+    .api-permission-block { overflow-x: auto; }
+
+    /* 存量越权风险区块（综合审查 Tab，全文扫描） */
+    .legacy-privilege-block {
+      background: var(--minor-bg);
+      border: 1px solid var(--minor-border);
+      border-left: 4px solid var(--minor-strong);
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin-bottom: 16px;
+    }
+    .legacy-privilege-block .lp-title { font-size: 14px; font-weight: 700; color: var(--minor-strong); margin: 0 0 4px; }
+    .legacy-privilege-block .lp-subtitle { font-size: 12px; color: var(--minor-text); margin: 0 0 14px; }
+    /* 根因聚合卡片 */
+    .cluster-card { border-left: 4px solid #6366f1; }
+    .cluster-badge {
+      background: #6366f1; color: #fff;
+      font-size: 11px; padding: 2px 8px;
+      border-radius: 10px; margin-left: 8px;
+      font-weight: 600; letter-spacing: .02em;
+    }
+    .cluster-locations { margin: 8px 0 4px; }
+    .cluster-locations > summary {
+      cursor: pointer; color: #6366f1;
+      font-size: 13px; font-weight: 500;
+    }
+    .cluster-locations > summary:hover { text-decoration: underline; }
+    .loc-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+    .loc-table th, .loc-table td {
+      padding: 4px 8px; border: 1px solid #e5e7eb; text-align: left;
+    }
+    .loc-table th { background: #f9fafb; font-weight: 600; }
+    .loc-file { font-family: monospace; color: #374151; }
+    .loc-line { text-align: center; color: #6b7280; white-space: nowrap; }
+    .loc-snippet { color: #4b5563; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* ── Charts Row (并列布局) ── */
+    .charts-row {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    /* ── Chart Section ── */
+    .chart-section {
+      flex: 1 1 0;
+      min-width: 0;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .chart-container {
+      position: relative;
+      height: 260px;
+    }
+
+    /* ── Top 3 Criticals in Hero ── */
+    .top-criticals {
+      position: relative;
+      margin-top: 18px;
+      padding-top: 16px;
+      border-top: 1px solid rgba(255,255,255,0.12);
+    }
+
+    .top-criticals h3 {
+      margin: 0 0 10px;
+      font-size: 13px;
+      font-weight: 700;
+      color: #ff9d94;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .top-criticals ul {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .top-criticals li {
+      font-size: 13px;
+      color: #d6dcea;
+      line-height: 1.5;
+      padding: 9px 12px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.09);
+      border-left: 3px solid #f2645a;
+      border-radius: 0 8px 8px 0;
+    }
+
+    .top-criticals li strong {
+      color: #ffe1dc;
+      font-weight: 700;
+      display: block;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12px;
+    }
+
+    .top-criticals[hidden] { display: none !important; }
+
+    .top-criticals .tc-desc {
+      display: block;
+      margin-top: 3px;
+    }
+
+    .top-criticals .tc-source {
+      display: inline-block;
+      margin-bottom: 4px;
+      padding: 1px 7px;
+      border-radius: 5px;
+      background: rgba(255,255,255,0.14);
+      color: #f4f7fb;
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    /* ── Export Dropdown ── */
+    .export-dropdown {
+      position: relative;
+    }
+
+    .export-menu {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 4px);
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+      min-width: 160px;
+      z-index: 100;
+      overflow: hidden;
+    }
+
+    .export-menu a {
+      display: block;
+      padding: 10px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--heading);
+      text-decoration: none;
+      transition: background 0.12s;
+    }
+
+    .export-menu a:hover {
+      background: #eef5f1;
+    }
+
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <h1>AI Code Review 报告</h1>
+      <p class="hero-meta">服务: logistics-backend | 生成时间: 2026-09-15 11:14:48</p>
+      <div class="top-criticals" id="top-criticals" hidden>
+        <h3>最需要先看的问题（Critical）</h3>
+        <ul id="top-criticals-list"></ul>
+      </div>
+    </header>
+
+    <div class="report-tabs" role="tablist" aria-label="报告视图">
+      <button type="button" role="tab" id="tab-general" aria-controls="panel-general" aria-selected="true" onclick="switchReportTab('general')">综合审查</button>
+      <button type="button" role="tab" id="tab-dp" aria-controls="panel-dp" aria-selected="false" onclick="switchReportTab('dp')">权限与业务规则</button>
+    </div>
+
+    <div id="panel-general" class="report-panel is-active" role="tabpanel" aria-labelledby="tab-general">
+    <section class="summary">
+      <h2>总体结论</h2>
+      <div id="summary-text" class="summary-body summary-preformatted"><div class="shard-health-alert">⚠ 这份报告不完整：本次把改动切成 23 段分别审查，其中 16 段代码没审成（第 1、2、3、4、5、6、7、12、16、17、18、19、20、21、22、23 段）。这些内容不会出现在下面任何一处，<strong>不能把「报告里没写」当成「这里没问题」</strong>——请重跑本次审查，或对这部分人工过一遍。</div><div class="summary-condensed"><p>合并 <strong>23</strong> 个分片审查，共 <strong>14</strong> 条发现 （Critical 1 · Major 9 · Minor 4 · Info 0）。</p><p>其中 Major 1 条来自「牵连影响」（改动波及到的其他调用点），在下方「牵连影响」一节展开。</p><p>逐条明细见下方「按文件的审查发现」；接口与数据权限维度见顶部「权限与业务规则」页签。</p><details class="summary-raw-details"><summary>展开各分片原文结论</summary><pre class="summary-raw-pre"><strong>分片 1</strong>
+
+Combined review failed, skipped.
+
+<strong>分片 2</strong>
+
+Combined review failed, skipped.
+
+<strong>分片 3</strong>
+
+Combined review failed, skipped.
+
+<strong>分片 4</strong>
+
+Combined review failed, skipped.
+
+<strong>分片 5</strong>
+
+Combined review failed, skipped.
+
+<strong>分片 6</strong>
+
+Combined review failed, skipped.
+
+<strong>分片 7</strong>
+
+Combined review failed, skipped.
+
+<strong>分片 8</strong>
+
+本分片 diff 仅新增测试代码与 .gitignore 条目，未见新增生产代码逻辑、HTTP 映射、鉴权配置、SQL、外部调用实现或敏感信息落盘，因此未发现可直接归因到新增/修改行的安全问题。全局端点清单中与本分片相关的 <code>TrkApi.updViewType()</code>、<code>UpdateAddressService.*()</code> 等 HTTP 入口实现均不在本次 diff 内，无法基于本分片新增行断言其权限行为；而本分片自身未出现 <code>@GetMapping</code>/<code>@PostMapping</code> 等新增映射，故无新增 HTTP 入口清单可列。
+
+<strong>分片 9</strong>
+
+本分片新增的 3 个 Kafka 消费者未发现 HTTP 入口或新增权限放行代码，因此无新增 HTTP 鉴权结论需要落地；全局端点清单中与本分片直接相关的方法 <code>TrkBatchEventKafkaConsumer.onEvent()</code>、<code>TrkEventKafkaConsumer.onEvent()</code>、<code>TrkUpdateAddressKafkaConsumer.onEvent()</code> 均为“无 Controller 调用”，本次 diff 未引入可直接断言的权限与数据范围变更。主要安全问题集中在 MQ 消费端：3 个消费者都缺少重复消费幂等保护，且 <code>TrkUpdateAddressKafkaConsumer</code> 新增了原始业务消息明文落日志的敏感信息泄露风险。
+
+<strong>分片 10</strong>
+
+本分片仅涉及 Job 链路与一次 <code>PushLogService</code> 到 <code>TrkEventSender</code> 的调用替换，未出现新增 HTTP 入口、鉴权注解变更、SQL 拼接、敏感日志、外部命令执行、文件路径拼接或明显的并发共享状态修改；基于当前 diff，未发现可直接落在新增/修改行上的安全问题。
+
+HTTP 入口清单（方法 + 路径）：本分片 diff 未出现 <code>@GetMapping</code>、<code>@PostMapping</code>、<code>@PutMapping</code>、<code>@DeleteMapping</code>、<code>@PatchMapping</code> 或带路径的 <code>@RequestMapping</code>，因此无新增 HTTP 入口需要做权限闭环审查。
+
+<strong>分片 11</strong>
+
+本分片仅在 <code>pos-service/src/main/java/com/miq/posservice/api/TrkApi.java</code> 中把 <code>postUtils.postFormObject(...)</code> 切换为注入的 <code>trkApiRestTemplate</code>，未见新增 SQL 拼接、敏感日志、权限放行、反序列化、命令执行或其他可从 diff 直接确认的安全问题。现有变更本身也未新增或修改 HTTP 映射，因此本分片无需要单独列出的 HTTP 入口；全局端点清单中与 <code>TrkApi</code> 相关的入口实现未在本分片 diff 内，无法仅凭这几行变更断言其权限行为是否被削弱。
+
+<strong>分片 12</strong>
+
+Combined review failed, skipped.
+
+<strong>分片 13</strong>
+
+本分片新增的两个配置类整体较克制，未发现 SQL 注入、越权放行、敏感信息硬编码等高危问题；仅发现 <code>TrkApiRestTemplateConfig</code> 的连接池等待超时缺失，存在下游慢响应时放大 Kafka 消费积压的可用性风险。
+
+HTTP 入口清单（方法 + 路径）：本分片 diff 未出现 <code>@GetMapping</code>、<code>@PostMapping</code>、<code>@PutMapping</code>、<code>@DeleteMapping</code>、<code>@PatchMapping</code> 或带路径的 <code>@RequestMapping</code> 新增/修改，因此无需要在本分片内逐项判定的新增 HTTP 入口。
+
+<strong>分片 14</strong>
+
+本分片仅看到 <code>pos-service/src/main/java/com/miq/posservice/dao/PushLogDao.java</code> 新增一个只读计数查询方法，使用 JPA 原生参数绑定 <code>?1</code>、<code>?2</code>，未发现本次新增/修改行上的 SQL 注入、越权、敏感信息泄露、异常吞没或并发安全问题。全局 HTTP 端点清单中虽包含多个入口，但本分片 diff 未涉及任何 Controller/鉴权注解/路径映射实现，无法从本分片新增代码断言权限行为，且本次变更未直接削弱现有 HTTP 鉴权与数据范围控制。
+
+<strong>分片 15</strong>
+
+本分片仅涉及 <code>HttpPostUtils</code> 的新增出站 HTTP 工具方法，未出现新增 HTTP Controller 映射，因此无新增可直接判定的权限与访问控制问题。发现 2 个主要安全/稳定性问题：一是完整请求体被 INFO 日志明文输出，二是 <code>RestClientResponseException</code> 被吞并并伪装为正常返回值，都会放大敏感数据泄露和错误处理失真风险。
+
+<strong>分片 16</strong>
+
+Combined review failed, skipped.
+
+<strong>分片 17</strong>
+
+Combined review failed, skipped.
+
+<strong>分片 18</strong>
+
+Combined review failed, skipped.
+
+<strong>分片 19</strong>
+
+Combined review failed, skipped.
+
+<strong>分片 20</strong>
+
+Combined review failed, skipped.
+
+<strong>分片 21</strong>
+
+Combined review failed, skipped.
+
+<strong>分片 22</strong>
+
+Combined review failed, skipped.
+
+<strong>分片 23</strong>
+
+Combined review failed, skipped.</pre></details></div></div>
+      <div class="filter-row">
+        <span class="filter-label">点击筛选:</span>
+        <div class="chips">
+          <span class="chip critical filter-chip" data-filter="critical" onclick="filterBySeverity(this)">Critical: 1</span>
+          <span class="chip major filter-chip" data-filter="major" onclick="filterBySeverity(this)">Major: 9</span>
+          <span class="chip minor filter-chip" data-filter="minor" onclick="filterBySeverity(this)">Minor: 4</span>
+          <span class="chip info filter-chip" data-filter="info" onclick="filterBySeverity(this)">Info: 0</span>
+          <span class="chip">Total: 14</span>
+        </div>
+        <div class="chips-impact-note">牵连影响另有 144 条判定为安全，不计入以上统计</div>
+      </div>
+    </section>
+
+    <div class="charts-row">
+      <div class="chart-section" id="chart-section">
+        <h3 class="section-title">问题分布</h3>
+        <div class="chart-container">
+          <canvas id="categoryChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div id="filter-hint">
+      筛选中: <strong id="filter-hint-label"></strong>，仅显示对应问题
+      <span class="clear-filter" onclick="clearFilter()">清除筛选</span>
+    </div>
+
+    <div class="findings-toolbar" id="findings-toolbar" style="display: none;">
+      <!-- 筛选按钮已下线：与上方「总体结论」区的 filter-row（Critical/Major/Minor/Info 计数
+           chip）功能重复，且从未挂过点击事件，是从未生效的死代码（用户反馈"这个筛选多余了"）。
+           筛选统一走上方 filter-row 的 filterBySeverity()，这里只保留搜索 + 导出。 -->
+      <input type="text" class="findings-search" id="findings-search" placeholder="搜索文件/描述…">
+      <div class="export-dropdown">
+        <button class="toolbar-btn" id="export-btn">导出 ▼</button>
+        <div class="export-menu" id="export-menu" style="display:none;">
+          <a href="#" onclick="exportJira()">导出为 Jira</a>
+          <a href="#" onclick="exportExcel()">导出为 Excel</a>
+          <a href="#" onclick="exportCsv()">导出为 CSV</a>
+        </div>
+      </div>
+    </div>
+
+    
+<style>
+.impact-section { margin: 16px 0 24px; }
+.impact-section .section-title { font-size: 18px; font-weight: 700; margin-bottom: 10px; }
+/* 颜色直接写死（不用 var(--minor-*)）：既往回归测过"这份样式表里一次都不能
+   出现 --minor-bg 这个变量名"（NEEDS_HUMAN 不该复用 minor 琥珀色，见下方
+   impact-stat.impact-needs-human 的注释），这里的抽样提示条语义完全不同
+   （跟严重度无关，只是"这批数据是抽样的"），但同一份样式表里带上这个变量
+   名字本身就会让那条回归测试的"零出现"断言失去意义。 */
+.impact-sample-banner {
+  background: #fdf7e0; color: #8a6208;
+  border: 1px solid #f1e096;
+  border-radius: 8px; padding: 8px 14px; font-size: 13px; font-weight: 600;
+  margin-bottom: 10px;
+}
+.impact-stats-banner { margin-bottom: 10px; }
+.impact-stat {
+  display: inline-block; padding: 4px 11px; border-radius: 8px; font-size: 12px;
+  font-weight: 700; margin-right: 8px;
+}
+.impact-stat.impact-risk { background: var(--critical-bg, #fdeceb); color: var(--critical-text, #b3261e); }
+/* NEEDS_HUMAN 改用 info 蓝（原用 minor 琥珀色，与"一般问题"严重度语义撞车——
+   需人工核实 ≠ 一个确定的低危问题，是"不知道，人来判断"，语义上更接近
+   info 的"仅供参考/待确认"，用户反馈"两套配色打架"实测已改） */
+.impact-stat.impact-needs-human { background: var(--info-bg, #eaf1fd); color: var(--info-text, #23509c); }
+.impact-stat.impact-safe { background: var(--safe-bg, #e8f6ee); color: var(--safe-text, #1a7a4c); }
+.impact-stat.impact-total { background: var(--chip-bg, #eef0f5); color: var(--muted, #667085); }
+.impact-section-note {
+  font-size: 13px; color: #666; line-height: 1.75; margin: 0 0 12px;
+  padding: 11px 14px; background: #f7f9fa; border-radius: 8px;
+}
+.impact-section-note p { margin: 0 0 7px; }
+.impact-section-note p:last-child { margin-bottom: 0; }
+.impact-section-note strong { color: #333; }
+.impact-note-legend {
+  margin: 0 0 8px; padding-left: 18px; list-style: none;
+}
+.impact-note-legend li { margin-bottom: 3px; }
+.impact-note-legend li::before {
+  content: "·"; margin-right: 6px; color: #999; font-weight: 700;
+}
+.impact-ratio-alert {
+  background: var(--major-bg, #fdf1e3); color: var(--major-text, #a85311);
+  border: 1px solid var(--major-border, #f4d19d); border-radius: 8px; padding: 8px 14px;
+  font-size: 13px; margin-bottom: 10px;
+}
+.impact-group { margin-bottom: 22px; }
+.impact-group-title {
+  font-size: 16px; font-weight: 700; margin: 14px 0 10px; color: #333;
+  padding-bottom: 6px; border-bottom: 1px solid #e5e5e5;
+}
+.impact-empty { color: #666; font-size: 13px; padding: 8px 0; }
+/* 卡片间距加大 + 阴影，强化"一张卡是一个独立问题"的边界感（用户反馈①） */
+.impact-risk-list { display: flex; flex-direction: column; gap: 16px; }
+.impact-card {
+  border: 1px solid var(--border, #e3e6ec); border-left: 4px solid #ccc; border-radius: 12px;
+  padding: 14px 16px; background: #fff; margin-bottom: 16px;
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(16,24,40,.06));
+}
+.impact-card.impact-risk { border-left-color: var(--critical-strong, #d1291f); background: linear-gradient(90deg, var(--critical-bg, #fdeceb) 0%, #fff 14px); }
+.impact-card.impact-needs-human { border-left-color: var(--info-strong, #2f66c9); background: linear-gradient(90deg, var(--info-bg, #eaf1fd) 0%, #fff 14px); }
+.impact-card.impact-safe { border-left-color: var(--safe-text, #1a7a4c); background: linear-gradient(90deg, var(--safe-bg, #e8f6ee) 0%, #fff 14px); }
+.impact-card-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+  padding-bottom: 8px; border-bottom: 1px solid #f0f0f0;
+}
+.impact-badge {
+  font-size: 11.5px; font-weight: 800; padding: 4px 10px; border-radius: 7px;
+  text-transform: none; border: 1px solid transparent;
+}
+/* 加边框跟主报告 .sev-badge 视觉语言对齐（用户反馈"两种报告风格不统一"） */
+.impact-badge.impact-risk { background: var(--critical-bg, #fdeceb); color: var(--critical-text, #b3261e); border-color: var(--critical-border, #f3b7b2); }
+.impact-badge.impact-needs-human { background: var(--info-bg, #eaf1fd); color: var(--info-text, #23509c); border-color: var(--info-border, #c0d6f6); }
+.impact-badge.impact-safe { background: var(--safe-bg, #e8f6ee); color: var(--safe-text, #1a7a4c); border-color: var(--safe-border, #aee3c4); }
+.impact-index { font-size: 12px; color: #888; }
+.impact-source-tag { font-size: 12.5px; color: #555; background: #f2f2f2; border-radius: 4px; padding: 2px 7px; }
+/* 字段之间用细分隔线拉开节奏，避免"挤成一坨"（用户反馈①的卡内延伸） */
+.impact-field { margin: 0; padding: 8px 0; font-size: 14px; }
+.impact-field + .impact-field { border-top: 1px dashed #ececec; }
+.impact-field-label {
+  font-weight: 700; color: #555; font-size: 12px; margin-bottom: 4px;
+  text-transform: uppercase; letter-spacing: .02em;
+}
+.impact-field p { margin: 0; }
+/* “怎么办”做成醒目的行动召唤条，呼应主报告 .fix-card/.dp-fix 的视觉语言，
+   同时用底色块把它和上面的说明性文字区分开——减轻“每张卡都在念同一句话”
+   的观感（用户反馈④之一：内容本身仍是模板句，属内容生成侧，此处只做视觉区隔）*/
+.impact-action {
+  background: #f3faf7; border-left: 3px solid var(--accent, #0f766e);
+  border-radius: 0 8px 8px 0; padding: 8px 12px; color: #2d4a3d;
+}
+/* 代码上下文块：文件名/行号做成编辑器 tab 条，深色代码正文 + 高亮目标行，
+   解决用户反馈②（file:line 太不显眼）与③（无上下文、无高亮） */
+.impact-code-tab {
+  display: flex; align-items: baseline; gap: 10px; background: #1a2438;
+  color: #cbd5e0; font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12px; padding: 7px 13px; border-radius: 8px 8px 0 0; margin-top: 8px;
+}
+.impact-code-tab-path { font-weight: 600; color: #e2e8f0; word-break: break-all; }
+.impact-code-tab-line { color: #7dd3e8; white-space: nowrap; }
+.impact-code-body {
+  background: var(--code-bg, #10182b); border-radius: 0 0 8px 8px; padding: 7px 0;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12.5px; line-height: 1.65; overflow-x: auto;
+}
+.impact-code-line { display: flex; padding: 0 12px; white-space: pre; }
+.impact-code-no {
+  flex: 0 0 auto; width: 2.6em; text-align: right; margin-right: 12px;
+  color: #718096; user-select: none;
+}
+.impact-code-text { color: #e2e8f0; }
+.impact-code-line-hl {
+  background: rgba(214, 158, 46, .18); border-left: 3px solid #d69e2e;
+  padding-left: 9px; margin-left: -3px;
+}
+.impact-code-line-hl .impact-code-no { color: #f6c453; font-weight: 700; }
+.impact-code-line-hl .impact-code-text { color: #fdf6e3; }
+/* quote 单行降级展示（拿不到源文件时的兜底，见 render_impact_section.py 说明） */
+.impact-evidence {
+  background: var(--code-bg, #10182b); color: #e2e8f0; border-radius: 0 0 8px 8px;
+  padding: 9px 13px; font-size: 12.5px; overflow-x: auto; margin: 0;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+/* 折叠区统一加 ▸ 箭头指示，跟主报告其它折叠区（issue-fold/dp-fold）一致，
+   修掉「牵连影响」这节此前唯独没有展开箭头的不一致（用户反馈④之一） */
+.impact-needs-human-fold, .impact-merged-details { margin-top: 10px; }
+.impact-needs-human-fold summary, .impact-merged-details summary {
+  cursor: pointer; font-size: 13.5px; font-weight: 600; color: #555; padding: 6px 0;
+  list-style: none; display: flex; align-items: center; gap: 6px;
+}
+.impact-needs-human-fold summary::-webkit-details-marker,
+.impact-merged-details summary::-webkit-details-marker { display: none; }
+.impact-needs-human-fold summary::before,
+.impact-merged-details summary::before {
+  content: "▸"; font-size: 11px; color: var(--accent, #0f766e); transition: transform .15s;
+}
+.impact-needs-human-fold[open] > summary::before,
+.impact-merged-details[open] > summary::before { transform: rotate(90deg); }
+/* 判定为安全的调用点不再逐条/逐组展示（2026-09-02），.impact-safe-fold 这
+   个折叠 class 已经没有任何 HTML 元素在用，改用不带交互的 .impact-safe-note
+   脚注段落——下面这条规则保留，上面折叠相关的 .impact-safe-fold 选择器已
+   随之删除（P3，code-reviewer 复核指出的死 CSS）。 */
+.impact-safe-note { color: #777; font-size: 12.5px; }
+.impact-merged-row { border-top: 1px dashed #e2e2e2; padding: 10px 0; font-size: 14px; }
+.impact-merged-row-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+</style>
+<section class="impact-section"><h2 class="section-title">牵连影响</h2><div class="impact-section-note"><p><strong>这一节回答的问题：</strong>这次改动被别的代码调用的那些地方，会不会被改坏。跟上面「按文件的审查发现」（这次写的代码本身对不对）是两回事，<strong>两边的数字不能相加</strong>。</p><ul class="impact-note-legend"><li><strong>Critical</strong>＝建议关注，这个调用点可能被改坏了</li><li><strong>Major</strong>＝AI 拿不准，需要人看一眼</li><li><strong>Info</strong>＝已排查，确认没影响</li></ul><p><strong>这次的数字：</strong>一共挖到 157 个调用点，其中 0 个建议关注，来自 0 处真正被改动的方法或字段（同一处改动的每个调用方分开列）。</p></div><div class="impact-stats-banner"><span class="impact-stat impact-risk">Critical · 建议关注 0（0 处改动）</span><span class="impact-stat impact-needs-human">Major · 需人工核实 13（1 处改动）</span><span class="impact-stat impact-safe">Info · 已排查安全 144</span><span class="impact-stat impact-total">Total 157</span></div><div class="impact-group"><h3 class="impact-group-title">未归类</h3><details class="impact-needs-human-fold" open="open"><summary>Major · 需人工核实 · 1 处</summary><div class="impact-card impact-merged-card impact-needs-human" data-impact-level="NEEDS_HUMAN"><div class="impact-card-header"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span class="impact-index">#11</span><span class="impact-source-tag">方法调用链核对 · 多处调用</span></div><div class="impact-field"><div class="impact-field-label">场景</div><p>方法 TrkApi.buildHeader——这 1 处改动被以下 26 个位置调用/引用，逐点判定如下</p></div><details class="impact-merged-details"><summary>展开查看全部 26 个消费点判定</summary><details class="impact-needs-human-fold" open="open"><summary>Major · 需人工核实 · 13 处</summary><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span>在 TrkApi.queryBaseEventCode() 中被调用（未归类）</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/api/TrkApi.java</span><span class="impact-code-tab-line">第 166 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">163</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">164</span><span class="impact-code-text">    public ResponseObject&lt;PageDto&lt;BaseEventCodeDto&gt;&gt; queryBaseEventCode(BaseEventCodeSo param) {</span></div><div class="impact-code-line"><span class="impact-code-no">165</span><span class="impact-code-text">        try {</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">166</span><span class="impact-code-text">            String res = HttpClientUtil.requestPostJsonStr(trkApiProperties.getQueryBaseEventCodeUrl(), JSONUtil.toJsonStr(param), 0, buildHeader());</span></div><div class="impact-code-line"><span class="impact-code-no">167</span><span class="impact-code-text">            return JsonConvertUtil.fromJson(res, new TypeReference&lt;ResponseObject&lt;PageDto&lt;BaseEventCodeDto&gt;&gt;&gt;() {</span></div><div class="impact-code-line"><span class="impact-code-no">168</span><span class="impact-code-text">            });</span></div><div class="impact-code-line"><span class="impact-code-no">169</span><span class="impact-code-text">        } catch (Exception e) {</span></div></div><p><span class="impact-field-label">判定依据</span>cross_repo_hint=true。该消费点通过 HttpClientUtil.requestPostJsonStr 调用仓外 TRK 接口，是否会受本次 TrkApi 内部 HTTP 客户端调整连带影响，需要结合仓外接口契约与运行时网络/鉴权配置确认。</p><p><span class="impact-field-label">会出什么事</span>（未说明业务后果）</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需人工核实：判定依据里的假设是否成立</span></p></div><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span>在 TrkApi.updateBaseEventCode() 中被调用（未归类）</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/api/TrkApi.java</span><span class="impact-code-tab-line">第 177 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">174</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">175</span><span class="impact-code-text">    public ResponseObject&lt;Boolean&gt; updateBaseEventCode(BaseEventCodeForm form) {</span></div><div class="impact-code-line"><span class="impact-code-no">176</span><span class="impact-code-text">        try {</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">177</span><span class="impact-code-text">            String res = HttpClientUtil.requestPostJsonStr(trkApiProperties.getUpdateBaseEventCodeUrl(), JSONUtil.toJsonStr(form), 0, buildHeader());</span></div><div class="impact-code-line"><span class="impact-code-no">178</span><span class="impact-code-text">            return JsonConvertUtil.fromJson(res, new TypeReference&lt;ResponseObject&lt;Boolean&gt;&gt;() {</span></div><div class="impact-code-line"><span class="impact-code-no">179</span><span class="impact-code-text">            });</span></div><div class="impact-code-line"><span class="impact-code-no">180</span><span class="impact-code-text">        } catch (Exception e) {</span></div></div><p><span class="impact-field-label">判定依据</span>cross_repo_hint=true。该消费点通过 HttpClientUtil.requestPostJsonStr 调用仓外 TRK 接口，是否会受本次 TrkApi 内部 HTTP 客户端调整连带影响，需要结合仓外接口契约与运行时网络/鉴权配置确认。</p><p><span class="impact-field-label">会出什么事</span>（未说明业务后果）</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需人工核实：判定依据里的假设是否成立</span></p></div><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span>在 TrkApi.updateEventSubs() 中被调用（未归类）</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/api/TrkApi.java</span><span class="impact-code-tab-line">第 188 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">185</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">186</span><span class="impact-code-text">    public ResponseObject&lt;Boolean&gt; updateEventSubs(EventSubsForm form) {</span></div><div class="impact-code-line"><span class="impact-code-no">187</span><span class="impact-code-text">        try {</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">188</span><span class="impact-code-text">            String res = HttpClientUtil.requestPostJsonStr(trkApiProperties.getUpdateEventSubsUrl(), JSONUtil.toJsonStr(form), 0, buildHeader());</span></div><div class="impact-code-line"><span class="impact-code-no">189</span><span class="impact-code-text">            return JsonConvertUtil.fromJson(res, new TypeReference&lt;ResponseObject&lt;Boolean&gt;&gt;() {</span></div><div class="impact-code-line"><span class="impact-code-no">190</span><span class="impact-code-text">            });</span></div><div class="impact-code-line"><span class="impact-code-no">191</span><span class="impact-code-text">        } catch (Exception e) {</span></div></div><p><span class="impact-field-label">判定依据</span>该消费点是 cross_repo_hint=true 的 HTTP 出仓调用；仅从给定 diff 可见 buildHeader 仍返回相同的 inner-api-key header，但是否会因调用链实际使用的 HTTP 客户端差异、下游 TRK 对请求头/网络行为的真实要求而受影响，静态代码无法在仓内确认。</p><p><span class="impact-field-label">会出什么事</span>（未说明业务后果）</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需人工核实：判定依据里的假设是否成立</span></p></div><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span>在 TrkApi.queryAllEventSubs() 中被调用（未归类）</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/api/TrkApi.java</span><span class="impact-code-tab-line">第 199 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">196</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">197</span><span class="impact-code-text">    public List&lt;EventSubsBo&gt; queryAllEventSubs() throws Exception {</span></div><div class="impact-code-line"><span class="impact-code-no">198</span><span class="impact-code-text">        try {</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">199</span><span class="impact-code-text">            String res = HttpClientUtil.requestGet(trkApiProperties.getQueryAllEventSubsUrl(), null, 5000, buildHeader());</span></div><div class="impact-code-line"><span class="impact-code-no">200</span><span class="impact-code-text">            ResponseObject&lt;List&lt;EventSubsBo&gt;&gt; result = JsonConvertUtil.fromJson(res, new TypeReference&lt;ResponseObject&lt;List&lt;EventSubsBo&gt;&gt;&gt;() {</span></div><div class="impact-code-line"><span class="impact-code-no">201</span><span class="impact-code-text">            });</span></div><div class="impact-code-line"><span class="impact-code-no">202</span><span class="impact-code-text">            if (result != null) {</span></div></div><p><span class="impact-field-label">判定依据</span>该消费点是 cross_repo_hint=true 的 HTTP 出仓调用；仅从给定 diff 可见 buildHeader 仍返回相同的 inner-api-key header，但是否会因调用链实际使用的 HTTP 客户端差异、下游 TRK 对请求头/网络行为的真实要求而受影响，静态代码无法在仓内确认。</p><p><span class="impact-field-label">会出什么事</span>（未说明业务后果）</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需人工核实：判定依据里的假设是否成立</span></p></div><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span>在 TrkApi.updViewType() 中被调用（未归类）</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/api/TrkApi.java</span><span class="impact-code-tab-line">第 266 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">263</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">264</span><span class="impact-code-text">    public ResponseObject updViewType(OperateEventForm form) {</span></div><div class="impact-code-line"><span class="impact-code-no">265</span><span class="impact-code-text">        try {</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">266</span><span class="impact-code-text">            String res = HttpClientUtil.requestPostJsonStr(trkApiProperties.getUpdateViewTypeUrl(), JSONUtil.toJsonStr(form), 0, buildHeader());</span></div><div class="impact-code-line"><span class="impact-code-no">267</span><span class="impact-code-text">            return JsonConvertUtil.fromJson(res, new TypeReference&lt;ResponseObject&gt;() {</span></div><div class="impact-code-line"><span class="impact-code-no">268</span><span class="impact-code-text">            });</span></div><div class="impact-code-line"><span class="impact-code-no">269</span><span class="impact-code-text">        } catch (Exception e) {</span></div></div><p><span class="impact-field-label">判定依据</span>该消费点是 cross_repo_hint=true 的 HTTP 出仓调用；仅从给定 diff 可见 buildHeader 仍返回相同的 inner-api-key header，但是否会因调用链实际使用的 HTTP 客户端差异、下游 TRK 对请求头/网络行为的真实要求而受影响，静态代码无法在仓内确认。</p><p><span class="impact-field-label">会出什么事</span>（未说明业务后果）</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需人工核实：判定依据里的假设是否成立</span></p></div><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span>在 TrkApi.queryEventCodesByIds() 中被调用（未归类）</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/api/TrkApi.java</span><span class="impact-code-tab-line">第 277 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">274</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">275</span><span class="impact-code-text">    public Map&lt;Long, String&gt; queryEventCodesByIds(List&lt;Long&gt; ids) {</span></div><div class="impact-code-line"><span class="impact-code-no">276</span><span class="impact-code-text">        try {</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">277</span><span class="impact-code-text">            String res = HttpClientUtil.requestPostJsonStr(trkApiProperties.getQueryEventCodesByIdsUrl(), JSONUtil.toJsonStr(ids), 0, buildHeader());</span></div><div class="impact-code-line"><span class="impact-code-no">278</span><span class="impact-code-text">            ResponseObject&lt;Map&lt;Long, String&gt;&gt; resObj = JsonConvertUtil.fromJson(res, new TypeReference&lt;ResponseObject&lt;Map&lt;Long, String&gt;&gt;&gt;() {</span></div><div class="impact-code-line"><span class="impact-code-no">279</span><span class="impact-code-text">            });</span></div><div class="impact-code-line"><span class="impact-code-no">280</span><span class="impact-code-text">            if (resObj == null || ResponseCode.SUCCESS != resObj.getCode()) {</span></div></div><p><span class="impact-field-label">判定依据</span>该消费点是 cross_repo_hint=true 的 HTTP 出仓调用；仅从给定 diff 可见 buildHeader 仍返回相同的 inner-api-key header，但是否会因调用链实际使用的 HTTP 客户端差异、下游 TRK 对请求头/网络行为的真实要求而受影响，静态代码无法在仓内确认。</p><p><span class="impact-field-label">会出什么事</span>（未说明业务后果）</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需人工核实：判定依据里的假设是否成立</span></p></div><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span>在 TrkApi.queryEventForWeb() 中被调用（未归类）</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/api/TrkApi.java</span><span class="impact-code-tab-line">第 308 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">305</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">306</span><span class="impact-code-text">    public ResponseObject&lt;TrackingItemWebRo&gt; queryEventForWeb(String trackingNumber) {</span></div><div class="impact-code-line"><span class="impact-code-no">307</span><span class="impact-code-text">        try {</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">308</span><span class="impact-code-text">            String res = HttpClientUtil.requestGet(trkApiProperties.getQueryEventForWebUrl() + trackingNumber + &quot;?version=2&quot;, null, 5000, buildHeader());</span></div><div class="impact-code-line"><span class="impact-code-no">309</span><span class="impact-code-text">            return JsonConvertUtil.fromJson(res, new TypeReference&lt;ResponseObject&lt;TrackingItemWebRo&gt;&gt;() {</span></div><div class="impact-code-line"><span class="impact-code-no">310</span><span class="impact-code-text">            });</span></div><div class="impact-code-line"><span class="impact-code-no">311</span><span class="impact-code-text">        } catch (Exception e) {</span></div></div><p><span class="impact-field-label">判定依据</span>该消费点是 cross_repo_hint=true 的 HTTP 出仓调用；仅从给定 diff 可见 buildHeader 仍返回相同的 inner-api-key header，但是否会因调用链实际使用的 HTTP 客户端差异、下游 TRK 对请求头/网络行为的真实要求而受影响，静态代码无法在仓内确认。</p><p><span class="impact-field-label">会出什么事</span>（未说明业务后果）</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需人工核实：判定依据里的假设是否成立</span></p></div><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span>在 TrkApi.reportUndeliveryParcels() 中被调用（未归类）</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/api/TrkApi.java</span><span class="impact-code-tab-line">第 320 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">317</span><span class="impact-code-text">    public ResponseObject&lt;List&lt;UndeliveryParcelReportRo&gt;&gt; reportUndeliveryParcels(UndeliveryParcelsReportForm form) {</span></div><div class="impact-code-line"><span class="impact-code-no">318</span><span class="impact-code-text">        try {</span></div><div class="impact-code-line"><span class="impact-code-no">319</span><span class="impact-code-text">            String jsonString = JSON.toJSONString(form);</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">320</span><span class="impact-code-text">            String res = HttpClientUtil.requestPostJsonStr(trkApiProperties.getReportUndeliveryParcelsUrl(), jsonString, 20000, buildHeader());</span></div><div class="impact-code-line"><span class="impact-code-no">321</span><span class="impact-code-text">            return JsonConvertUtil.fromJson(res, new TypeReference&lt;ResponseObject&lt;List&lt;UndeliveryParcelReportRo&gt;&gt;&gt;() {</span></div><div class="impact-code-line"><span class="impact-code-no">322</span><span class="impact-code-text">            });</span></div><div class="impact-code-line"><span class="impact-code-no">323</span><span class="impact-code-text">        } catch (Exception e) {</span></div></div><p><span class="impact-field-label">判定依据</span>cross_repo_hint=true；该消费点是 HTTP 出仓调用。给定 diff 只显示 buildHeader 返回的 header 内容未变，但是否因本次同类接口改为使用 trkApiRestTemplate 而需要同步调整 reportUndeliveryParcels 的实际出站行为，依赖下游 HTTP 契约与运行时 RestTemplate 配置，静态代码无法确认。</p><p><span class="impact-field-label">会出什么事</span>（未说明业务后果）</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需人工核实：判定依据里的假设是否成立</span></p></div><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span>在 TrkApi.queryEventAndWebhook() 中被调用（未归类）</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/api/TrkApi.java</span><span class="impact-code-tab-line">第 333 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">330</span><span class="impact-code-text">        try {</span></div><div class="impact-code-line"><span class="impact-code-no">331</span><span class="impact-code-text">            // 报表路径（EVENT_DOWNLOAD）出站：用带「单次调用整体请求超时 + abort」的入口，避免下游半死时无限挂</span></div><div class="impact-code-line"><span class="impact-code-no">332</span><span class="impact-code-text">            String res = HttpClientUtil.requestPostJsonStrWithCallTimeout(trkApiProperties.getQueryEventAndWebhookUrl(),</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">333</span><span class="impact-code-text">                    JSONUtil.toJsonStr(splitTrkNos), REPORT_SOCKET_TIMEOUT_MS, REPORT_CALL_TIMEOUT_MS, buildHeader());</span></div><div class="impact-code-line"><span class="impact-code-no">334</span><span class="impact-code-text">            return JsonConvertUtil.fromJson(res, new TypeReference&lt;ResponseObject&lt;List&lt;EventAndWebhookBo&gt;&gt;&gt;() {</span></div><div class="impact-code-line"><span class="impact-code-no">335</span><span class="impact-code-text">            });</span></div><div class="impact-code-line"><span class="impact-code-no">336</span><span class="impact-code-text">        } catch (Exception e) {</span></div></div><p><span class="impact-field-label">判定依据</span>cross_repo_hint=true；该消费点是 HTTP 出仓调用。给定 diff 只显示 buildHeader 返回的 header 内容未变，但 queryEventAndWebhook 这条出站链路是否也需要跟随切换到 trkApiRestTemplate，取决于下游 HTTP 行为与运行时超时/连接配置，静态代码无法确认。</p><p><span class="impact-field-label">会出什么事</span>（未说明业务后果）</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需人工核实：判定依据里的假设是否成立</span></p></div><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span>在 TrkApi.queryEvents() 中被调用（未归类）</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/api/TrkApi.java</span><span class="impact-code-tab-line">第 348 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">345</span><span class="impact-code-text">            params.put(&quot;version&quot;, &quot;2&quot;);</span></div><div class="impact-code-line"><span class="impact-code-no">346</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">347</span><span class="impact-code-text">            String url = String.format(trkApiProperties.getQueryEventsUrl(), trackingNumber);</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">348</span><span class="impact-code-text">            String resp = HttpClientUtil.requestGet(url, params, 20000, buildHeader());</span></div><div class="impact-code-line"><span class="impact-code-no">349</span><span class="impact-code-text">            ResponseObject&lt;TrackingItemBaseRo&gt; responseObject = JsonConvertUtil.fromJson(resp, new TypeReference&lt;ResponseObject&lt;TrackingItemBaseRo&gt;&gt;() {</span></div><div class="impact-code-line"><span class="impact-code-no">350</span><span class="impact-code-text">            });</span></div><div class="impact-code-line"><span class="impact-code-no">351</span><span class="impact-code-text">            if (responseObject == null || responseObject.getCode() != ResponseCode.SUCCESS) {</span></div></div><p><span class="impact-field-label">判定依据</span>cross_repo_hint=true；该消费点是 HTTP 出仓调用。给定 diff 只显示 buildHeader 返回的 header 内容未变，但 queryEvents 继续走 HttpClientUtil.requestGet 是否需要与本次 RestTemplate 相关改动保持一致，依赖下游接口契约与运行时客户端配置，静态代码无法确认。</p><p><span class="impact-field-label">会出什么事</span>（未说明业务后果）</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需人工核实：判定依据里的假设是否成立</span></p></div><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span>在 TrkApi.dispatchUploadSig() 中被调用（未归类）</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/api/TrkApi.java</span><span class="impact-code-tab-line">第 364 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">361</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">362</span><span class="impact-code-text">    public ResponseObject&lt;Void&gt; dispatchUploadSig(DispatchUploadSigDto dto) {</span></div><div class="impact-code-line"><span class="impact-code-no">363</span><span class="impact-code-text">        try {</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">364</span><span class="impact-code-text">            String res = HttpClientUtil.requestPostJsonStr(trkApiProperties.getDispatchUploadSigUrl(), JSONUtil.toJsonStr(dto), 5000, buildHeader());</span></div><div class="impact-code-line"><span class="impact-code-no">365</span><span class="impact-code-text">            return JsonConvertUtil.fromJson(res, new TypeReference&lt;ResponseObject&lt;Void&gt;&gt;() {</span></div><div class="impact-code-line"><span class="impact-code-no">366</span><span class="impact-code-text">            });</span></div><div class="impact-code-line"><span class="impact-code-no">367</span><span class="impact-code-text">        } catch (Exception e) {</span></div></div><p><span class="impact-field-label">判定依据</span>cross_repo_hint=true；该消费点是 HTTP 出仓调用。给定 diff 只显示 buildHeader 返回的 header 内容未变，但 dispatchUploadSig 这条出站链路是否应同步切换客户端实现，依赖下游 HTTP 契约与运行时 RestTemplate 配置，静态代码无法确认。</p><p><span class="impact-field-label">会出什么事</span>（未说明业务后果）</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需人工核实：判定依据里的假设是否成立</span></p></div><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span>在 TrkApi.updateAddress() 中被调用（未归类）</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/api/TrkApi.java</span><span class="impact-code-tab-line">第 375 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">372</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">373</span><span class="impact-code-text">    public void updateAddress(String businessData) {</span></div><div class="impact-code-line"><span class="impact-code-no">374</span><span class="impact-code-text">        try {</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">375</span><span class="impact-code-text">            String res = HttpClientUtil.requestPostJsonStr(trkApiProperties.getUpdateAddressUrl(), JSONUtil.toJsonStr(businessData), 3000, buildHeader());</span></div><div class="impact-code-line"><span class="impact-code-no">376</span><span class="impact-code-text">            ResponseObject&lt;Void&gt; responseObject = JsonConvertUtil.fromJson(res, new TypeReference&lt;ResponseObject&lt;Void&gt;&gt;() {</span></div><div class="impact-code-line"><span class="impact-code-no">377</span><span class="impact-code-text">            });</span></div><div class="impact-code-line"><span class="impact-code-no">378</span><span class="impact-code-text">            if (null == responseObject) {</span></div></div><p><span class="impact-field-label">判定依据</span>cross_repo_hint=true；该消费点是 HTTP 出仓调用。给定 diff 只显示 buildHeader 返回的 header 内容未变，但 updateAddress 继续走 HttpClientUtil.requestPostJsonStr 是否需要跟随本次 RestTemplate 相关改动，依赖下游接口契约与运行时客户端配置，静态代码无法确认。</p><p><span class="impact-field-label">会出什么事</span>（未说明业务后果）</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需人工核实：判定依据里的假设是否成立</span></p></div><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span>在 TrkApi.updateTaskData() 中被调用（未归类）</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/api/TrkApi.java</span><span class="impact-code-tab-line">第 392 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">389</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">390</span><span class="impact-code-text">    public int updateTaskData(TaskDataUpdateForm taskDataUpdateForm) {</span></div><div class="impact-code-line"><span class="impact-code-no">391</span><span class="impact-code-text">        try {</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">392</span><span class="impact-code-text">            String res = HttpClientUtil.requestPostJsonStr(trkApiProperties.getUpdateTaskDataUrl(), JSONUtil.toJsonStr(taskDataUpdateForm), 3000, buildHeader());</span></div><div class="impact-code-line"><span class="impact-code-no">393</span><span class="impact-code-text">            ResponseObject&lt;Integer&gt; responseObject = JsonConvertUtil.fromJson(res, new TypeReference&lt;ResponseObject&lt;Integer&gt;&gt;() {</span></div><div class="impact-code-line"><span class="impact-code-no">394</span><span class="impact-code-text">            });</span></div><div class="impact-code-line"><span class="impact-code-no">395</span><span class="impact-code-text">            if (null == responseObject) {</span></div></div><p><span class="impact-field-label">判定依据</span>cross_repo_hint=true；该消费点是 HTTP 出仓调用。给定 diff 只显示 buildHeader 返回的 header 内容未变，但 updateTaskData 继续走 HttpClientUtil.requestPostJsonStr 是否需要跟随本次 RestTemplate 相关改动，依赖下游接口契约与运行时客户端配置，静态代码无法确认。</p><p><span class="impact-field-label">会出什么事</span>（未说明业务后果）</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需人工核实：判定依据里的假设是否成立</span></p></div></details><p class="impact-safe-note">另有 13 处已排查判定安全，不在此列出；完整判定记录见同目录下的 <a href="impact_judgements.json" target="_blank">impact_judgements.json</a>（构建产物原始数据）。</p></details></div></details><p class="impact-safe-note">另有 33 处已排查判定安全，不在此列出；完整判定记录见同目录下的 <a href="impact_judgements.json" target="_blank">impact_judgements.json</a>（构建产物原始数据）。</p></div></section><h2 class="section-title subsection-title">按文件的审查发现</h2><details class="action-group action-group-fix_now" open="open" style="margin-bottom:14px;border:1px solid #c53030;border-radius:8px;"><summary style="cursor:pointer;font-weight:700;font-size:15px;color:#c53030;padding:8px 12px;list-style:none;">&#128308; 立即修代码 &middot; 9 个问题</summary><div style="padding:0 12px 8px;"><div class="findings-list-wrap"><details class="file-group findings-file-group" open="open" id="fg-110614105e8b" data-file-path="pos-api/src/main/java/com/miq/posapi/consume/TrkBatchEventKafkaConsumer.java" data-short-name="TrkBatchEventKafkaConsumer.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">pos-api/src/main/java/com/miq/posapi/consume/TrkBatchEventKafkaConsumer.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">2 Major</span></span><span class="file-group-count">2 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L34-38</span><span class="finding-cat finding-cat-requirement">需求矛盾</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>需求文档要求下游 TRK 侧“新增 @KafkaListener(spx_pos_trk_event) → 反序列化 InsertEventForm → eventService.createEvent”，并且 batch_event 需先拆成单条事件；</p><p>但这里新增的 <code>TrkBatchEventKafkaConsumer</code> 监听的是 <code>spx_pos_trk_batch_event</code>，消费体是 <code>InsertEventBulkForm</code>，随后调用 <code>trkApi.pushTrackingBulkEvent(form)</code>，完整保留了 bulk HTTP 调用。</p><p>该消费者的输入、topic 和下游调用方式都与需求定义的单事件消费链路不一致。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>批量事件不会进入需求要求的“单事件 Kafka → 单事件创建”路径，而是继续走批量 HTTP 接口；这会导致 batch_event 改造目标没有真正落地，也使需求中关于统一事件流和单事件幂等处理的验收点无法成立。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>删除 <code>TrkBatchEventKafkaConsumer</code> 这条独立 bulk 消费链路，改为让批量发送侧拆出多条单事件消息，由 <code>TrkEventKafkaConsumer</code> 统一消费并调用单事件接口。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>准备一笔包含多个 <code>trackingNo</code> 的批量业务触发，验证系统不会启动 <code>TrkBatchEventKafkaConsumer</code> 处理该消息；</p><p>而应由统一的单事件消费者逐条消费，每个 <code>trackingNo</code> 都对应一次单独的 <code>pushTrackingEvent</code> 调用。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">29</span><span class="code-keyword">public</span> <span class="code-keyword">class</span> TrkBatchEventKafkaConsumer {</span><span class="code-row"><span class="code-ln">30</span></span><span class="code-row"><span class="code-ln">31</span>    <span class="code-keyword">private</span> <span class="code-keyword">final</span> TrkApi trkApi;</span><span class="code-row"><span class="code-ln">32</span>    <span class="code-keyword">private</span> <span class="code-keyword">final</span> PushLogDao pushLogDao;</span><span class="code-row"><span class="code-ln">33</span></span><span class="code-row code-row-target"><span class="code-ln">34</span>    <span class="code-annotation">@KafkaListener</span>(</span><span class="code-row code-row-target"><span class="code-ln">35</span>            topics = <span class="code-string">"${exchange.trk.kafka.batch-event-topic:spx_pos_trk_batch_event}"</span>,</span><span class="code-row code-row-target"><span class="code-ln">36</span>            groupId = <span class="code-string">"${exchange.trk.kafka.consumer-group:pos-api-trk-event}"</span>,</span><span class="code-row code-row-target"><span class="code-ln">37</span>            concurrency = <span class="code-string">"${exchange.trk.kafka.batch-consumer-concurrency:4}"</span></span><span class="code-row code-row-target"><span class="code-ln">38</span>    )</span><span class="code-row"><span class="code-ln">39</span>    <span class="code-keyword">public</span> <span class="code-keyword">void</span> onEvent(String jsonStr, <span class="code-annotation">@Header</span>(value = <span class="code-string">"pushLogId"</span>, required = <span class="code-keyword">false</span>) String pushLogIdHeader) {</span><span class="code-row"><span class="code-ln">40</span>        InsertEventBulkForm form;</span><span class="code-row"><span class="code-ln">41</span>        <span class="code-keyword">try</span> {</span><span class="code-row"><span class="code-ln">42</span>            form = JSON.parseObject(jsonStr, InsertEventBulkForm.<span class="code-keyword">class</span>);</span><span class="code-row"><span class="code-ln">43</span>        } <span class="code-keyword">catch</span> (Exception e) {</span></code></pre></details></div><details class="finding-security-fold" style="margin-top:8px;border-top:1px dashed #e2e2e2;padding-top:8px;"><summary style="cursor:pointer;font-weight:600;font-size:13px;color:#555;">🔒 安全/权限相关 · 1 项（点击展开）</summary><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L37-56</span><span class="finding-cat">安全风险</span><span class="evidence-line-unverified-badge" style="color:#c62828;border:1px solid #c62828;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段附近 &#177;5 行内未找到 evidence_quote 摘抄的原文，行号未经核实，下方证据代码可能不是问题真正所在的位置，请人工核实">&#9888; 行号未验证</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>TrkBatchEventKafkaConsumer.onEvent</code> 作为 <code>@KafkaListener</code> 消费入口，直接对收到的 <code>jsonStr</code> 执行 <code>JSON.parseObject(jsonStr, InsertEventBulkForm.class)</code> 并调用 <code>trkApi.pushTrackingBulkEvent(form)</code>，随后仅依赖可选的 <code>pushLogId</code> header 更新状态，代码中没有任何基于消息唯一标识、<code>pushLogIdHeader</code> 状态校验或业务唯一键的重复消费判断。</p><p>Kafka 在消费者重平衡、提交位点失败或生产端重发时会出现至少一次投递，这里新增实现没有消费端幂等保护，命中审查清单中的“消费端幂等”。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>当同一条批量事件消息被重复投递时，<code>TrkApi.pushTrackingBulkEvent</code> 可能向下游 TRK 重复推送同一批 <code>trackingNoList</code>，造成重复事件写入、重复状态推进或外部系统侧数据污染；</p><p>而 <code>markSuccess</code> 仍会把 <code>PushLog</code> 标记为 <code>SUCCESS</code>，使后续排查难以区分是正常一次消费还是重复消费。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>在 <code>TrkBatchEventKafkaConsumer.onEvent</code> 中增加显式幂等校验，优先使用稳定的消息唯一键（例如 <code>pushLogIdHeader</code> 对应的状态、Kafka message key，或 <code>InsertEventBulkForm</code> 中可唯一标识该批次的业务键）在调用 <code>trkApi.pushTrackingBulkEvent(form)</code> 前做“已处理则跳过”的判断，并将“状态更新为处理中/成功”设计为原子流程。</p><p>若只能依赖 <code>pushLogIdHeader</code>，至少应先查询该 <code>pushLogIdHeader</code> 对应记录是否已是 <code>SUCCESS</code>，已成功则直接返回并记录去重日志。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>构造两次内容完全相同且 <code>pushLogId</code> header 相同的 <code>spx_pos_trk_batch_event</code> 消息，第一次消费成功后再次投递；</p><p>验证 <code>TrkApi.pushTrackingBulkEvent</code> 只被调用一次，第二次消费被识别为重复消息并跳过，<code>PushLog</code> 状态保持正确且无重复下游事件。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">32</span>    <span class="code-keyword">private</span> <span class="code-keyword">final</span> PushLogDao pushLogDao;</span><span class="code-row"><span class="code-ln">33</span></span><span class="code-row"><span class="code-ln">34</span>    <span class="code-annotation">@KafkaListener</span>(</span><span class="code-row"><span class="code-ln">35</span>            topics = <span class="code-string">"${exchange.trk.kafka.batch-event-topic:spx_pos_trk_batch_event}"</span>,</span><span class="code-row"><span class="code-ln">36</span>            groupId = <span class="code-string">"${exchange.trk.kafka.consumer-group:pos-api-trk-event}"</span>,</span><span class="code-row code-row-target"><span class="code-ln">37</span>            concurrency = <span class="code-string">"${exchange.trk.kafka.batch-consumer-concurrency:4}"</span></span><span class="code-row code-row-target"><span class="code-ln">38</span>    )</span><span class="code-row code-row-target"><span class="code-ln">39</span>    <span class="code-keyword">public</span> <span class="code-keyword">void</span> onEvent(String jsonStr, <span class="code-annotation">@Header</span>(value = <span class="code-string">"pushLogId"</span>, required = <span class="code-keyword">false</span>) String pushLogIdHeader) {</span><span class="code-row code-row-target"><span class="code-ln">40</span>        InsertEventBulkForm form;</span><span class="code-row code-row-target"><span class="code-ln">41</span>        <span class="code-keyword">try</span> {</span><span class="code-row code-row-target"><span class="code-ln">42</span>            form = JSON.parseObject(jsonStr, InsertEventBulkForm.<span class="code-keyword">class</span>);</span><span class="code-row code-row-target"><span class="code-ln">43</span>        } <span class="code-keyword">catch</span> (Exception e) {</span><span class="code-row code-row-target"><span class="code-ln">44</span>            log.error(<span class="code-string">"[TrkBatchEventKafkaConsumer] parse failed raw={}"</span>, jsonStr, e);</span><span class="code-row code-row-target"><span class="code-ln">45</span>            <span class="code-keyword">return</span>;</span><span class="code-row code-row-target"><span class="code-ln">46</span>        }</span><span class="code-row code-row-target"><span class="code-ln">47</span>        <span class="code-keyword">if</span> (form == <span class="code-keyword">null</span>) {</span><span class="code-row code-row-target"><span class="code-ln">48</span>            log.error(<span class="code-string">"[TrkBatchEventKafkaConsumer] parsed form is null, raw={}"</span>, jsonStr);</span><span class="code-row code-row-target"><span class="code-ln">49</span>            <span class="code-keyword">return</span>;</span><span class="code-row code-row-target"><span class="code-ln">50</span>        }</span><span class="code-row code-row-target"><span class="code-ln">51</span></span><span class="code-row code-row-target"><span class="code-ln">52</span>        <span class="code-keyword">try</span> {</span><span class="code-row code-row-target"><span class="code-ln">53</span>            trkApi.pushTrackingBulkEvent(form);</span><span class="code-row code-row-target"><span class="code-ln">54</span>        } <span class="code-keyword">catch</span> (Exception e) {</span><span class="code-row code-row-target"><span class="code-ln">55</span>            log.error(<span class="code-string">"[TrkBatchEventKafkaConsumer] push failed size={} pushLogId={} err={}"</span>,</span><span class="code-row code-row-target"><span class="code-ln">56</span>                    form.getTrackingNoList() != <span class="code-keyword">null</span> ? form.getTrackingNoList().size() : <span class="code-number">0</span>, pushLogIdHeader, e.getMessage(), e);</span><span class="code-row"><span class="code-ln">57</span>            <span class="code-keyword">return</span>;</span><span class="code-row"><span class="code-ln">58</span>        }</span><span class="code-row"><span class="code-ln">59</span>        markSuccess(pushLogIdHeader, form.getTrackingNoList() != <span class="code-keyword">null</span> ? form.getTrackingNoList().size() : <span class="code-number">0</span>);</span><span class="code-row"><span class="code-ln">60</span>    }</span><span class="code-row"><span class="code-ln">61</span></span></code></pre></details></div></details></div></details><details class="file-group findings-file-group" open="open" id="fg-740cb10f3ca6" data-file-path="pos-api/src/main/java/com/miq/posapi/consume/TrkEventKafkaConsumer.java" data-short-name="TrkEventKafkaConsumer.java" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">pos-api/src/main/java/com/miq/posapi/consume/TrkEventKafkaConsumer.java</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">1 Critical</span> <span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">2 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L40</span><span class="finding-cat finding-cat-requirement">需求未实现</span><span class="evidence-line-corrected-badge" style="color:#1565c0;border:1px solid #1565c0;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段与 evidence_quote 实际所在行不一致，已按 evidence_quote 自动纠正高亮位置">&#128260; 行号已纠正</span></div><div class="finding-feature-highlight" style="background:#fff3e0;border-left:4px solid #e65100;padding:12px 14px;margin:10px 0;border-radius:0 4px 4px 0;"><div class="detail-label" style="color:#e65100;font-weight:600;margin-bottom:4px;">未实现的功能</div><div style="font-size:15px;font-weight:600;">Kafka 消息必须透传并校验 `eventCode` 和 `md5` 这两个契约 header。</div></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>需求文档“② 契约”明确要求 Kafka Header 必须透传 <code>eventCode + md5</code>，并在“④ 风险 / 待确认”里强调“md5 漏传→TRK 重复落库”。</p><p>但本次单事件消费者只读取了 <code>pushLogId</code> header，代码中没有任何读取、校验或使用 <code>md5</code> / <code>eventCode</code> header 的实现证据；</p><p>结合本次 diff 可见的消费者、配置和测试代码，也没有针对这两个必传 header 的断言。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>如果发送侧同样未按契约透传 <code>md5</code>，这条链路无法在消费端发现问题，需求中最关键的去重保障点就没有被落实；一旦消息重放或重复投递，可能出现需求已明确提示的重复落库风险。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>在 Kafka 生产与消费链路中显式透传并校验 <code>eventCode</code>、<code>md5</code> header，至少补充消费者侧对必传 header 的读取与日志/失败处理，并增加对应测试。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>构造两条内容相同但 Kafka header 不同的单事件消息：第 1 条带 <code>eventCode</code> 和 <code>md5</code>，第 2 条缺失 <code>md5</code>。</p><p>验证消费者对第 1 条正常处理，对第 2 条能明确记录缺失必传 header，而不是与正常消息无差别处理。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">37</span>    <span class="code-annotation">@KafkaListener</span>(</span><span class="code-row"><span class="code-ln">38</span>            topics = <span class="code-string">"${exchange.trk.kafka.single-event-topic:spx_pos_trk_event}"</span>,</span><span class="code-row"><span class="code-ln">39</span>            groupId = <span class="code-string">"${exchange.trk.kafka.consumer-group:pos-api-trk-event}"</span>,</span><span class="code-row"><span class="code-ln">40</span>            concurrency = <span class="code-string">"${exchange.trk.kafka.consumer-concurrency:16}"</span></span><span class="code-row"><span class="code-ln">41</span>    )</span><span class="code-row code-row-target"><span class="code-ln">42</span>    <span class="code-keyword">public</span> <span class="code-keyword">void</span> onEvent(String jsonStr, <span class="code-annotation">@Header</span>(value = <span class="code-string">"pushLogId"</span>, required = <span class="code-keyword">false</span>) String pushLogIdHeader) {</span><span class="code-row"><span class="code-ln">43</span>        InsertEventForm form;</span><span class="code-row"><span class="code-ln">44</span>        <span class="code-keyword">try</span> {</span><span class="code-row"><span class="code-ln">45</span>            form = JSON.parseObject(jsonStr, InsertEventForm.<span class="code-keyword">class</span>);</span><span class="code-row"><span class="code-ln">46</span>        } <span class="code-keyword">catch</span> (Exception e) {</span><span class="code-row"><span class="code-ln">47</span>            log.error(<span class="code-string">"[TrkEventKafkaConsumer] parse failed raw={}"</span>, jsonStr, e);</span></code></pre></details></div><details class="finding-security-fold" style="margin-top:8px;border-top:1px dashed #e2e2e2;padding-top:8px;"><summary style="cursor:pointer;font-weight:600;font-size:13px;color:#555;">🔒 安全/权限相关 · 1 项（点击展开）</summary><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L40-59</span><span class="finding-cat">安全风险</span><span class="evidence-line-unverified-badge" style="color:#c62828;border:1px solid #c62828;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段附近 &#177;5 行内未找到 evidence_quote 摘抄的原文，行号未经核实，下方证据代码可能不是问题真正所在的位置，请人工核实">&#9888; 行号未验证</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>TrkEventKafkaConsumer.onEvent</code> 新增为 <code>@KafkaListener</code> 消费入口后，直接把 <code>jsonStr</code> 反序列化为 <code>InsertEventForm</code> 并调用 <code>trkApi.pushTrackingEvent(form)</code>，整个流程没有基于 <code>pushLogIdHeader</code>、消息 key 或 <code>InsertEventForm</code> 业务唯一键的重复消费判断，也没有在调用前检查对应 <code>PushLog</code> 是否已成功处理。</p><p>该实现对 Kafka 至少一次投递语义没有做幂等兜底。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>一旦 Kafka 因重试、rebalance 或位点提交异常重复投递同一条消息，<code>TrkApi.pushTrackingEvent</code> 会重复向 TRK 推送同一个 <code>trackingNo</code> 的事件，可能导致下游重复记账、重复轨迹或状态错乱；</p><p>同时本地 <code>PushLog</code> 仍会被再次更新为 <code>SUCCESS</code>，无法阻断重复副作用。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>在 <code>TrkEventKafkaConsumer.onEvent</code> 中补充消费端幂等控制：以 <code>pushLogIdHeader</code> 或 <code>InsertEventForm</code> 的稳定业务唯一键作为去重键，在调用 <code>trkApi.pushTrackingEvent(form)</code> 前先判断是否已处理成功；</p><p>若已成功则直接返回。更稳妥的做法是增加“处理中/成功”状态流转或唯一约束，确保并发重复消费时也只能有一个线程真正执行下游推送。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>向 <code>spx_pos_trk_event</code> 连续投递两条 <code>jsonStr</code> 相同且 <code>pushLogId</code> header 相同的消息，模拟第一次消费成功后第二次重复投递；</p><p>验证 <code>TrkApi.pushTrackingEvent</code> 不会对同一 <code>trackingNo</code> 重复调用，重复消息被识别并跳过。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">35</span>    <span class="code-keyword">private</span> <span class="code-keyword">final</span> PushLogDao pushLogDao;</span><span class="code-row"><span class="code-ln">36</span></span><span class="code-row"><span class="code-ln">37</span>    <span class="code-annotation">@KafkaListener</span>(</span><span class="code-row"><span class="code-ln">38</span>            topics = <span class="code-string">"${exchange.trk.kafka.single-event-topic:spx_pos_trk_event}"</span>,</span><span class="code-row"><span class="code-ln">39</span>            groupId = <span class="code-string">"${exchange.trk.kafka.consumer-group:pos-api-trk-event}"</span>,</span><span class="code-row code-row-target"><span class="code-ln">40</span>            concurrency = <span class="code-string">"${exchange.trk.kafka.consumer-concurrency:16}"</span></span><span class="code-row code-row-target"><span class="code-ln">41</span>    )</span><span class="code-row code-row-target"><span class="code-ln">42</span>    <span class="code-keyword">public</span> <span class="code-keyword">void</span> onEvent(String jsonStr, <span class="code-annotation">@Header</span>(value = <span class="code-string">"pushLogId"</span>, required = <span class="code-keyword">false</span>) String pushLogIdHeader) {</span><span class="code-row code-row-target"><span class="code-ln">43</span>        InsertEventForm form;</span><span class="code-row code-row-target"><span class="code-ln">44</span>        <span class="code-keyword">try</span> {</span><span class="code-row code-row-target"><span class="code-ln">45</span>            form = JSON.parseObject(jsonStr, InsertEventForm.<span class="code-keyword">class</span>);</span><span class="code-row code-row-target"><span class="code-ln">46</span>        } <span class="code-keyword">catch</span> (Exception e) {</span><span class="code-row code-row-target"><span class="code-ln">47</span>            log.error(<span class="code-string">"[TrkEventKafkaConsumer] parse failed raw={}"</span>, jsonStr, e);</span><span class="code-row code-row-target"><span class="code-ln">48</span>            <span class="code-keyword">return</span>;</span><span class="code-row code-row-target"><span class="code-ln">49</span>        }</span><span class="code-row code-row-target"><span class="code-ln">50</span>        <span class="code-keyword">if</span> (form == <span class="code-keyword">null</span>) {</span><span class="code-row code-row-target"><span class="code-ln">51</span>            log.error(<span class="code-string">"[TrkEventKafkaConsumer] parsed form is null, raw={}"</span>, jsonStr);</span><span class="code-row code-row-target"><span class="code-ln">52</span>            <span class="code-keyword">return</span>;</span><span class="code-row code-row-target"><span class="code-ln">53</span>        }</span><span class="code-row code-row-target"><span class="code-ln">54</span></span><span class="code-row code-row-target"><span class="code-ln">55</span>        <span class="code-keyword">try</span> {</span><span class="code-row code-row-target"><span class="code-ln">56</span>            trkApi.pushTrackingEvent(form);</span><span class="code-row code-row-target"><span class="code-ln">57</span>        } <span class="code-keyword">catch</span> (Exception e) {</span><span class="code-row code-row-target"><span class="code-ln">58</span>            log.error(<span class="code-string">"[TrkEventKafkaConsumer] push failed trackingNo={} pushLogId={} err={}"</span>,</span><span class="code-row code-row-target"><span class="code-ln">59</span>                    form.getTrackingNo(), pushLogIdHeader, e.getMessage(), e);</span><span class="code-row"><span class="code-ln">60</span>            <span class="code-keyword">return</span>;</span><span class="code-row"><span class="code-ln">61</span>        }</span><span class="code-row"><span class="code-ln">62</span>        markSuccess(pushLogIdHeader, form.getTrackingNo());</span><span class="code-row"><span class="code-ln">63</span>    }</span><span class="code-row"><span class="code-ln">64</span></span></code></pre></details></div></details></div></details><details class="file-group findings-file-group" open="open" id="fg-3c865fb9f373" data-file-path="pos-api/src/main/java/com/miq/posapi/consume/TrkUpdateAddressKafkaConsumer.java" data-short-name="TrkUpdateAddressKafkaConsumer.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">pos-api/src/main/java/com/miq/posapi/consume/TrkUpdateAddressKafkaConsumer.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><details class="finding-security-fold" style="margin-top:8px;border-top:1px dashed #e2e2e2;padding-top:8px;"><summary style="cursor:pointer;font-weight:600;font-size:13px;color:#555;">🔒 安全/权限相关 · 1 项（点击展开）</summary><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L37-57</span><span class="finding-cat">安全风险</span><span class="evidence-line-unverified-badge" style="color:#c62828;border:1px solid #c62828;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段附近 &#177;5 行内未找到 evidence_quote 摘抄的原文，行号未经核实，下方证据代码可能不是问题真正所在的位置，请人工核实">&#9888; 行号未验证</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>TrkUpdateAddressKafkaConsumer.onEvent</code> 直接消费 Kafka 消息、反序列化为 <code>TrkUpdateAddressDto</code> 后调用 <code>trkApi.updateAddress(businessData)</code>，再用 <code>commonPushLogService.updateSuccessById</code> 标记成功，但没有任何重复消费判断，也没有在调用前检查 <code>PushLogTypeEnum.POS_TO_TRK_UPDATE_ADDRESS</code> 对应记录是否已成功。</p><p>对于会修改地址的外部调用，这种缺失幂等保护的消费逻辑风险更高。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>当同一条改地址消息被重复投递时，<code>trkApi.updateAddress</code> 可能对下游系统重复执行地址更新，造成重复审计记录、重复通知，甚至在下游接口非幂等时触发状态异常；</p><p>由于本地仍会更新为 <code>SUCCESS</code>，重复副作用不会被当前代码阻断。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>在 <code>TrkUpdateAddressKafkaConsumer.onEvent</code> 中增加基于 <code>pushLogIdHeader</code> 的幂等校验，调用 <code>trkApi.updateAddress(businessData)</code> 前先确认 <code>PushLogTypeEnum.POS_TO_TRK_UPDATE_ADDRESS</code> 对应记录未成功处理；</p><p>若已成功则直接跳过。若下游 <code>trkApi.updateAddress</code> 支持幂等键，建议同时把 <code>pushLogIdHeader</code> 或稳定业务键透传给下游，形成端到端幂等。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>准备一条 <code>jsonStr</code> 相同且 <code>pushLogId</code> header 相同的 <code>spx_pos_trk_addr</code> 消息，连续消费两次；</p><p>验证第一次成功后第二次不会再次调用 <code>trkApi.updateAddress</code>，<code>commonPushLogService.updateSuccessById</code> 也不会重复触发外部副作用。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">32</span>    <span class="code-keyword">private</span> <span class="code-keyword">final</span> CommonPushLogService commonPushLogService;</span><span class="code-row"><span class="code-ln">33</span></span><span class="code-row"><span class="code-ln">34</span>    <span class="code-annotation">@KafkaListener</span>(</span><span class="code-row"><span class="code-ln">35</span>            topics = <span class="code-string">"${exchange.trk.kafka.address-topic:spx_pos_trk_addr}"</span>,</span><span class="code-row"><span class="code-ln">36</span>            groupId = <span class="code-string">"${exchange.trk.kafka.consumer-group:pos-api-trk-event}"</span>,</span><span class="code-row code-row-target"><span class="code-ln">37</span>            concurrency = <span class="code-string">"${exchange.trk.kafka.consumer-concurrency:16}"</span></span><span class="code-row code-row-target"><span class="code-ln">38</span>    )</span><span class="code-row code-row-target"><span class="code-ln">39</span>    <span class="code-keyword">public</span> <span class="code-keyword">void</span> onEvent(String jsonStr, <span class="code-annotation">@Header</span>(value = <span class="code-string">"pushLogId"</span>, required = <span class="code-keyword">false</span>) String pushLogIdHeader) {</span><span class="code-row code-row-target"><span class="code-ln">40</span>        TrkUpdateAddressDto form;</span><span class="code-row code-row-target"><span class="code-ln">41</span>        <span class="code-keyword">try</span> {</span><span class="code-row code-row-target"><span class="code-ln">42</span>            form = JSON.parseObject(jsonStr, TrkUpdateAddressDto.<span class="code-keyword">class</span>);</span><span class="code-row code-row-target"><span class="code-ln">43</span>        } <span class="code-keyword">catch</span> (Exception e) {</span><span class="code-row code-row-target"><span class="code-ln">44</span>            log.error(<span class="code-string">"[TrkUpdateAddressKafkaConsumer] parse failed raw={}"</span>, jsonStr, e);</span><span class="code-row code-row-target"><span class="code-ln">45</span>            <span class="code-keyword">return</span>;</span><span class="code-row code-row-target"><span class="code-ln">46</span>        }</span><span class="code-row code-row-target"><span class="code-ln">47</span>        <span class="code-keyword">if</span> (form == <span class="code-keyword">null</span>) {</span><span class="code-row code-row-target"><span class="code-ln">48</span>            log.error(<span class="code-string">"[TrkUpdateAddressKafkaConsumer] parsed form is null, raw={}"</span>, jsonStr);</span><span class="code-row code-row-target"><span class="code-ln">49</span>            <span class="code-keyword">return</span>;</span><span class="code-row code-row-target"><span class="code-ln">50</span>        }</span><span class="code-row code-row-target"><span class="code-ln">51</span></span><span class="code-row code-row-target"><span class="code-ln">52</span>        <span class="code-keyword">try</span> {</span><span class="code-row code-row-target"><span class="code-ln">53</span>            String businessData = JSON.toJSONString(form);</span><span class="code-row code-row-target"><span class="code-ln">54</span>            trkApi.updateAddress(businessData);</span><span class="code-row code-row-target"><span class="code-ln">55</span>        } <span class="code-keyword">catch</span> (Exception e) {</span><span class="code-row code-row-target"><span class="code-ln">56</span>            log.error(<span class="code-string">"[TrkUpdateAddressKafkaConsumer] push failed trackingNo={} pushLogId={} err={}"</span>,</span><span class="code-row code-row-target"><span class="code-ln">57</span>                    form.getTrackingNo(), pushLogIdHeader, e.getMessage(), e);</span><span class="code-row"><span class="code-ln">58</span>            <span class="code-keyword">return</span>;</span><span class="code-row"><span class="code-ln">59</span>        }</span><span class="code-row"><span class="code-ln">60</span>        markSuccess(pushLogIdHeader, form.getTrackingNo());</span><span class="code-row"><span class="code-ln">61</span>    }</span><span class="code-row"><span class="code-ln">62</span></span></code></pre></details></div></details></div></details><details class="file-group findings-file-group" open="open" id="fg-4cc93b0b06f5" data-file-path="pos-service/src/main/java/com/miq/posservice/config/TrkApiRestTemplateConfig.java" data-short-name="TrkApiRestTemplateConfig.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/config/TrkApiRestTemplateConfig.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L37-43</span><span class="finding-cat">外部调用/IO</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>TrkApiRestTemplateConfig.trkApiRestTemplate()</code> 新增了独立的 <code>CloseableHttpClient</code> 和连接池，但只设置了 <code>factory.setConnectTimeout(connectTimeout)</code> 与 <code>factory.setReadTimeout(readTimeout)</code>，没有为从连接池取连接的等待时间设置 <code>connectionRequestTimeout</code>。</p><p>在 <code>consumerConcurrency</code> 较高且下游 TRK 响应变慢时，线程可能长期阻塞在连接池借连接阶段，超时配置无法覆盖这一段等待。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>当 <code>exchange.trk.kafka.consumer-concurrency</code> 配置较大、Kafka 消费并发打满且连接池被占满时，TRK 事件消费线程会被卡住，导致消息积压、告警放大，最终形成可被下游慢响应触发的可用性风险。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>在 <code>HttpComponentsClientHttpRequestFactory</code> 上补充连接池获取连接超时，并结合 <code>consumerConcurrency</code> 评估合理阈值，例如：</p><pre class="code-block"><code>HttpComponentsClientHttpRequestFactory factory = <span class="code-keyword">new</span> HttpComponentsClientHttpRequestFactory(httpClient);
+factory.setConnectTimeout(connectTimeout);
+factory.setReadTimeout(readTimeout);
+factory.setConnectionRequestTimeout(<span class="code-number">2000</span>);</code></pre><p>同时建议为 <code>CloseableHttpClient</code> 配置空闲连接回收与失效连接检测，避免连接池长期堆积不可用连接。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>将 <code>exchange.trk.kafka.consumer-concurrency</code> 配置为 16，构造 16 个以上并发请求占满连接池，并让下游 TRK 接口持续慢响应；</p><p>验证当前实现下调用线程会长时间阻塞在取连接阶段，而补充 <code>setConnectionRequestTimeout</code> 后会在预期时间内失败返回并触发上层重试/告警。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">32</span>        PoolingHttpClientConnectionManager connectionManager = <span class="code-keyword">new</span> PoolingHttpClientConnectionManager();</span><span class="code-row"><span class="code-ln">33</span>        <span class="code-comment">// maxTotal/maxPerRoute 略高于消费者 concurrency，留出重试/超时场景余量</span></span><span class="code-row"><span class="code-ln">34</span>        int poolSize = consumerConcurrency + <span class="code-number">8</span>;</span><span class="code-row"><span class="code-ln">35</span>        connectionManager.setMaxTotal(poolSize);</span><span class="code-row"><span class="code-ln">36</span>        connectionManager.setDefaultMaxPerRoute(poolSize);</span><span class="code-row code-row-target"><span class="code-ln">37</span></span><span class="code-row code-row-target"><span class="code-ln">38</span>        CloseableHttpClient httpClient = HttpClients.custom()</span><span class="code-row code-row-target"><span class="code-ln">39</span>                .setConnectionManager(connectionManager)</span><span class="code-row code-row-target"><span class="code-ln">40</span>                .build();</span><span class="code-row code-row-target"><span class="code-ln">41</span></span><span class="code-row code-row-target"><span class="code-ln">42</span>        HttpComponentsClientHttpRequestFactory factory = <span class="code-keyword">new</span> HttpComponentsClientHttpRequestFactory(httpClient);</span><span class="code-row code-row-target"><span class="code-ln">43</span>        factory.setConnectTimeout(connectTimeout);</span><span class="code-row"><span class="code-ln">44</span>        factory.setReadTimeout(readTimeout);</span><span class="code-row"><span class="code-ln">45</span></span><span class="code-row"><span class="code-ln">46</span>        <span class="code-keyword">return</span> <span class="code-keyword">new</span> RestTemplate(factory);</span><span class="code-row"><span class="code-ln">47</span>    }</span><span class="code-row"><span class="code-ln">48</span>}</span></code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-d79a5195c158" data-file-path="pos-service/src/main/java/com/miq/posservice/config/TrkEventKafkaConfig.java" data-short-name="TrkEventKafkaConfig.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/config/TrkEventKafkaConfig.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L20-24</span><span class="finding-cat finding-cat-requirement">需求矛盾</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>需求文档《[POS技改] L3-09 trk_event》在“① 技术方案”里明确写了“合并 batch_event：TRK insert-bulk 内部是 for(trkNo)createEvent……→ 拆单条发本 topic”，且“② 契约”只定义了单事件 Topic <code>spx_pos_trk_event</code>、DTO <code>InsertEventForm</code>；</p><p>但本次实现在 <code>TrkEventKafkaConfig</code> 中新增了独立的 <code>exchange.trk.kafka.batch-event-topic=spx_pos_trk_batch_event</code> 配置，并在注释中明确声明“批量事件 topic（payload 为完整 InsertEventBulkForm，不拆分）”。</p><p>这与需求要求的 batch_event 拆单条发送相反。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>当批量事件链路触发时，代码会继续保留 bulk 语义而不是转成单事件流，无法满足需求中“统一单事件流、按 trackingNo 作为 key”的改造目标；</p><p>后续即使 Kafka 链路可用，batch_event 的消息形态仍与需求契约不一致。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>按需求把 <code>InsertEventBulkForm</code> 在发送侧拆成多个 <code>InsertEventForm</code>，统一发送到 <code>spx_pos_trk_event</code>，移除或停用 <code>spx_pos_trk_batch_event</code> 这条与需求相反的批量 topic 链路。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>构造一个 <code>InsertEventBulkForm</code>，其中 <code>trackingNoList</code> 包含 2 个运单号；</p><p>验证发送后 Kafka 中应出现 2 条发往 <code>spx_pos_trk_event</code> 的单事件消息、每条消息体都是 <code>InsertEventForm</code>，而不是 1 条发往 <code>spx_pos_trk_batch_event</code> 的批量消息。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">15</span> *</span><span class="code-row"><span class="code-ln">16</span> * Nacos 配置项：</span><span class="code-row"><span class="code-ln">17</span> *   exchange.trk.kafka.enabled=<span class="code-keyword">true</span></span><span class="code-row"><span class="code-ln">18</span> *       全局开关：关闭时只写 PushLog(PENDING)，不发 Kafka，完全退回旧 Job 轮询行为</span><span class="code-row"><span class="code-ln">19</span> *   exchange.trk.kafka.single-event-topic=spx_pos_trk_event</span><span class="code-row code-row-target"><span class="code-ln">20</span> *       单事件 topic</span><span class="code-row code-row-target"><span class="code-ln">21</span> *   exchange.trk.kafka.batch-event-topic=spx_pos_trk_batch_event</span><span class="code-row code-row-target"><span class="code-ln">22</span> *       批量事件 topic（payload 为完整 InsertEventBulkForm，不拆分）</span><span class="code-row code-row-target"><span class="code-ln">23</span> *   exchange.trk.kafka.address-topic=spx_pos_trk_addr</span><span class="code-row code-row-target"><span class="code-ln">24</span> *       改地址事件 topic</span><span class="code-row"><span class="code-ln">25</span> *   exchange.trk.kafka.enabled-facilities=LAX,RYY</span><span class="code-row"><span class="code-ln">26</span> *       设施白名单（逗号分隔，大小写不敏感）；为空时不推任何设施；单事件/批量事件/改地址事件共用同一份白名单</span><span class="code-row"><span class="code-ln">27</span> *   exchange.trk.kafka.consumer-concurrency=<span class="code-number">16</span></span><span class="code-row"><span class="code-ln">28</span> *       单事件消费者 <span class="code-annotation">@KafkaListener</span> concurrency</span><span class="code-row"><span class="code-ln">29</span> *   exchange.trk.kafka.batch-consumer-concurrency=<span class="code-number">4</span></span></code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-1886af0eefbd" data-file-path="pos-service/src/main/java/com/miq/posservice/utils/HttpPostUtils.java" data-short-name="HttpPostUtils.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/utils/HttpPostUtils.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">2 Major</span></span><span class="file-group-count">2 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L199-201</span><span class="finding-cat">异常处理</span><span class="evidence-line-corrected-badge" style="color:#1565c0;border:1px solid #1565c0;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段与 evidence_quote 实际所在行不一致，已按 evidence_quote 自动纠正高亮位置">&#128260; 行号已纠正</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>HttpPostUtils.postFormObject(String postUrl, String body, Map&lt;String, String&gt; headerMap, RestTemplate restTemplate)</code> 在捕获 <code>RestClientResponseException</code> 后直接 <code>return rcre.getResponseBodyAsString();</code>，既不记录失败状态码，也不抛出异常。</p><p>这样把 HTTP 4xx/5xx 失败响应伪装成了正常返回字符串，调用方无法从方法契约上区分“远程调用成功返回业务报文”和“远程调用失败返回错误页/错误 JSON”。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>上游业务如果按成功字符串继续解析或落库，可能把远端错误响应当成正常结果处理，导致状态误判、重复重试失效或错误数据进入后续 Kafka/数据库链路；同时失败状态码被吞掉，监控与告警也更难发现真实的外部调用异常。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>修改 <code>catch (RestClientResponseException rcre)</code> 分支，不要直接返回 <code>rcre.getResponseBodyAsString()</code>；</p><p>至少记录 <code>rcre.getRawStatusCode()</code> 并抛出带状态码的 <code>RRException</code>，或者返回一个显式失败对象而不是裸字符串，确保调用方能可靠区分成功与失败。</p><pre class="code-block"><code>} <span class="code-keyword">catch</span> (RestClientResponseException rcre) {
+    log.error(<span class="code-string">"Call api failed (dedicated template) url:{} status:{} body:{}"</span>,
+            postUrl, rcre.getRawStatusCode(), rcre.getResponseBodyAsString());
+    <span class="code-keyword">throw</span> <span class="code-keyword">new</span> RRException(<span class="code-string">"HTTP "</span> + rcre.getRawStatusCode() + <span class="code-string">": "</span> + rcre.getResponseBodyAsString());
+}</code></pre></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>模拟 <code>restTemplate.postForObject(postUrl, entry, String.class)</code> 返回 500 和错误 JSON，验证当前实现会把错误 JSON 当作正常返回值交给调用方；</p><p>修复后应抛出异常或返回显式失败结果，并保留状态码用于监控。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">199</span>        <span class="code-keyword">try</span> {</span><span class="code-row"><span class="code-ln">200</span>            String result = restTemplate.postForObject(postUrl, entry, String.<span class="code-keyword">class</span>);</span><span class="code-row"><span class="code-ln">201</span>            log.info(<span class="code-string">"Http response (dedicated template) url:{} result:{} time:{}"</span>, postUrl, result, System.currentTimeMillis() - start);</span><span class="code-row"><span class="code-ln">202</span>            <span class="code-keyword">return</span> result;</span><span class="code-row"><span class="code-ln">203</span>        } <span class="code-keyword">catch</span> (RestClientResponseException rcre) {</span><span class="code-row code-row-target"><span class="code-ln">204</span>            <span class="code-keyword">return</span> rcre.getResponseBodyAsString();</span><span class="code-row code-row-target"><span class="code-ln">205</span>        } <span class="code-keyword">catch</span> (RestClientException rce) {</span><span class="code-row code-row-target"><span class="code-ln">206</span>            log.error(<span class="code-string">"Call api error (dedicated template) {}, {}"</span>, postUrl, rce);</span><span class="code-row"><span class="code-ln">207</span>            <span class="code-keyword">throw</span> <span class="code-keyword">new</span> RRException(rce.getMessage());</span><span class="code-row"><span class="code-ln">208</span>        } <span class="code-keyword">catch</span> (Exception e) {</span><span class="code-row"><span class="code-ln">209</span>            log.error(<span class="code-string">"System error (dedicated template) {}, {}"</span>, postUrl, e);</span><span class="code-row"><span class="code-ln">210</span>            <span class="code-keyword">throw</span> <span class="code-keyword">new</span> RRException(e.getMessage());</span><span class="code-row"><span class="code-ln">211</span>        }</span></code></pre></details></div><details class="finding-security-fold" style="margin-top:8px;border-top:1px dashed #e2e2e2;padding-top:8px;"><summary style="cursor:pointer;font-weight:600;font-size:13px;color:#555;">🔒 安全/权限相关 · 1 项（点击展开）</summary><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L186</span><span class="finding-cat">安全风险</span><span class="evidence-line-corrected-badge" style="color:#1565c0;border:1px solid #1565c0;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段与 evidence_quote 实际所在行不一致，已按 evidence_quote 自动纠正高亮位置">&#128260; 行号已纠正</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>HttpPostUtils.postFormObject(String postUrl, String body, Map&lt;String, String&gt; headerMap, RestTemplate restTemplate)</code> 在请求发出前直接把 <code>postUrl</code> 和完整 <code>body</code> 打到 INFO 日志：<code>log.info(&quot;Push msg req (dedicated template) {}, {}&quot;, postUrl, body);</code>。</p><p>该方法是通用 HTTP 出站工具，<code>body</code> 可能包含地址修改、轨迹事件、鉴权头关联数据等业务敏感内容，但这里没有做字段脱敏、长度限制或按环境降级。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>任何调用这个新方法的链路都会把完整请求报文落盘到应用日志；一旦日志平台、运维账号或下游采集链路可见范围较大，敏感业务数据会被非必要扩散，形成持久化泄露面，且攻击者可通过构造超大 <code>body</code> 放大日志暴露与存储压力。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>把 <code>HttpPostUtils.postFormObject(String postUrl, String body, Map&lt;String, String&gt; headerMap, RestTemplate restTemplate)</code> 的请求日志改为只记录必要元数据，例如 <code>postUrl</code>、请求类型、请求体长度和业务主键；</p><p>对 <code>body</code> 中可能包含的敏感字段做脱敏，或仅在受控 DEBUG 开关下打印摘要。</p><pre class="code-block"><code>log.info(<span class="code-string">"Push msg req (dedicated template) url:{} bodyLength:{}"</span>, postUrl, body == <span class="code-keyword">null</span> ? <span class="code-number">0</span> : body.length());
+<span class="code-comment">// 如确需排障，增加脱敏后的摘要日志，而不是完整 body</span></code></pre></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>构造一个包含收件人地址、手机号或业务标识的 <code>body</code> 调用 <code>postFormObject(String postUrl, String body, Map&lt;String, String&gt; headerMap, RestTemplate restTemplate)</code>，检查应用 INFO 日志，确认当前实现会原样输出完整报文；</p><p>修复后应只看到长度/摘要，不能看到原始敏感字段。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">183</span>        String jsonStr = JSONUtil.toJsonStr(baseForm);</span><span class="code-row"><span class="code-ln">184</span>        <span class="code-keyword">return</span> postFormObject(postUrl, jsonStr, headerMap, restTemplate);</span><span class="code-row"><span class="code-ln">185</span>    }</span><span class="code-row"><span class="code-ln">186</span></span><span class="code-row"><span class="code-ln">187</span>    <span class="code-keyword">public</span> String postFormObject(String postUrl, String body, Map&lt;String, String&gt; headerMap, RestTemplate restTemplate) {</span><span class="code-row code-row-target"><span class="code-ln">188</span>        log.info(<span class="code-string">"Push msg req (dedicated template) {}, {}"</span>, postUrl, body);</span><span class="code-row"><span class="code-ln">189</span>        long start = System.currentTimeMillis();</span><span class="code-row"><span class="code-ln">190</span>        HttpHeaders headers = <span class="code-keyword">new</span> HttpHeaders();</span><span class="code-row"><span class="code-ln">191</span>        headers.add(<span class="code-string">"charset"</span>, <span class="code-string">"utf-8"</span>);</span><span class="code-row"><span class="code-ln">192</span>        headers.add(<span class="code-string">"content-type"</span>, <span class="code-string">"application/json"</span>);</span><span class="code-row"><span class="code-ln">193</span>        <span class="code-keyword">if</span> (!CollectionUtils.isEmpty(headerMap)) {</span></code></pre></details></div></details></div></details></div></div></details><details class="action-group action-group-optional" style="margin-bottom:14px;border:1px solid #2f855a;border-radius:8px;"><summary style="cursor:pointer;font-weight:700;font-size:15px;color:#2f855a;padding:8px 12px;list-style:none;">&#128994; 可选优化 &middot; 4 个问题</summary><div style="padding:0 12px 8px;"><div class="findings-list-wrap"><details class="file-group findings-file-group" id="fg-3c865fb9f373" data-file-path="pos-api/src/main/java/com/miq/posapi/consume/TrkUpdateAddressKafkaConsumer.java" data-short-name="TrkUpdateAddressKafkaConsumer.java" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">pos-api/src/main/java/com/miq/posapi/consume/TrkUpdateAddressKafkaConsumer.java</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L31-34</span><span class="finding-cat finding-cat-requirement">需求外动作</span><span class="evidence-line-corrected-badge" style="color:#1565c0;border:1px solid #1565c0;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段与 evidence_quote 实际所在行不一致，已按 evidence_quote 自动纠正高亮位置">&#128260; 行号已纠正</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>本次正式需求《[POS技改] L3-09 trk_event》围绕的是 TRK event / batch_event Kafka 化，契约中只定义了单事件与批量事件 topic；</p><p>但本次改动额外新增了 <code>TrkUpdateAddressKafkaConsumer</code>，并引入独立的 <code>exchange.trk.kafka.address-topic:spx_pos_trk_addr</code> 改地址 Kafka 消费链路。</p><p>当前提供的需求原文没有把“改地址 updateAddress HTTP 调用改造成 Kafka topic”列为本次验收点。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>代码范围超出了当前需求边界，后续联调、自测、回滚和运维配置都需要额外覆盖 <code>spx_pos_trk_addr</code> 这条未在需求中声明的链路，增加了变更面和验证成本。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>若“改地址 Kafka 化”确属本次范围，请把它补充进正式需求/设计文档并补齐契约、自测与回滚说明；否则应将该链路拆出到独立需求或回退本次无需求依据的改动。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>核对本次正式需求范围后，分别验证两种情况：若保留该功能，则补充一条改地址业务触发用例，覆盖 <code>spx_pos_trk_addr</code> 的发送、消费、回写 SUCCESS 与失败兜底；</p><p>若不保留，则确认改地址仍只走原有 <code>commonPushLogJob</code> 兜底路径。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">30</span></span><span class="code-row"><span class="code-ln">31</span>    <span class="code-keyword">private</span> <span class="code-keyword">final</span> TrkApi trkApi;</span><span class="code-row"><span class="code-ln">32</span>    <span class="code-keyword">private</span> <span class="code-keyword">final</span> CommonPushLogService commonPushLogService;</span><span class="code-row"><span class="code-ln">33</span></span><span class="code-row"><span class="code-ln">34</span>    <span class="code-annotation">@KafkaListener</span>(</span><span class="code-row code-row-target"><span class="code-ln">35</span>            topics = <span class="code-string">"${exchange.trk.kafka.address-topic:spx_pos_trk_addr}"</span>,</span><span class="code-row code-row-target"><span class="code-ln">36</span>            groupId = <span class="code-string">"${exchange.trk.kafka.consumer-group:pos-api-trk-event}"</span>,</span><span class="code-row code-row-target"><span class="code-ln">37</span>            concurrency = <span class="code-string">"${exchange.trk.kafka.consumer-concurrency:16}"</span></span><span class="code-row code-row-target"><span class="code-ln">38</span>    )</span><span class="code-row"><span class="code-ln">39</span>    <span class="code-keyword">public</span> <span class="code-keyword">void</span> onEvent(String jsonStr, <span class="code-annotation">@Header</span>(value = <span class="code-string">"pushLogId"</span>, required = <span class="code-keyword">false</span>) String pushLogIdHeader) {</span><span class="code-row"><span class="code-ln">40</span>        TrkUpdateAddressDto form;</span><span class="code-row"><span class="code-ln">41</span>        <span class="code-keyword">try</span> {</span><span class="code-row"><span class="code-ln">42</span>            form = JSON.parseObject(jsonStr, TrkUpdateAddressDto.<span class="code-keyword">class</span>);</span><span class="code-row"><span class="code-ln">43</span>        } <span class="code-keyword">catch</span> (Exception e) {</span></code></pre></details></div></div></details><details class="file-group findings-file-group" id="fg-6124168fdf0e" data-file-path="pos-api/src/main/java/com/miq/posapi/job/TrkEventBacklogAlertJob.java" data-short-name="TrkEventBacklogAlertJob.java" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">pos-api/src/main/java/com/miq/posapi/job/TrkEventBacklogAlertJob.java</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">2 Minor</span></span><span class="file-group-count">3 处影响（2 个根因）</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L42</span><span class="finding-cat">日志规范</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 LOG-003 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 LOG-003</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [LOG-003] 日志使用加号拼接而非占位符 命中了这行代码：<code>log.error(&quot;[TrkEventBacklogAlert] {} PushLog records pending over {} minutes, threshold={}. &quot; +</code>。</p><p>这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「日志使用加号拼接而非占位符」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">37</span></span><span class="code-row"><span class="code-ln">38</span>        long staleCount = pushLogDao.countStalePendingByPushCodes(TRK_EVENT_PUSH_CODES, threshold);</span><span class="code-row"><span class="code-ln">39</span>        long alertCountThreshold = trkEventKafkaConfig.getAlertCountThreshold();</span><span class="code-row"><span class="code-ln">40</span></span><span class="code-row"><span class="code-ln">41</span>        <span class="code-keyword">if</span> (staleCount &gt;= alertCountThreshold) {</span><span class="code-row code-row-target"><span class="code-ln">42</span>            log.error(<span class="code-string">"[TrkEventBacklogAlert] {} PushLog records pending over {} minutes, threshold={}. "</span> +</span><span class="code-row"><span class="code-ln">43</span>                            <span class="code-string">"Check: Kafka consumer health (spx_pos_trk_event/spx_pos_trk_batch_event), "</span> +</span><span class="code-row"><span class="code-ln">44</span>                            <span class="code-string">"ExchangeTrkEventJob/ExchangeTrkEventBulkJob running status, TRK HTTP endpoint reachability."</span>,</span><span class="code-row"><span class="code-ln">45</span>                    staleCount, trkEventKafkaConfig.getPendingAlertThresholdMinutes(), alertCountThreshold);</span><span class="code-row"><span class="code-ln">46</span>        } <span class="code-keyword">else</span> {</span><span class="code-row"><span class="code-ln">47</span>            log.info(<span class="code-string">"[TrkEventBacklogAlert] stale pending count={}, within threshold"</span>, staleCount);</span></code></pre></details></div><div class="finding-card cluster-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-cat">边界条件</span><span class="cluster-badge">根因 · 2 处影响</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 NULL-003 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 NULL-003</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：<code>&quot;Check: Kafka consumer health (spx_pos_trk_event/spx_pos_trk_batch_event), &quot; +</code>。</p><p>这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「除法运算未判分母为零」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">38</span>        long staleCount = pushLogDao.countStalePendingByPushCodes(TRK_EVENT_PUSH_CODES, threshold);</span><span class="code-row"><span class="code-ln">39</span>        long alertCountThreshold = trkEventKafkaConfig.getAlertCountThreshold();</span><span class="code-row"><span class="code-ln">40</span></span><span class="code-row"><span class="code-ln">41</span>        <span class="code-keyword">if</span> (staleCount &gt;= alertCountThreshold) {</span><span class="code-row"><span class="code-ln">42</span>            log.error(<span class="code-string">"[TrkEventBacklogAlert] {} PushLog records pending over {} minutes, threshold={}. "</span> +</span><span class="code-row code-row-target"><span class="code-ln">43</span>                            <span class="code-string">"Check: Kafka consumer health (spx_pos_trk_event/spx_pos_trk_batch_event), "</span> +</span><span class="code-row"><span class="code-ln">44</span>                            <span class="code-string">"ExchangeTrkEventJob/ExchangeTrkEventBulkJob running status, TRK HTTP endpoint reachability."</span>,</span><span class="code-row"><span class="code-ln">45</span>                    staleCount, trkEventKafkaConfig.getPendingAlertThresholdMinutes(), alertCountThreshold);</span><span class="code-row"><span class="code-ln">46</span>        } <span class="code-keyword">else</span> {</span><span class="code-row"><span class="code-ln">47</span>            log.info(<span class="code-string">"[TrkEventBacklogAlert] stale pending count={}, within threshold"</span>, staleCount);</span><span class="code-row"><span class="code-ln">48</span>        }</span></code></pre></details><details class="cluster-locations"><summary>展开查看全部 2 处影响位置</summary><table class="loc-table"><thead><tr><th>文件</th><th>行</th><th>问题摘要</th></tr></thead><tbody><tr><td class="loc-file">pos-api/src/main/java/com/miq/posapi/job/TrkEventBacklogAlertJob.java</td><td class="loc-line">43</td><td class="loc-snippet">固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：`&quot;Check: Kafka consumer health (spx_pos_trk_event/spx_p…</td></tr><tr><td class="loc-file">pos-api/src/main/java/com/miq/posapi/job/TrkEventBacklogAlertJob.java</td><td class="loc-line">44</td><td class="loc-snippet">固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：`&quot;ExchangeTrkEventJob/ExchangeTrkEventBulkJob running s…</td></tr></tbody></table></details></div></div></details><details class="file-group findings-file-group" id="fg-1886af0eefbd" data-file-path="pos-service/src/main/java/com/miq/posservice/utils/HttpPostUtils.java" data-short-name="HttpPostUtils.java" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/utils/HttpPostUtils.java</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L192</span><span class="finding-cat">边界条件</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 NULL-003 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 NULL-003</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：<code>headers.add(&quot;content-type&quot;, &quot;application/json&quot;);</code>。</p><p>这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「除法运算未判分母为零」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">187</span>    <span class="code-keyword">public</span> String postFormObject(String postUrl, String body, Map&lt;String, String&gt; headerMap, RestTemplate restTemplate) {</span><span class="code-row"><span class="code-ln">188</span>        log.info(<span class="code-string">"Push msg req (dedicated template) {}, {}"</span>, postUrl, body);</span><span class="code-row"><span class="code-ln">189</span>        long start = System.currentTimeMillis();</span><span class="code-row"><span class="code-ln">190</span>        HttpHeaders headers = <span class="code-keyword">new</span> HttpHeaders();</span><span class="code-row"><span class="code-ln">191</span>        headers.add(<span class="code-string">"charset"</span>, <span class="code-string">"utf-8"</span>);</span><span class="code-row code-row-target"><span class="code-ln">192</span>        headers.add(<span class="code-string">"content-type"</span>, <span class="code-string">"application/json"</span>);</span><span class="code-row"><span class="code-ln">193</span>        <span class="code-keyword">if</span> (!CollectionUtils.isEmpty(headerMap)) {</span><span class="code-row"><span class="code-ln">194</span>            <span class="code-keyword">for</span> (Map.Entry&lt;String, String&gt; entry : headerMap.entrySet()) {</span><span class="code-row"><span class="code-ln">195</span>                headers.add(entry.getKey(), entry.getValue());</span><span class="code-row"><span class="code-ln">196</span>            }</span><span class="code-row"><span class="code-ln">197</span>        }</span></code></pre></details></div></div></details></div></div></details>
+    </div>
+
+    <div id="panel-dp" class="report-panel" role="tabpanel" aria-labelledby="tab-dp">
+      <div class="dp-shell"><div class="dp-header">
+  <h1>数据权限分析报告</h1>
+  <p class="subtitle">AI Code Review · 接口级别数据权限审计</p>
+  <div class="meta-row"><div class="meta-item">项目 <strong>logistics-backend</strong></div><div class="meta-item">涉及接口路径（自动汇总） <strong>服务 logistics-backend · 本次无可聚合路径的权限类接口（请检查 path_pattern）</strong></div><div class="meta-item">报告日期 <strong>2026-09-15 11:14:48</strong></div><div class="meta-item">涉及角色标签 <strong>见 role_data / findings</strong></div></div>
+</div>
+
+<div class="dp-body">
+
+  <div class="dp-stats">
+    
+  <div class="summary-grid">
+    <div class="summary-card critical"><div class="count">0</div><div class="label">Critical</div></div>
+    <div class="summary-card high"><div class="count">0</div><div class="label">Major</div></div>
+    <div class="summary-card medium"><div class="count">0</div><div class="label">Minor</div></div>
+    <div class="summary-card info"><div class="count">0</div><div class="label">Info</div></div>
+  </div>
+  <p style="margin:8px 0 0;font-size:.8rem;color:#718096;">Total 0 条权限类问题 · 涉及 0 个接口（已解析路径）</p>
+
+  </div>
+
+  <div class="dp-section">
+    <div class="dp-section-title">角色权限定义</div>
+    <div class="dp-roles"><div class="role-box"><div class="role-icon">&#128100;</div><div class="role-info"><h3>项目级环境事实（审查时须知）</h3><div class="role-md">- <strong>driver</strong>：司机；仅自身用户与当前路线/包裹相关数据。<br/>
+- <strong>driver-leader / fleet leader</strong>：车队队长；仅本 <code>fleetId</code> 范围内数据。<br/>
+- <strong>operator / dispatcher</strong>：运营/调度；按 <code>facilityCode</code>、DSP 等约定收敛列表与详情。<br/>
+- <strong>admin</strong>：管理员；可访问全量（若代码中另有细分需写明）。<br/>
+<br/>
+<br/>
+- 管理端接口通常需 <code>@PreAuthorize</code> 或项目统一 <code>AuthUtil</code> 校验。<br/>
+- 列表/导出须注入当前用户的数据范围（如 <code>fleetId</code>、<code>dspId</code>），禁止仅靠前端传参筛选。<br/>
+<br/>
+<br/>
+- 运行时配置以 Nacos 配置中心为准，本地 application.yml 的开关值不代表生产实际值。<br/>
+- 各服务大量使用自带池化的 starter（IBM MQ / Druid / Lettuce / Kafka）；自定义 @Primary 基础设施 Bean 会使 starter 自动装配让位，池化/缓存包装随之失效。<br/>
+- 海关链路（ACAS/AMS/ABI）存在 MAWB→数千小包的批量放大特征（一次 MAWB 级操作可触发 4000+ 次逐条发送），发送路径上任何 per-call 开销都会被放大三个数量级。</div></div></div></div>
+  </div>
+
+  <div class="dp-gate"></div>
+
+  <div class="dp-section">
+    <div class="dp-section-title">接口权限审计总览</div>
+    <div class="empty">暂无可解析路径的「权限与访问控制」条目；请检查 path_pattern 与 HTTP 清单。</div>
+  </div>
+
+  
+
+  <div class="dp-section">
+    <div class="dp-section-title">端点详情</div>
+    <div class="dp-folds"></div>
+  </div>
+
+  
+
+  
+
+  <div class="dp-footer"><p>本报告由 AI Code Review 生成（data_permission 模式）。权限类 finding 涉及文件：<strong>（无）</strong></p><p style="margin-top:4px;">生成时间：2026-09-15 11:14:48 · 项目：logistics-backend</p></div>
+
+</div>
+</div>
+    </div>
+  </div>
+  <script>
+    function escHtml(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function formatSummaryInner(rawBlock) {
+      var lines = rawBlock.split(/\r?\n/);
+      var html = '';
+      var listType = null;
+
+      function closeList() {
+        if (listType) { html += '</' + listType + '>'; listType = null; }
+      }
+
+      function renderInline(text) {
+        var st = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        st = st.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        st = st.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+        return st;
+      }
+
+      lines.forEach(function(line) {
+        var trimmed = line.trim();
+        if (!trimmed) { closeList(); return; }
+
+        if (/^#{1,3}\s+/.test(trimmed)) {
+          closeList();
+          var title = trimmed.replace(/^#{1,3}\s+/, '');
+          html += '<p class="summary-section-title">' + renderInline(title) + '</p>';
+          return;
+        }
+
+        if (/^\*\*[^*]+\*\*[：:。]?$/.test(trimmed)) {
+          closeList();
+          var title2 = trimmed.replace(/^\*\*|\*\*[：:。]?$/g, '');
+          html += '<p class="summary-section-title">' + renderInline(title2) + '</p>';
+          return;
+        }
+
+        if (/^[【「『].*[】」』]$/.test(trimmed) ||
+            (trimmed.length <= 30 && /[：:]$/.test(trimmed) && !/^\d/.test(trimmed))) {
+          closeList();
+          var title3 = trimmed.replace(/^[【「『]|[】」』]$/g, '').replace(/[：:]$/, '');
+          html += '<p class="summary-section-title">' + renderInline(title3) + '</p>';
+          return;
+        }
+
+        if (/^[-*]\s+/.test(trimmed)) {
+          if (listType !== 'ul') { closeList(); html += '<ul>'; listType = 'ul'; }
+          var content = trimmed.replace(/^[-*]\s+/, '');
+          html += '<li>' + renderInline(content) + '</li>';
+          return;
+        }
+
+        if (/^[\(（]?\d+[\)）.\、]\s*/.test(trimmed)) {
+          if (listType !== 'ol') { closeList(); html += '<ol>'; listType = 'ol'; }
+          var content2 = trimmed.replace(/^[\(（]?\d+[\)）.\、]\s*/, '');
+          html += '<li>' + renderInline(content2) + '</li>';
+          return;
+        }
+
+        closeList();
+        if (trimmed.length > 280 && /[。！？][\s\u3000]/.test(trimmed)) {
+          var chunks = trimmed.split(/(?<=[。！？])[\s\u3000]+/).filter(function (c) { return c.trim(); });
+          if (chunks.length > 1) {
+            chunks.forEach(function (c) {
+              html += '<p>' + renderInline(c.trim()) + '</p>';
+            });
+            return;
+          }
+        }
+        html += '<p>' + renderInline(trimmed) + '</p>';
+      });
+
+      closeList();
+      return html;
+    }
+
+    function formatSummary() {
+      var el = document.getElementById('summary-text');
+      if (!el) return;
+      if (el.classList.contains('summary-preformatted')) return;
+      var raw = el.textContent || '';
+      raw = raw.replace(/\s+(?=本分片)/g, '\n---SHARD---\n');
+      var shards = raw.split(/\n---SHARD---\n/).map(function(s) { return s.trim(); }).filter(Boolean);
+      if (!shards.length) shards = [raw.trim()].filter(Boolean);
+
+      if (shards.length <= 1) {
+        var inner = formatSummaryInner(shards[0] || '');
+        if (inner) el.innerHTML = inner;
+        return;
+      }
+
+      var htmlShards = [];
+      for (var i = 0; i < shards.length; i++) {
+        var blockHtml = formatSummaryInner(shards[i]);
+        if (blockHtml) htmlShards.push('<div class="summary-shard">' + blockHtml + '</div>');
+      }
+      var head = htmlShards.slice(0, 3).join('');
+      var tail = htmlShards.slice(3).join('');
+      var moreBtn = '';
+      if (tail) {
+        moreBtn = '<button type="button" class="summary-toggle" id="summary-toggle-btn" aria-expanded="false">展开全部分片结论 (' + (htmlShards.length - 3) + ')</button>';
+      }
+      el.innerHTML = '<div class="summary-shards-wrap">' + head +
+        (tail ? '<div class="summary-more" id="summary-more-block" hidden>' + tail + '</div>' : '') +
+        moreBtn + '</div>';
+
+      var btn = document.getElementById('summary-toggle-btn');
+      var more = document.getElementById('summary-more-block');
+      if (btn && more) {
+        btn.addEventListener('click', function() {
+          var ex = btn.getAttribute('aria-expanded') === 'true';
+          more.hidden = ex;
+          btn.setAttribute('aria-expanded', ex ? 'false' : 'true');
+          btn.textContent = ex
+            ? ('展开全部分片结论 (' + (htmlShards.length - 3) + ')')
+            : '收起分片结论';
+        });
+      }
+    }
+
+    function switchReportTab(which) {
+      var panels = ['panel-general', 'panel-dp'];
+      var tabs = ['tab-general', 'tab-dp'];
+      var activePanel = which === 'dp' ? 'panel-dp' : 'panel-general';
+      var activeTab = which === 'dp' ? 'tab-dp' : 'tab-general';
+      panels.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) { el.classList.toggle('is-active', id === activePanel); }
+      });
+      tabs.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) { el.setAttribute('aria-selected', id === activeTab ? 'true' : 'false'); }
+      });
+    }
+
+    var activeFilter = null;
+
+    function getSearchQuery() {
+      var inp = document.getElementById('findings-search');
+      return inp ? String(inp.value || '').trim().toLowerCase() : '';
+    }
+
+    function applyFindingsFilter() {
+      var hint = document.getElementById('filter-hint');
+      var hintLabel = document.getElementById('filter-hint-label');
+
+      if (activeFilter) {
+        hintLabel.textContent = activeFilter.toUpperCase();
+        hint.style.display = 'block';
+      } else {
+        hint.style.display = 'none';
+      }
+
+      var q = getSearchQuery();
+
+      document.querySelectorAll('.findings-file-group').forEach(function(group) {
+        var visible = 0;
+        group.querySelectorAll('.finding-card').forEach(function(card) {
+          var sev = card.getAttribute('data-severity') || 'info';
+          var sevOk = !activeFilter || sev === activeFilter;
+          var textOk = !q || card.textContent.toLowerCase().indexOf(q) !== -1;
+          var show = sevOk && textOk;
+          card.style.display = show ? '' : 'none';
+          if (show) visible++;
+        });
+        group.style.display = visible === 0 ? 'none' : '';
+        // 任务115续作：finding 现在可能嵌套在 <details class="action-group"> 里，
+        // 该祖先关闭时子元素无论 style.display 如何都不会渲染，命中过滤结果时须一并展开。
+        if (visible > 0) {
+          var actionGroup = group.closest('.action-group');
+          if (actionGroup) actionGroup.open = true;
+        }
+      });
+
+      document.querySelectorAll('.file-block').forEach(function(block) {
+        if (block.classList.contains('findings-file-group')) return;
+        var rows = block.querySelectorAll('tbody tr');
+        if (!rows.length) return;
+        var vis = 0;
+        rows.forEach(function(row) {
+          if (!activeFilter || row.querySelector('.chip.' + activeFilter)) {
+            row.style.display = '';
+            vis++;
+          } else {
+            row.style.display = 'none';
+          }
+        });
+        block.style.display = vis === 0 ? 'none' : '';
+      });
+
+      // 顶部 Critical/Major 计数把「牵连影响」的 RISK/NEEDS_HUMAN 也并了进去
+      // （用户拍板口径），但这些卡片不是 .finding-card，之前点 Critical 只会
+      // 过滤上面两段、对牵连影响毫无反应，数字和实际看到的东西对不上
+      // （build TEST_pus-exchange-api/222 反馈）。按同一套口径把牵连影响的卡
+      // 也纳入过滤：RISK 对应 critical，NEEDS_HUMAN 对应 major；筛 minor/info
+      // 时牵连影响没有对应桶，全部隐藏是符合口径的。
+      var impactLevelMap = { critical: 'RISK', major: 'NEEDS_HUMAN' };
+      document.querySelectorAll('.impact-card[data-impact-level]').forEach(function(card) {
+        var level = card.getAttribute('data-impact-level');
+        var show = !activeFilter || impactLevelMap[activeFilter] === level;
+        card.style.display = show ? '' : 'none';
+        if (show && activeFilter) {
+          var d = card.closest('details');
+          if (d) d.open = true;
+        }
+      });
+    }
+
+    function filterBySeverity(chip) {
+      var filter = chip.dataset.filter;
+      if (activeFilter === filter) {
+        clearFilter();
+        return;
+      }
+      activeFilter = filter;
+      document.querySelectorAll('.filter-chip').forEach(function(c) {
+        if (c.dataset.filter === filter) {
+          c.classList.add('active');
+          c.classList.remove('dimmed');
+        } else {
+          c.classList.remove('active');
+          c.classList.add('dimmed');
+        }
+      });
+      applyFindingsFilter();
+    }
+
+    function clearFilter() {
+      activeFilter = null;
+      document.querySelectorAll('.filter-chip').forEach(function(c) {
+        c.classList.remove('active', 'dimmed');
+      });
+      applyFindingsFilter();
+    }
+
+    function initFindingsToolbar() {
+      var tb = document.getElementById('findings-toolbar');
+      if (!tb) return;
+      var groups = document.querySelectorAll('#panel-general .findings-file-group');
+      tb.style.display = groups.length ? '' : 'none';
+    }
+
+    (function () {
+      var chips = document.querySelectorAll('table .chip');
+      for (var i = 0; i < chips.length; i++) {
+        chips[i].textContent = chips[i].textContent.toUpperCase();
+      }
+
+      formatSummary();
+
+      initFindingsToolbar();
+
+      var ex = document.getElementById('expand-all-files');
+      var cl = document.getElementById('collapse-all-files');
+      if (ex) ex.addEventListener('click', function() {
+        document.querySelectorAll('.findings-file-group').forEach(function(d) { d.open = true; });
+        document.querySelectorAll('.action-group').forEach(function(d) { d.open = true; });
+      });
+      if (cl) cl.addEventListener('click', function() {
+        document.querySelectorAll('.findings-file-group').forEach(function(d) { d.open = false; });
+        document.querySelectorAll('.action-group').forEach(function(d) { d.open = false; });
+      });
+
+      var search = document.getElementById('findings-search');
+      if (search) {
+        search.addEventListener('input', function() { applyFindingsFilter(); });
+      }
+    })();
+
+    // Chart.js initialization
+    function renderCategoryChart(categoryData) {
+      var ctx = document.getElementById('categoryChart');
+      if (!ctx) return;
+      ctx = ctx.getContext('2d');
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: Object.keys(categoryData),
+          datasets: [{
+            label: '问题数量',
+            data: Object.values(categoryData),
+            // 跟报告主色（teal 系）协调的低饱和度调色板，替换 Chart.js 默认的
+            // 高饱和度七彩配色（用户反馈报告"不好看"，实测截图确认默认色彩
+            // 花哨刺眼、跟品牌色不搭）；18 色覆盖 VALID_CATEGORIES 全量枚举，
+            // 保证再多分类同时出现也不会因为数组不够长而退化成无色
+            backgroundColor: [
+              '#0f766e', '#b5651d', '#4a6fa5', '#8e6c96',
+              '#6b8f71', '#b58a3d', '#b56576', '#5c7a89',
+              '#3d8a8a', '#a3703f', '#5f7a9d', '#7a6b9d',
+              '#7fa17f', '#c29b5c', '#9d6b7a', '#6b8a9d',
+              '#8a9d6b', '#9d7a5f'
+            ]
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: true } }
+        }
+      });
+    }
+
+    // 这个短列表只是一句话摘要，不值得把 markdown 代码块渲染进一个 <li> 里——
+    // 直接去掉标记符本身，露出裸文本即可（跟 _render_markdown_lite 的完整
+    // 渲染不同，这里要的是"别露出字面 ** 和 ``` "，不是"渲染出富文本"）
+    function stripMdLite(text) {
+      return (text || '')
+        .replace(/```[a-zA-Z]*\n?/g, '')
+        .replace(/```/g, '')
+        .replace(/\*\*([^*]+)\*\*/g, '$1')
+        .replace(/`([^`]+)`/g, '$1');
+    }
+
+    function renderTopCriticals(topCriticals) {
+      var list = document.getElementById('top-criticals-list');
+      var box = document.getElementById('top-criticals');
+      if (!list) return;
+      // 一条都没有时整块收起，不留「标题 + 暂无 Critical 问题」空框占首屏
+      if (!topCriticals || !topCriticals.length) {
+        if (box) box.hidden = true;
+        list.innerHTML = '';
+        return;
+      }
+      if (box) box.hidden = false;
+      list.innerHTML = topCriticals.map(function(c) {
+        var desc = stripMdLite(c.description || '');
+        if (desc.length > 120) desc = desc.substring(0, 120) + '…';
+        // source 只有牵连影响条目才带：不标来源的话，读者会把"改动波及到的
+        // 其他调用点"当成"这段代码本身写错了"，两者要采取的动作不一样
+        var tag = c.source
+          ? '<span class="tc-source">' + escHtml(c.source) + '</span>'
+          : '';
+        return '<li>' + tag + '<strong>' + escHtml(c.file + (c.line ? ':' + c.line : '')) +
+               '</strong><span class="tc-desc">' + escHtml(desc) + '</span></li>';
+      }).join('');
+    }
+
+    // Export stubs (implemented in Task 5)
+    function exportJira() { alert('导出为 Jira 功能待实现'); }
+    function exportExcel() { alert('导出为 Excel 功能待实现'); }
+    function exportCsv() { alert('导出为 CSV 功能待实现'); }
+
+    // Inject summary data (Task 5)
+    if (typeof renderCategoryChart === 'function') renderCategoryChart({"\u5b89\u5168\u98ce\u9669": 4, "\u9700\u6c42\u77db\u76fe": 2, "\u8fb9\u754c\u6761\u4ef6": 2, "\u9700\u6c42\u672a\u5b9e\u73b0": 1, "\u9700\u6c42\u5916\u52a8\u4f5c": 1, "\u5916\u90e8\u8c03\u7528/IO": 1, "\u5f02\u5e38\u5904\u7406": 1, "\u65e5\u5fd7\u89c4\u8303": 1});
+if (typeof renderTopCriticals === 'function') renderTopCriticals([{"file": "pos-api/src/main/java/com/miq/posapi/consume/TrkEventKafkaConsumer.java", "line": "40", "severity": "critical", "category": "需求未实现", "description": "原因：需求文档“② 契约”明确要求 Kafka Header 必须透传 `eventCode + md5`，并在“④ 风险 / 待确认”里强调“md5 漏传→TRK 重复落库”。但本次单事件消费者只读取了 `pushLogId` header，代码中没有任何读取、校验或使用 `md5` / `eventCode` header 的实现证据；结合本次 diff 可见的消费者、配置和测试代码，也没有针对这两个必传 header 的断言。\n影响：如果发送侧同样未按契约透传 `md5`，这条链路无法在消费端发现问题，需求中最关键的去重保障点就没有被落实；一旦消息重放或重复投递，可能出现需求已明确提示的重复落库风险。", "suggestion": "在 Kafka 生产与消费链路中显式透传并校验 `eventCode`、`md5` header，至少补充消费者侧对必传 header 的读取与日志/失败处理，并增加对应测试。", "test_scenario": "构造两条内容相同但 Kafka header 不同的单事件消息：第 1 条带 `eventCode` 和 `md5`，第 2 条缺失 `md5`。验证消费者对第 1 条正常处理，对第 2 条能明确记录缺失必传 header，而不是与正常消息无差别处理。", "http_method": "", "path_pattern": "", "permission_tags": [], "java_entry_method": "", "expected_permission": "", "actual_behavior": "", "evidence_refs": [], "risk_label_zh": "", "evidence_quote": "public void onEvent(String jsonStr, @Header(value = \"pushLogId\", required = false) String pushLogIdHeader) {", "requirement_ref": "需求文档·② 契约·“Header：eventCode + md5（必须透传）”", "unimplemented_feature": "Kafka 消息必须透传并校验 `eventCode` 和 `md5` 这两个契约 header。", "deviation_rationale_check": "", "_line_corrected": true}]);
+
+    // Export dropdown toggle
+    (function() {
+      var btn = document.getElementById('export-btn');
+      var menu = document.getElementById('export-menu');
+      if (!btn || !menu) return;
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var shown = menu.style.display === 'block';
+        menu.style.display = shown ? 'none' : 'block';
+      });
+      document.addEventListener('click', function() {
+        menu.style.display = 'none';
+      });
+    })();
+  </script>
+</body>
+</html>
