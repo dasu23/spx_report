@@ -1,0 +1,2389 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Code Review Report</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      /* 重新设计（用户反馈"前端样式不好看"）：底色/正文/次要文字/边框/标题
+         此前全部带一层绿色调（跟 --accent 撞在一起，显得到处都是同一种绿），
+         改成中性板岩灰基调 + 一个teal 强调色，层次更清楚，也更耐看。 */
+      --bg: #f3f4f7;
+      --card: #ffffff;
+      --text: #1c2333;
+      --muted: #667085;
+      --border: #e3e6ec;
+      --heading: #0f1420;
+      --accent: #0f766e;
+      --accent-dark: #0b5850;
+      --accent-soft: #e6f4f2;
+
+      --critical-bg: #fdeceb;
+      --critical-text: #b3261e;
+      --critical-border: #f3b7b2;
+      --critical-strong: #d1291f;
+
+      --major-bg: #fdf1e3;
+      --major-text: #a85311;
+      --major-border: #f4d19d;
+      --major-strong: #d5720f;
+
+      --minor-bg: #fdf7e0;
+      --minor-text: #8a6208;
+      --minor-border: #f1e096;
+      --minor-strong: #a37d0a;
+
+      --info-bg: #eaf1fd;
+      --info-text: #23509c;
+      --info-border: #c0d6f6;
+      --info-strong: #2f66c9;
+
+      --safe-bg: #e8f6ee;
+      --safe-text: #1a7a4c;
+      --safe-border: #aee3c4;
+
+      --chip-bg: #eef0f5;
+      --code-bg: #10182b;
+      --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+      --shadow: 0 8px 24px rgba(16, 24, 40, 0.08);
+      --shadow-lg: 0 20px 44px rgba(16, 24, 40, 0.14);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans SC", Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .page {
+      max-width: 1180px;
+      margin: 28px auto 48px;
+      padding: 0 20px;
+    }
+
+    /* 重新设计：原来是一大片高饱和绿色渐变斜切块，视觉上很"闹"；
+       改成深板岩底色 + 顶部一条细 teal 强调线，克制一些，也更像专业
+       研发工具的报告头，而不是营销落地页banner。 */
+    .hero {
+      position: relative;
+      background: linear-gradient(165deg, #0b1220 0%, #121a2c 55%, #0e2422 100%);
+      color: #f4f7fb;
+      border-radius: 18px;
+      padding: 26px 28px 24px;
+      box-shadow: var(--shadow-lg);
+      margin-bottom: 18px;
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 3px;
+      background: linear-gradient(90deg, #14b8a6, #22d3ee 45%, #14b8a6 100%);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -60px;
+      top: -60px;
+      width: 220px;
+      height: 220px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(20, 184, 166, 0.22), transparent 70%);
+      pointer-events: none;
+    }
+
+    .hero h1 {
+      margin: 0 0 10px;
+      font-size: 24px;
+      font-weight: 700;
+      line-height: 1.25;
+      letter-spacing: 0.1px;
+    }
+
+    .hero-meta {
+      margin: 0;
+      font-size: 13.5px;
+      color: #aab4c8;
+      letter-spacing: 0.01em;
+    }
+
+    .summary {
+      background: var(--card);
+      padding: 16px 18px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      margin-bottom: 20px;
+    }
+
+    .summary h2,
+    .section-title {
+      margin: 0 0 12px;
+      font-size: 18px;
+      color: var(--heading);
+    }
+
+    .subsection-title {
+      margin-top: 28px;
+    }
+
+    .api-permission-block code {
+      font-size: 12px;
+      word-break: break-all;
+    }
+
+    .api-surface-sub {
+      margin: 18px 0 8px;
+      font-size: 16px;
+      color: var(--heading);
+    }
+
+    .inferred-hint {
+      margin: 0 0 12px;
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    /* 总体结论正文区 */
+    .summary-body {
+      margin: 0 0 16px;
+      font-size: 14px;
+      color: var(--text);
+      line-height: 1.75;
+    }
+
+    .summary-body p {
+      margin: 0 0 10px;
+    }
+
+    .summary-body p:last-child {
+      margin-bottom: 0;
+    }
+
+    .summary-body ol,
+    .summary-body ul {
+      margin: 4px 0 12px;
+      padding-left: 22px;
+    }
+
+    .summary-body ol li,
+    .summary-body ul li {
+      margin-bottom: 6px;
+      line-height: 1.65;
+    }
+
+    .summary-body .summary-section-title {
+      font-weight: 700;
+      color: var(--heading);
+      margin: 16px 0 6px;
+      font-size: 13px;
+      letter-spacing: 0.3px;
+      padding-left: 8px;
+      border-left: 3px solid var(--accent);
+    }
+
+    .summary-body .summary-section-title:first-child {
+      margin-top: 0;
+    }
+
+    .summary-body strong {
+      color: var(--heading);
+      font-weight: 700;
+    }
+
+    /* 严重级别筛选区 */
+    .filter-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-top: 6px;
+    }
+
+    .filter-label {
+      font-size: 12px;
+      color: var(--muted);
+      margin-right: 2px;
+    }
+
+    .chips-impact-note {
+      width: 100%;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 5px 13px;
+      border-radius: 9px;
+      font-size: 12.5px;
+      font-weight: 700;
+      background: var(--chip-bg);
+      color: var(--heading);
+      border: 1px solid transparent;
+    }
+
+    .filter-chip {
+      cursor: pointer;
+      transition: transform 0.12s, box-shadow 0.12s, opacity 0.12s;
+      user-select: none;
+    }
+
+    .filter-chip:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 3px 8px rgba(0,0,0,0.12);
+    }
+
+    .filter-chip.active {
+      box-shadow: 0 0 0 2.5px currentColor;
+      transform: translateY(-1px);
+    }
+
+    .filter-chip.dimmed {
+      opacity: 0.4;
+    }
+
+    .critical { background: var(--critical-bg); color: var(--critical-text); border-color: var(--critical-border); }
+    .major { background: var(--major-bg); color: var(--major-text); border-color: var(--major-border); }
+    .minor { background: var(--minor-bg); color: var(--minor-text); border-color: var(--minor-border); }
+    .info { background: var(--info-bg); color: var(--info-text); border-color: var(--info-border); }
+
+    /* 筛选状态提示条 */
+    #filter-hint {
+      display: none;
+      margin: -10px 0 14px;
+      padding: 8px 14px;
+      background: var(--accent-soft);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    #filter-hint .clear-filter {
+      margin-left: 8px;
+      color: var(--accent);
+      cursor: pointer;
+      font-weight: 600;
+      text-decoration: underline;
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    /* 工具栏：搜索 + 展开折叠 */
+    .findings-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+      padding: 12px 14px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+    }
+
+    .findings-search {
+      flex: 1 1 220px;
+      min-width: 0;
+      padding: 10px 14px;
+      font: inherit;
+      font-size: 14px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+      color: var(--text);
+    }
+
+    .findings-search:focus {
+      outline: none;
+      box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.35);
+      border-color: var(--accent);
+    }
+
+    .findings-toolbar-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .toolbar-btn {
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--chip-bg);
+      color: var(--heading);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .toolbar-btn:hover {
+      background: #e3e6ec;
+    }
+
+    /* 文件 TOC */
+    .findings-toc {
+      margin-bottom: 16px;
+      padding: 10px 12px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+    }
+
+    .toc-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 8px;
+      letter-spacing: 0.04em;
+    }
+
+    .toc-pill-wrap {
+      display: flex;
+      flex-wrap: nowrap;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .toc-pill {
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      text-decoration: none;
+      color: var(--heading);
+      background: var(--chip-bg);
+      border: 1px solid var(--border);
+      transition: transform 0.12s, box-shadow 0.12s;
+    }
+
+    .toc-pill:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+
+    .toc-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .toc-dot.sev-critical { background: var(--critical-text); }
+    .toc-dot.sev-major { background: var(--major-text); }
+    .toc-dot.sev-minor { background: var(--minor-text); }
+    .toc-dot.sev-info { background: var(--info-text); }
+
+    /* 总体结论：多分片 */
+    .summary-shards-wrap {
+      margin-bottom: 4px;
+    }
+
+    .summary-shard {
+      margin-bottom: 14px;
+      padding: 12px 14px;
+      background: #fafbfd;
+      border-radius: 10px;
+      border-left: 4px solid var(--accent);
+    }
+
+    .summary-shard:last-of-type {
+      margin-bottom: 10px;
+    }
+
+    .summary-more[hidden] {
+      display: none !important;
+    }
+
+    .summary-toggle {
+      display: inline-block;
+      margin-top: 4px;
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 16px;
+      border-radius: 8px;
+      border: 1px solid var(--accent);
+      background: #fff;
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .summary-toggle:hover {
+      background: #eef8f5;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details {
+      margin-top: 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0 12px 10px;
+      background: #fafbfc;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details summary {
+      cursor: pointer;
+      padding: 10px 0;
+      font-weight: 600;
+      color: var(--accent);
+      list-style: none;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .summary-raw-pre {
+      margin: 0;
+      max-height: 420px;
+      overflow: auto;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* 按文件 findings：可折叠组 + 卡片 */
+    .findings-list-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    details.file-group.findings-file-group {
+      margin: 0;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .file-group-summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 14px;
+      padding: 14px 16px;
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .file-group-summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .file-group-title {
+      display: inline-flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 14px;
+      color: var(--heading);
+      flex: 1 1 200px;
+      min-width: 0;
+    }
+
+    .file-path-text {
+      word-break: break-all;
+      line-height: 1.45;
+    }
+
+    .sev-indicator {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      margin-top: 4px;
+    }
+
+    .sev-indicator.sev-critical { background: var(--critical-text); box-shadow: 0 0 0 2px var(--critical-bg); }
+    .sev-indicator.sev-major { background: var(--major-text); box-shadow: 0 0 0 2px var(--major-bg); }
+    .sev-indicator.sev-minor { background: var(--minor-text); box-shadow: 0 0 0 2px var(--minor-bg); }
+    .sev-indicator.sev-info { background: var(--info-text); box-shadow: 0 0 0 2px var(--info-bg); }
+
+    .file-group-stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .stat-chip {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 999px;
+    }
+
+    .stat-chip.stat-critical { background: var(--critical-bg); color: var(--critical-text); }
+    .stat-chip.stat-major { background: var(--major-bg); color: var(--major-text); }
+    .stat-chip.stat-minor { background: var(--minor-bg); color: var(--minor-text); }
+    .stat-chip.stat-info { background: var(--info-bg); color: var(--info-text); }
+
+    .file-group-count {
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .file-group-body {
+      padding: 12px 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .finding-card {
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: #fff;
+      padding: 15px 17px;
+      border-left-width: 4px;
+      border-left-style: solid;
+      box-shadow: var(--shadow-sm);
+      transition: box-shadow 0.15s;
+    }
+
+    .finding-card:hover { box-shadow: var(--shadow); }
+
+    .finding-card.severity-critical { border-left-color: var(--critical-strong); background: linear-gradient(90deg, var(--critical-bg) 0%, #fff 14px); }
+    .finding-card.severity-major { border-left-color: var(--major-strong); background: linear-gradient(90deg, var(--major-bg) 0%, #fff 14px); }
+    .finding-card.severity-minor { border-left-color: var(--minor-strong); background: linear-gradient(90deg, var(--minor-bg) 0%, #fff 14px); }
+    .finding-card.severity-info { border-left-color: var(--info-strong); background: linear-gradient(90deg, var(--info-bg) 0%, #fff 14px); }
+
+    .finding-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .sev-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 4px 12px;
+      border-radius: 7px;
+      font-size: 11.5px;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .sev-badge.critical { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .sev-badge.major { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .sev-badge.minor { background: var(--minor-bg); color: var(--minor-text); border: 1px solid var(--minor-border); }
+    .sev-badge.info { background: var(--info-bg); color: var(--info-text); border: 1px solid var(--info-border); }
+
+    .finding-line {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      background: var(--chip-bg);
+      padding: 4px 8px;
+      border-radius: 6px;
+    }
+
+    .finding-cat {
+      font-size: 12.5px;
+      font-weight: 700;
+      color: var(--accent-dark);
+      background: var(--accent-soft);
+      padding: 3px 9px;
+      border-radius: 6px;
+    }
+
+    /* 需求对账三类（需求未实现/需求矛盾/需求外动作）用色块徽章而非纯文字，
+       跟严重级别徽章一样醒目——用户反馈普通文字分类容易在列表里被漏看，
+       尤其"需求未实现"现在总是 Critical。*/
+    .finding-cat-requirement {
+      background: var(--critical-bg);
+      color: var(--critical-text);
+      border: 1px solid var(--critical-border);
+      border-radius: 6px;
+      padding: 3px 10px;
+    }
+
+    /* ── 接口审查覆盖清单 ── */
+    .endpoint-coverage {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px 18px;
+      box-shadow: var(--shadow);
+      margin-bottom: 20px;
+    }
+
+    .ec-note {
+      margin: 0 0 10px;
+      font-size: 13px;
+      line-height: 1.7;
+      color: var(--muted);
+    }
+
+    .ec-note-warn {
+      padding: 9px 12px;
+      border-radius: 8px;
+      background: var(--major-bg);
+      border-left: 4px solid var(--major-strong);
+      color: var(--major-text);
+    }
+
+    .ec-note-warn strong { color: var(--major-strong); }
+
+    .ec-table-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid var(--border); }
+
+    .ec-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .ec-table th {
+      text-align: left;
+      padding: 9px 12px;
+      background: #fafbfd;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .ec-table td {
+      padding: 10px 12px;
+      border-top: 1px solid var(--border);
+      vertical-align: top;
+      line-height: 1.65;
+    }
+
+    .ec-table tbody tr:first-child td { border-top: none; }
+
+    .ec-table .ec-method,
+    .ec-table .ec-verdict { white-space: nowrap; }
+
+    .ec-table .ec-path code {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+      word-break: break-all;
+    }
+
+    .ec-table .ec-reason { color: var(--muted); }
+
+    .ec-badge {
+      display: inline-block;
+      padding: 2px 9px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .ec-badge.ec-risk { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .ec-badge.ec-pending { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .ec-badge.ec-safe { background: var(--safe-bg); color: var(--safe-text); border: 1px solid var(--safe-border); }
+
+    tr.ec-risk td { background: #fffbfa; }
+    tr.ec-pending td { background: #fffdf9; }
+
+    /* 分片没审成时的披露条：必须比正文更抢眼，否则读者会把
+       「报告里没写」误当成「这里没问题」 */
+    .shard-health-alert {
+      margin: 0 0 12px;
+      padding: 12px 15px;
+      border-radius: 10px;
+      background: var(--critical-bg);
+      border: 1px solid var(--critical-border);
+      border-left: 4px solid var(--critical-strong);
+      color: var(--critical-text);
+      font-size: 13.5px;
+      line-height: 1.7;
+    }
+
+    .shard-health-alert strong { color: var(--critical-strong); }
+
+    .finding-desc {
+      font-size: 14px;
+      line-height: 1.65;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* finding 卡片正文的四行结构（问题 / 后果 / 怎么改 / 怎么验）。
+       用户反馈（build 532）"文案挤在一团，难以阅读"：此前正文是一整段
+       `原因：…影响：…` 靠 white-space:pre-wrap 原样糊上去，修复建议和测试
+       场景又被折叠藏起来。改成左标签 + 右正文的两列网格，每行一个语义单元，
+       段落之间有明确留白，长句由 Python 侧按句末标点拆成多个 <p>。 */
+    .finding-body {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      font-size: 14px;
+      line-height: 1.7;
+      color: var(--text);
+    }
+
+    .fb-row {
+      display: grid;
+      grid-template-columns: 68px minmax(0, 1fr);
+      gap: 2px 14px;
+      padding: 10px 0;
+      border-top: 1px dashed var(--border);
+    }
+
+    .fb-row:first-child {
+      border-top: none;
+      padding-top: 2px;
+    }
+
+    /* 重新设计：标签从"一段带颜色的纯文字"改成小色块标签（跟 sev-badge/
+       finding-cat 同一套视觉语言），扫一眼列表就能靠色块分辨这行是"问题"
+       还是"怎么改"，比单靠文字颜色更容易一眼分辨。 */
+    .fb-label {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1.6;
+      letter-spacing: 0.03em;
+      white-space: nowrap;
+      padding: 2px 8px;
+      border-radius: 6px;
+      margin-top: 1px;
+    }
+
+    .fb-problem .fb-label { color: var(--major-text); background: var(--major-bg); }
+    .fb-impact .fb-label { color: var(--critical-text); background: var(--critical-bg); }
+    .fb-fix .fb-label { color: var(--accent-dark); background: var(--accent-soft); }
+    .fb-test .fb-label { color: var(--info-text); background: var(--info-bg); }
+
+    .fb-text {
+      min-width: 0;
+      word-break: break-word;
+    }
+
+    .fb-text > p {
+      margin: 0 0 7px;
+    }
+
+    .fb-text > p:last-child {
+      margin-bottom: 0;
+    }
+
+    .fb-text .rt-list {
+      margin: 2px 0 6px;
+      padding-left: 20px;
+    }
+
+    .fb-text .rt-list li {
+      margin-bottom: 4px;
+    }
+
+    .fb-text .code-block {
+      margin: 8px 0 4px;
+      font-size: 12.5px;
+    }
+
+    .fb-text code {
+      background: var(--chip-bg);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+    }
+
+    /* 窄屏（Jenkins 里报告常挤在窗格里看）时标签落到正文上方，不再抢走
+       62px 宽度，避免正文被压成一列细条 */
+    @media (max-width: 720px) {
+      .fb-row {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 2px;
+      }
+    }
+
+    /* 证据代码块从固定 div 改成可折叠 details（默认展开）——一份报告里
+       十几张卡片各带 8-10 行代码，读者需要能收起来快速扫结论 */
+    details.finding-evidence > summary {
+      cursor: pointer;
+      list-style: none;
+    }
+
+    details.finding-evidence > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    details.finding-evidence > summary::before {
+      content: "▾ ";
+      color: var(--muted);
+    }
+
+    details.finding-evidence:not([open]) > summary::before {
+      content: "▸ ";
+    }
+
+    /* 证据代码块（2026-07-19 补）：evidence_quote 的稳定展示位置，不再依赖
+       模型是否顺手把代码写进 description 里；纯 CSS + Python 正则高亮，
+       不引外部 JS 库，内网报告零外部依赖风险。 */
+    .finding-evidence {
+      margin-top: 10px;
+    }
+
+    .finding-evidence .detail-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .code-block {
+      margin: 0;
+      padding: 12px 15px;
+      background: var(--code-bg);
+      color: #e6edf3;
+      border-radius: 9px;
+      overflow-x: auto;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+      line-height: 1.6;
+    }
+
+    .code-block code {
+      white-space: pre;
+      /* 2026-09-02 用户反馈：安全/权限折叠卡里"怎么改"给的整段修复示意代码
+         （``` 代码围栏渲染出来也是 <pre class="code-block"><code>）看不清——
+         根因是 .fb-text code（第 833 行，给"问题/后果/怎么改/怎么验"正文里
+         `existsActive` 这类行内代码片段配的浅灰底色）跟这里选择器优先级/
+         特异性相同，同一个 <code> 标签只要落在 .fb-text 范围内就会被套上
+         浅灰底，而 .code-annotation/.code-keyword 这套语法高亮配色是给
+         .code-block 本来的深色底（--code-bg）设计的，叠在浅灰底上对比度
+         塌陷，几乎看不见字。显式声明透明背景覆盖掉那条通用规则，让
+         .code-block 自己的深色底透出来。 */
+      background: transparent;
+    }
+
+    .code-comment { color: #8b949e; font-style: italic; }
+    .code-string { color: #a5d6ff; }
+    .code-annotation { color: #d2a8ff; }
+    .code-keyword { color: #ff7b72; font-weight: 600; }
+    .code-number { color: #79c0ff; }
+
+    /* 带上下文的证据代码块（逐行渲染，问题行整行高亮）*/
+    .code-row {
+      display: block;
+      padding: 0 6px;
+      border-left: 3px solid transparent;
+    }
+
+    .code-row-target {
+      background: rgba(255, 123, 114, 0.16);
+      border-left-color: #ff7b72;
+    }
+
+    .code-ln {
+      display: inline-block;
+      min-width: 2.5em;
+      margin-right: 12px;
+      color: #6e7681;
+      text-align: right;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    .finding-details {
+      margin-top: 12px;
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+      padding: 0;
+      background: #fafbfd;
+    }
+
+    .finding-details > summary {
+      cursor: pointer;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--heading);
+      list-style: none;
+    }
+
+    .finding-details > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .finding-details-body {
+      padding: 0 14px 14px;
+      border-top: 1px solid var(--border);
+    }
+
+    .detail-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin: 12px 0 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .finding-suggestion p,
+    .finding-test p {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.65;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .file-block {
+      margin: 14px 0 18px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: var(--shadow);
+    }
+
+    .file-block h3 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      color: var(--heading);
+      word-break: break-all;
+    }
+
+    table {
+      border-collapse: separate;
+      border-spacing: 0;
+      width: 100%;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+    }
+
+    th, td {
+      border-bottom: 1px solid var(--border);
+      padding: 10px;
+      vertical-align: top;
+      text-align: left;
+      font-size: 13px;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      background: #fafbfd;
+      color: var(--heading);
+      font-weight: 700;
+      z-index: 1;
+    }
+
+    tbody tr:nth-child(even) { background: #fafbfd; }
+    tbody tr:last-child td { border-bottom: none; }
+
+    .empty {
+      padding: 18px;
+      border: 1px dashed var(--border);
+      border-radius: 14px;
+      color: var(--muted);
+      background: #fafbfd;
+    }
+
+    @media (max-width: 900px) {
+      .hero h1 { font-size: 22px; }
+      .summary,
+      .file-block { padding: 12px; }
+      th, td { padding: 8px; font-size: 12px; }
+      .charts-row { flex-direction: column; }
+    }
+
+    /* ── 报告标签页 ──
+       重新设计：从"按钮选中变绿色渐变块"改成分段控件（segmented control）
+       的样式——浅灰底槽 + 选中项浮成白色药丸，更接近成熟工具（如 GitHub/
+       Linear）里的页签观感，也跟下面卡片的白底形成呼应。 */
+    .report-tabs {
+      display: inline-flex;
+      gap: 2px;
+      padding: 4px;
+      margin-bottom: 18px;
+      background: #e9ebf0;
+      border-radius: 12px;
+      flex-wrap: wrap;
+    }
+    .report-tabs button {
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 18px;
+      border-radius: 9px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 13.5px;
+      transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+    }
+    .report-tabs button:hover {
+      color: var(--heading);
+    }
+    .report-tabs button[aria-selected="true"] {
+      background: #ffffff;
+      color: var(--heading);
+      box-shadow: var(--shadow-sm);
+    }
+    .report-panel { display: none; }
+    .report-panel.is-active { display: block; }
+
+    /* ── 数据权限页（嵌入，与综合页隔离） ── */
+    .dp-shell {
+      font-family: "Avenir Next", "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif;
+      color: #1a2b22;
+      line-height: 1.6;
+    }
+
+    /* 重置全局 table 样式污染 */
+    .dp-shell table {
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+    }
+    .dp-shell th, .dp-shell td {
+      border: none !important;
+      border-bottom: 1px solid #edf2f7 !important;
+      background: transparent !important;
+    }
+
+    .dp-shell .dp-header {
+      position: relative;
+      background: linear-gradient(165deg, #0b1220 0%, #121a2c 55%, #0e2422 100%);
+      color: #f4f7fb;
+      padding: 26px 28px 24px;
+      border-radius: 18px;
+      margin-bottom: 24px;
+      box-shadow: var(--shadow-lg);
+      overflow: hidden;
+    }
+    .dp-shell .dp-header::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 3px;
+      background: linear-gradient(90deg, #14b8a6, #22d3ee 45%, #14b8a6 100%);
+    }
+    .dp-shell .dp-header h1 { font-size: 1.4rem; font-weight: 700; letter-spacing: .01em; margin: 0 0 6px; }
+    .dp-shell .dp-header .subtitle { margin: 0; color: #aab4c8; font-size: .9rem; }
+    .dp-shell .dp-header .meta-row { margin-top: 16px; display: flex; gap: 24px; flex-wrap: wrap; }
+    .dp-shell .dp-header .meta-item { font-size: .8rem; color: #8b95ab; }
+    .dp-shell .dp-header .meta-item strong { color: #8ce8d4; font-weight: 600; }
+
+    .dp-shell .dp-body { padding: 0 0 32px; }
+
+    /* ── dp-shell 内部组件（与 Python 生成的类名严格对齐） ── */
+
+    /* 统计卡片区（Python 生成 .summary-grid / .summary-card） */
+    .dp-shell .dp-stats { margin-bottom: 4px; }
+    .dp-shell .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+    .dp-shell .summary-card {
+      background: #fff;
+      border-radius: 14px;
+      padding: 18px 20px;
+      box-shadow: var(--shadow-sm);
+      border: 1px solid var(--border);
+      border-top: 3px solid transparent;
+    }
+    .dp-shell .summary-card.critical { border-top-color: var(--critical-strong); }
+    .dp-shell .summary-card.high     { border-top-color: var(--major-strong); }
+    .dp-shell .summary-card.medium   { border-top-color: var(--minor-strong); }
+    .dp-shell .summary-card.info     { border-top-color: var(--info-strong); }
+    .dp-shell .summary-card .count   { font-size: 2.1rem; font-weight: 800; line-height: 1; }
+    .dp-shell .summary-card.critical .count { color: var(--critical-text); }
+    .dp-shell .summary-card.high     .count { color: var(--major-text); }
+    .dp-shell .summary-card.medium   .count { color: var(--minor-text); }
+    .dp-shell .summary-card.info     .count { color: var(--info-text); }
+    .dp-shell .summary-card .label   { margin-top: 8px; font-size: .72rem; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .07em; }
+
+    /* 区块标题 */
+    .dp-shell .dp-section { margin-bottom: 24px; }
+    .dp-shell .dp-section-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--heading);
+      margin: 0 0 14px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* 角色定义盒（Python 生成 .role-box / .role-icon / .role-info） */
+    .dp-shell .dp-roles { display: flex; flex-direction: column; gap: 10px; }
+    .dp-shell .role-box {
+      background: #fff;
+      border-radius: 12px;
+      padding: 16px 20px;
+      box-shadow: 0 2px 10px rgba(17,51,38,.07);
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+    }
+    .dp-shell .role-box.muted {
+      background: #f8f9fb;
+      border: 1px solid var(--border);
+      box-shadow: none;
+    }
+    .dp-shell .role-icon { font-size: 1.8rem; line-height: 1; flex-shrink: 0; }
+    .dp-shell .role-info { flex: 1; min-width: 0; }
+    .dp-shell .role-info h3 { font-size: 1rem; font-weight: 700; color: var(--heading); margin: 0 0 4px; }
+    .dp-shell .role-info .role-md { font-size: .88rem; color: #4a5568; margin-top: 8px; line-height: 1.65; word-break: break-word; }
+    .dp-shell .role-info code { background: #edf2f7; padding: 1px 6px; border-radius: 4px; font-size: .85em; }
+
+    /* gate banner */
+    .dp-shell .dp-gate { margin-bottom: 20px; }
+
+    /* 审计表格包装（Python 生成 .table-wrap > table.dp-audit）
+       表头从深绿底改成跟报告其它表格（.ec-table）同一套浅底大写小标签，
+       整份报告的表格风格统一，不再是"深色表头 vs 浅色表头"两套语言。 */
+    .dp-shell .table-wrap {
+      overflow-x: auto;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow-sm);
+    }
+    .dp-shell table.dp-audit {
+      width: 100% !important;
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+      font-size: .84rem;
+    }
+    .dp-shell .dp-audit th {
+      background: #fafbfd !important;
+      color: var(--muted) !important;
+      padding: 11px 14px !important;
+      text-align: left !important;
+      font-size: .68rem !important;
+      font-weight: 700 !important;
+      text-transform: uppercase !important;
+      letter-spacing: .07em !important;
+      white-space: nowrap !important;
+      border-bottom: 1px solid var(--border) !important;
+      position: sticky;
+      top: 0;
+    }
+    .dp-shell .dp-audit td {
+      padding: 11px 14px !important;
+      border-bottom: 1px solid var(--border) !important;
+      vertical-align: top !important;
+      color: var(--text) !important;
+      background: transparent !important;
+    }
+    .dp-shell .dp-audit tr:last-child td { border-bottom: none !important; }
+    .dp-shell .dp-audit tr:hover td { background: #f8f9fb !important; }
+    .dp-shell .dp-audit tr.row-critical td { background: var(--critical-bg) !important; }
+    .dp-shell .dp-audit tr.row-critical:hover td { background: #fbdcda !important; }
+    .dp-shell .dp-audit tr.row-major td { background: var(--major-bg) !important; }
+    .dp-shell .dp-audit tr.row-major:hover td { background: #fbe4c4 !important; }
+
+    /* HTTP 方法 & 严重性徽标（Python 生成 .badge .badge-*） */
+    .dp-shell .badge {
+      display: inline-block; padding: 2px 9px; border-radius: 6px;
+      font-size: .72rem; font-weight: 700; letter-spacing: .04em; white-space: nowrap;
+    }
+    .dp-shell .badge-get    { background: var(--info-bg); color: var(--info-text); }
+    .dp-shell .badge-post   { background: var(--safe-bg); color: var(--safe-text); }
+    .dp-shell .badge-put    { background: var(--minor-bg); color: var(--minor-text); }
+    .dp-shell .badge-delete { background: var(--critical-bg); color: var(--critical-text); }
+    .dp-shell .badge-patch  { background: #f4f0fd; color: #6b46c1; }
+    .dp-shell .badge-critical { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .dp-shell .badge-high     { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .dp-shell .badge-medium   { background: var(--minor-bg); color: var(--minor-text); border: 1px solid var(--minor-border); }
+    .dp-shell .badge-info     { background: var(--info-bg); color: var(--info-text); border: 1px solid var(--info-border); }
+
+    /* 风险文字 */
+    .dp-shell .risk-zh { font-size: .82rem; color: var(--text); font-weight: 600; line-height: 1.4; }
+
+    /* Issue 列表（Python 生成 .issue-list） */
+    .dp-shell .issue-list { list-style: none !important; margin: 6px 0 0; padding: 0; }
+    .dp-shell .issue-list li { position: relative; padding: 3px 0 3px 18px; font-size: .84rem; color: #4a5568; line-height: 1.55; }
+    .dp-shell .issue-list li::before { content: "▸"; position: absolute; left: 2px; color: #e53e3e; }
+    .dp-shell .issue-list li strong { color: var(--heading); }
+    .dp-shell .issue-list code { background: #edf2f7; padding: 1px 5px; border-radius: 3px; font-size: .85em; }
+
+    /* 修复建议卡片（Python 生成 .fix-card） */
+    .dp-shell .fix-card {
+      background: #f0faf5;
+      border-left: 4px solid var(--accent);
+      border-radius: 0 10px 10px 0;
+      padding: 13px 16px;
+      margin-top: 10px;
+    }
+    .dp-shell .fix-card h4 { font-size: .84rem; font-weight: 700; color: var(--heading); margin: 0 0 6px; }
+    .dp-shell .fix-card p, .dp-shell .fix-card li { font-size: .83rem; color: #2d4a3d; line-height: 1.6; margin: 0; }
+    .dp-shell .fix-card ul, .dp-shell .fix-card ol { padding-left: 18px; margin: 6px 0; }
+    .dp-shell .fix-card code { background: #d4efe4; padding: 1px 5px; border-radius: 4px; font-size: .85em; }
+
+    /* 代码块（Python 生成 .code-block） */
+    .dp-shell .code-block {
+      background: var(--code-bg); color: #e2e8f0; border-radius: 9px;
+      padding: 12px 16px; margin-top: 8px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: .78rem; line-height: 1.55; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+    }
+
+    /* 端点详情折叠（Python 生成 details.issue-fold） */
+    .dp-shell details.issue-fold {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: var(--shadow-sm);
+      margin-bottom: 12px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .dp-shell details.issue-fold > summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 13px 16px;
+      font-weight: 600;
+      font-size: .9rem;
+      color: var(--heading);
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid transparent;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transition: background .15s;
+    }
+    .dp-shell details.issue-fold > summary::-webkit-details-marker { display: none; }
+    .dp-shell details.issue-fold > summary::before { content: "▸"; font-size: 11px; color: var(--accent); transition: transform .15s; }
+    .dp-shell details.issue-fold[open] > summary::before { transform: rotate(90deg); }
+    .dp-shell details.issue-fold[open] > summary { border-bottom-color: var(--border); background: var(--accent-soft); }
+    .dp-shell .issue-fold-body { padding: 16px 20px; font-size: .85rem; color: #4a5568; }
+    .dp-shell .issue-fold-body p { margin: 6px 0; line-height: 1.65; }
+    .dp-shell .issue-fold-body strong { color: var(--heading); }
+
+    /* dp-fold（端点详情另一种渲染，Python 生成 details.dp-fold） */
+    .dp-shell .dp-folds { display: flex; flex-direction: column; gap: 10px; }
+    .dp-shell .dp-fold {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
+    }
+    .dp-shell .dp-fold > summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 13px 16px;
+      font-weight: 600;
+      font-size: .9rem;
+      color: var(--heading);
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .dp-shell .dp-fold > summary::-webkit-details-marker { display: none; }
+    .dp-shell .dp-fold > summary::before { content: "▸"; font-size: 11px; color: var(--accent); transition: transform .15s; }
+    .dp-shell .dp-fold[open] > summary::before { transform: rotate(90deg); }
+    .dp-shell .dp-fold-body { padding: 16px; font-size: .85rem; color: #4a5568; }
+
+    /* issue list（dp-fold 内部用） */
+    .dp-shell .dp-issue-list { list-style: none; margin: 8px 0 0; padding: 0; }
+    .dp-shell .dp-issue-list li { position: relative; padding: 3px 0 3px 18px; font-size: .84rem; color: #4a5568; }
+    .dp-shell .dp-issue-list li::before { content: "▸"; position: absolute; left: 2px; color: #e53e3e; }
+
+    /* dp-fix（dp-fold 内部修复建议） */
+    .dp-shell .dp-fix {
+      background: #f0faf5;
+      border-left: 4px solid var(--accent);
+      border-radius: 0 10px 10px 0;
+      padding: 12px 16px;
+      margin-top: 10px;
+    }
+    .dp-shell .dp-fix h4 { font-size: .84rem; font-weight: 700; color: var(--heading); margin: 0 0 6px; }
+    .dp-shell .dp-fix p, .dp-shell .dp-fix li { font-size: .83rem; color: #2d4a3d; line-height: 1.6; margin: 0; }
+    .dp-shell .dp-fix code { background: #d4efe4; padding: 1px 5px; border-radius: 4px; font-size: .85em; }
+
+    /* dp-code（dp-fold 内部代码块） */
+    .dp-shell .dp-code {
+      background: var(--code-bg); color: #e2e8f0; border-radius: 9px;
+      padding: 12px 16px; margin-top: 8px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: .78rem; line-height: 1.55; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+    }
+
+    /* 存量越权风险区块（dp-shell 内，全文扫描）*/
+    .dp-shell .legacy-privilege-block {
+      background: var(--minor-bg);
+      border: 1px solid var(--minor-border);
+      border-left: 4px solid var(--minor-strong);
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin-bottom: 16px;
+    }
+    .dp-shell .legacy-privilege-block .lp-title { font-size: 14px; font-weight: 700; color: var(--minor-strong); margin: 0 0 4px; }
+    .dp-shell .legacy-privilege-block .lp-subtitle { font-size: 12px; color: var(--minor-text); margin: 0 0 14px; }
+
+    .dp-shell .dp-footer {
+      text-align: center; font-size: .78rem; color: #a0aec0;
+      margin-top: 36px; padding-top: 20px; border-top: 1px solid var(--border);
+    }
+
+    /* ── 综合审查 Tab 权限接口表（privilege_endpoints 模式，在 dp-shell 外） ── */
+    .perm-table-wrap {
+      overflow-x: auto;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow-sm);
+    }
+    .perm-table {
+      width: 100%;
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+      font-size: .84rem;
+    }
+    .perm-table th {
+      background: #fafbfd !important;
+      color: var(--muted) !important;
+      padding: 10px 14px !important;
+      text-align: left !important;
+      font-size: .68rem !important;
+      font-weight: 700 !important;
+      text-transform: uppercase !important;
+      letter-spacing: .07em !important;
+      white-space: nowrap !important;
+      border-bottom: 1px solid var(--border) !important;
+    }
+    .perm-table td {
+      padding: 10px 14px !important;
+      border-bottom: 1px solid var(--border) !important;
+      vertical-align: top !important;
+      color: var(--text) !important;
+      background: transparent !important;
+    }
+    .perm-table tr:last-child td { border-bottom: none !important; }
+    .perm-table tr:hover td { background: #f8f9fb !important; }
+    .api-permission-block { overflow-x: auto; }
+
+    /* 存量越权风险区块（综合审查 Tab，全文扫描） */
+    .legacy-privilege-block {
+      background: var(--minor-bg);
+      border: 1px solid var(--minor-border);
+      border-left: 4px solid var(--minor-strong);
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin-bottom: 16px;
+    }
+    .legacy-privilege-block .lp-title { font-size: 14px; font-weight: 700; color: var(--minor-strong); margin: 0 0 4px; }
+    .legacy-privilege-block .lp-subtitle { font-size: 12px; color: var(--minor-text); margin: 0 0 14px; }
+    /* 根因聚合卡片 */
+    .cluster-card { border-left: 4px solid #6366f1; }
+    .cluster-badge {
+      background: #6366f1; color: #fff;
+      font-size: 11px; padding: 2px 8px;
+      border-radius: 10px; margin-left: 8px;
+      font-weight: 600; letter-spacing: .02em;
+    }
+    .cluster-locations { margin: 8px 0 4px; }
+    .cluster-locations > summary {
+      cursor: pointer; color: #6366f1;
+      font-size: 13px; font-weight: 500;
+    }
+    .cluster-locations > summary:hover { text-decoration: underline; }
+    .loc-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+    .loc-table th, .loc-table td {
+      padding: 4px 8px; border: 1px solid #e5e7eb; text-align: left;
+    }
+    .loc-table th { background: #f9fafb; font-weight: 600; }
+    .loc-file { font-family: monospace; color: #374151; }
+    .loc-line { text-align: center; color: #6b7280; white-space: nowrap; }
+    .loc-snippet { color: #4b5563; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* ── Charts Row (并列布局) ── */
+    .charts-row {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    /* ── Chart Section ── */
+    .chart-section {
+      flex: 1 1 0;
+      min-width: 0;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .chart-container {
+      position: relative;
+      height: 260px;
+    }
+
+    /* ── Top 3 Criticals in Hero ── */
+    .top-criticals {
+      position: relative;
+      margin-top: 18px;
+      padding-top: 16px;
+      border-top: 1px solid rgba(255,255,255,0.12);
+    }
+
+    .top-criticals h3 {
+      margin: 0 0 10px;
+      font-size: 13px;
+      font-weight: 700;
+      color: #ff9d94;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .top-criticals ul {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .top-criticals li {
+      font-size: 13px;
+      color: #d6dcea;
+      line-height: 1.5;
+      padding: 9px 12px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.09);
+      border-left: 3px solid #f2645a;
+      border-radius: 0 8px 8px 0;
+    }
+
+    .top-criticals li strong {
+      color: #ffe1dc;
+      font-weight: 700;
+      display: block;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12px;
+    }
+
+    .top-criticals[hidden] { display: none !important; }
+
+    .top-criticals .tc-desc {
+      display: block;
+      margin-top: 3px;
+    }
+
+    .top-criticals .tc-source {
+      display: inline-block;
+      margin-bottom: 4px;
+      padding: 1px 7px;
+      border-radius: 5px;
+      background: rgba(255,255,255,0.14);
+      color: #f4f7fb;
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    /* ── Export Dropdown ── */
+    .export-dropdown {
+      position: relative;
+    }
+
+    .export-menu {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 4px);
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+      min-width: 160px;
+      z-index: 100;
+      overflow: hidden;
+    }
+
+    .export-menu a {
+      display: block;
+      padding: 10px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--heading);
+      text-decoration: none;
+      transition: background 0.12s;
+    }
+
+    .export-menu a:hover {
+      background: #eef5f1;
+    }
+
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <h1>AI Code Review 报告</h1>
+      <p class="hero-meta">服务: trk | 生成时间: 2026-09-22 11:11:24</p>
+      <div class="top-criticals" id="top-criticals" hidden>
+        <h3>最需要先看的问题（Critical）</h3>
+        <ul id="top-criticals-list"></ul>
+      </div>
+    </header>
+
+    <div class="report-tabs" role="tablist" aria-label="报告视图">
+      <button type="button" role="tab" id="tab-general" aria-controls="panel-general" aria-selected="true" onclick="switchReportTab('general')">综合审查</button>
+      <button type="button" role="tab" id="tab-dp" aria-controls="panel-dp" aria-selected="false" onclick="switchReportTab('dp')">权限与业务规则</button>
+    </div>
+
+    <div id="panel-general" class="report-panel is-active" role="tabpanel" aria-labelledby="tab-general">
+    <section class="summary">
+      <h2>总体结论</h2>
+      <div id="summary-text" class="summary-body summary-preformatted"><div class="summary-condensed"><p>合并 <strong>14</strong> 个分片审查，共 <strong>10</strong> 条发现 （Critical 2 · Major 6 · Minor 2 · Info 0）。</p><p>逐条明细见下方「按文件的审查发现」；接口与数据权限维度见顶部「权限与业务规则」页签。</p><details class="summary-raw-details"><summary>展开各分片原文结论</summary><pre class="summary-raw-pre"><strong>分片 1</strong>
+
+本分片发现 4 个安全问题，均集中在 <code>RpsLabelKafkaListener</code> 对 Kafka 原始报文的日志输出和失败补偿持久化：完整 <code>message</code>/<code>rawMessage</code> 被直接记录或落库，导致包含收件人敏感字段的报文在日志与补偿表中形成额外泄露面。未发现 HTTP Controller 入口；本分片涉及的方法均为 Kafka/内部服务调用，无新增基于 HTTP 的权限放行问题。
+
+<strong>已审查无风险接口</strong>
+- <code>RpsLabelKafkaListener.listen()</code> | 无 HTTP Path | Kafka 消费入口，不是 Controller 暴露接口；本分片未见基于 Spring Security 的放行配置变更。
+- <code>RpsLabelPayloadConverter.toPushLabelForm()</code> | 无 HTTP Path | 纯对象转换方法，无对外访问入口，也未引入权限绕过逻辑。
+- <code>RpsLabelEventProcessorServiceImpl.processCreate()</code> | 无 HTTP Path | 内部服务方法，无 Controller 映射；本分片未见新增对外暴露面。
+- <code>RpsLabelEventProcessorServiceImpl.processVoid()</code> | 无 HTTP Path | 内部服务方法，无 Controller 映射；本分片未见新增对外暴露面。
+- <code>ProcessTrkKafkaLabelFailureServiceImpl.process()</code> | 无 HTTP Path | 失败补偿任务内部方法，无 Controller 映射；本分片未见新增对外暴露面。
+- <code>ProcessTrkKafkaLabelFailureServiceImpl.processBatch()</code> | 无 HTTP Path | 失败补偿任务内部方法，无 Controller 映射；本分片未见新增对外暴露面。
+
+接口覆盖率：清单共 6 个接口，已审查 6 个，0 个存在权限风险，6 个无风险，0 个待确认
+
+<strong>分片 2</strong>
+
+本分片仅新增 <code>tracking-service/src/test/java/io/speedx/trk/service/service/impl/processJob/ProcessTrkKafkaLabelFailureServiceImplTest.java</code> 测试代码；按“只审查新增/修改行”与安全维度检查，未发现可落到新增行上的 SQL 注入、敏感数据泄露、异常吞没、并发安全、权限绕过或 API 契约破坏问题。
+
+<strong>已审查无风险接口</strong>
+- <code>RpsLabelKafkaListener.listen()</code> | path: — | Kafka 消费入口，不是 HTTP 接口；本分片未见新增鉴权放行或基于用户身份的数据访问逻辑。
+- <code>RpsLabelPayloadConverter.toPushLabelForm()</code> | path: — | 纯 DTO 转换方法，无 Controller 暴露、无用户权限判定分支，本分片未引入访问控制风险。
+- <code>RpsLabelEventProcessorServiceImpl.processCreate()</code> | path: — | 服务层内部处理 Kafka CREATE 事件，无 HTTP 入口；本分片未见基于用户上下文的数据读取/返回。
+- <code>RpsLabelEventProcessorServiceImpl.processVoid()</code> | path: — | 服务层内部更新标签状态，无 HTTP 入口；本分片未新增权限放宽逻辑。
+- <code>ProcessTrkKafkaLabelFailureServiceImpl.process()</code> | path: — | 失败补偿任务处理方法，无 Controller 调用；本分片未见用户可直接调用的入口。
+- <code>ProcessTrkKafkaLabelFailureServiceImpl.processBatch()</code> | path: — | 失败补偿任务批处理方法，无 Controller 调用；当前直接抛出 <code>RRException</code>，未形成权限面风险。
+
+接口覆盖率：清单共 6 个接口，已审查 6 个，0 个存在权限风险，6 个无风险，0 个待确认
+
+<strong>分片 3</strong>
+
+本分片可见的新增内容主要是测试代码、设计/计划文档以及数据库脚本；基于当前 diff，未发现可直接落到新增/修改行上的安全问题。HTTP 入口清单：本分片未展示任何 <code>@GetMapping</code>、<code>@PostMapping</code>、<code>@PutMapping</code>、<code>@DeleteMapping</code>、<code>@PatchMapping</code> 或带路径的 <code>@RequestMapping</code> 新增/修改，因此无可审查的新增 HTTP 权限面。
+
+<strong>分片 4</strong>
+
+本分片未涉及 HTTP Controller，<code>RpsLabelKafkaListener.listen()</code> 也不在全局 HTTP 入口暴露范围内，因此无新增权限与访问控制风险。主要安全问题集中在 Kafka 消费链路：完整消息明文落日志、最外层 JSON 解析异常未兜底，以及 <code>handleCreate</code> 对 <code>CreateLabelPayload</code> 与 <code>RpsLabelEventEnvelope</code> 的一致性缺少校验，都会放大敏感数据泄露和坏消息阻塞风险。
+
+<strong>分片 5</strong>
+
+本分片仅包含 <code>trk-common/src/main/java/io/speedx/trk/common/enums/job/PushLogTypeEnum.java</code> 中新增一个枚举常量 <code>TRK_KAFKA_LABEL_FAILURE</code>，未引入 HTTP 入口、鉴权逻辑、SQL、外部调用或可见的异常处理变更。基于当前 diff，未发现可直接定位到新增/修改行的安全问题。
+
+<strong>分片 6</strong>
+
+本分片新增的 DAO 更新语句使用参数绑定，未发现 SQL 注入、越权入口放开或敏感信息硬编码等高危问题；唯一需要关注的是 DAO 层新增事务注解但未显式声明回滚规则，后续扩展时容易埋下状态一致性隐患。
+
+<strong>已审查无风险接口</strong>
+- <code>RpsLabelKafkaListener.listen()</code> + path: 无 Controller 调用；这是 Kafka 消费入口，不是 HTTP 接口，本次 diff 未引入新的鉴权放开点。
+- <code>RpsLabelPayloadConverter.toPushLabelForm()</code> + path: 无 Controller 调用；仅做字段转换与解密，不直接暴露数据访问入口。
+- <code>RpsLabelEventProcessorServiceImpl.processCreate()</code> + path: 无 Controller 调用；由内部 Kafka 处理链调用，本次 diff 未出现用户身份或数据范围绕过逻辑。
+- <code>RpsLabelEventProcessorServiceImpl.processVoid()</code> + path: 无 Controller 调用；由内部 Kafka 处理链调用，本次 diff 未新增 HTTP 可达面。
+- <code>ProcessTrkKafkaLabelFailureServiceImpl.process()</code> + path: 无 Controller 调用；为失败补偿任务处理入口，不是对外 HTTP 接口。
+- <code>ProcessTrkKafkaLabelFailureServiceImpl.processBatch()</code> + path: 无 Controller 调用；当前直接抛出 <code>RRException(&quot;not support&quot;)</code>，未形成新的访问控制面。
+
+接口覆盖率：清单共 6 个接口，已审查 6 个，0 个存在权限风险，6 个无风险，0 个待确认
+
+<strong>分片 7</strong>
+
+本分片发现 3 个安全问题，均集中在 Kafka 消息原文的日志/落库泄露：<code>RpsLabelKafkaListener</code> 直接打印完整 <code>message</code>，并在失败分支把完整 <code>rawMessage</code> 持久化到失败日志表，容易造成敏感业务数据长期暴露。
+
+<strong>已审查无风险接口</strong>
+- <code>RpsLabelKafkaListener.listen()</code> | path: 无 Controller 调用 | Kafka 消费入口，不属于 HTTP 接口；本分片未见新增鉴权绕过代码，但存在消息原文泄露风险，已在 findings 单独报告。
+- <code>RpsLabelPayloadConverter.toPushLabelForm()</code> | path: 无 Controller 调用 | 纯 DTO 转换方法，无 HTTP 暴露面，未见权限控制缺失问题。
+- <code>RpsLabelEventProcessorServiceImpl.processCreate()</code> | path: 无 Controller 调用 | 服务层内部方法，无 Controller 入口；本分片未见新增用户身份/角色相关访问控制逻辑。
+- <code>RpsLabelEventProcessorServiceImpl.processVoid()</code> | path: 无 Controller 调用 | 服务层内部方法，无 Controller 入口；本分片未见新增用户身份/角色相关访问控制逻辑。
+- <code>ProcessTrkKafkaLabelFailureServiceImpl.process()</code> | path: 无 Controller 调用 | 失败重试作业入口，不属于 HTTP 接口；本分片未见新增鉴权绕过代码。
+- <code>ProcessTrkKafkaLabelFailureServiceImpl.processBatch()</code> | path: 无 Controller 调用 | 直接抛出 <code>not support</code>，无 HTTP 暴露面，未见权限控制缺失问题。
+
+接口覆盖率：清单共 6 个接口，已审查 6 个，0 个存在权限风险，6 个无风险，0 个待确认
+
+<strong>分片 8</strong>
+
+本分片仅看到 <code>tracking-service/src/main/java/io/speedx/trk/service/entity/AbstractLabelSummary.java</code> 新增实体字段 <code>status</code>，未在新增/修改行中发现 SQL 注入、越权、敏感日志、异常吞没、并发安全或字段契约破坏等可直接落到 diff 行的安全问题。
+
+<strong>已审查无风险接口</strong>
+- <code>RpsLabelKafkaListener.listen()</code> | path: 无 Controller 调用 | Kafka 消费入口，不是 HTTP 接口；本分片未见新增鉴权放开或数据范围绕过代码。
+- <code>RpsLabelPayloadConverter.toPushLabelForm()</code> | path: 无 Controller 调用 | 纯对象转换方法，不直接暴露用户数据访问入口。
+- <code>RpsLabelEventProcessorServiceImpl.processCreate()</code> | path: 无 Controller 调用 | 服务层内部方法，本分片未见新增对外暴露或权限削弱。
+- <code>RpsLabelEventProcessorServiceImpl.processVoid()</code> | path: 无 Controller 调用 | 服务层内部方法，本分片未见新增对外暴露或权限削弱。
+- <code>ProcessTrkKafkaLabelFailureServiceImpl.process()</code> | path: 无 Controller 调用 | 失败重处理作业入口，不是 HTTP 接口；本分片未见新增权限绕过代码。
+- <code>ProcessTrkKafkaLabelFailureServiceImpl.processBatch()</code> | path: 无 Controller 调用 | 作业接口且直接 <code>not support</code>，本分片未见新增权限风险。
+
+接口覆盖率：清单共 6 个接口，已审查 6 个，0 个存在权限风险，6 个无风险，0 个待确认
+
+<strong>分片 9</strong>
+
+本分片发现 4 个安全问题，均集中在 Kafka 面单事件的日志/失败重试落库链路：新增代码把完整原始消息输出到日志或持久化到失败表，扩大了包含收件人相关字段的敏感数据暴露面。
+
+<strong>已审查无风险接口</strong>
+- <code>RpsLabelKafkaListener.listen()</code> | path: 无 Controller 调用 | Kafka Listener，不是 HTTP 入口；本分片未见新增鉴权绕过代码。
+- <code>RpsLabelPayloadConverter.toPushLabelForm()</code> | path: 无 Controller 调用 | 纯 DTO 转换方法，无对外暴露入口，也未见权限判断缺失问题。
+- <code>RpsLabelEventProcessorServiceImpl.processCreate()</code> | path: 无 Controller 调用 | Service 内部方法，无 HTTP 暴露；本分片未见新增权限控制削弱。
+- <code>RpsLabelEventProcessorServiceImpl.processVoid()</code> | path: 无 Controller 调用 | Service 内部方法，无 HTTP 暴露；本分片未见新增权限控制削弱。
+- <code>ProcessTrkKafkaLabelFailureServiceImpl.process()</code> | path: 无 Controller 调用 | 失败重试 Job 处理方法，不是用户可直接访问的 HTTP 入口。
+- <code>ProcessTrkKafkaLabelFailureServiceImpl.processBatch()</code> | path: 无 Controller 调用 | Job 方法且直接抛出 <code>RRException(&quot;not support&quot;)</code>，未形成新增权限面。
+
+接口覆盖率：清单共 6 个接口，已审查 6 个，0 个存在权限风险，6 个无风险，0 个待确认
+
+<strong>分片 10</strong>
+
+本分片仅看到 <code>tracking-service/src/main/java/io/speedx/trk/service/service/impl/RpsLabelEventProcessorServiceImpl.java</code> 的新增实现；按给定 diff 审查，未发现可直接落在新增/修改行上的 SQL 注入、越权、敏感日志、异常吞没、并发共享状态或事务边界类安全问题。<code>processCreate()</code> 对唯一键冲突做了显式分支处理，<code>processVoid()</code> 仅执行按 <code>trackingNumber</code> 的状态更新，本文件内未引入新的 HTTP 入口或鉴权放行代码。
+
+<strong>已审查无风险接口</strong>
+- <code>RpsLabelKafkaListener.listen()</code> | path: — | Kafka 消费入口，不是 HTTP Controller；本分片未见新增对外放行路径，也未见基于用户身份的数据返回逻辑。
+- <code>RpsLabelPayloadConverter.toPushLabelForm()</code> | path: — | 纯 DTO 转换方法，无 HTTP 暴露面，不涉及权限判定或资源访问控制。
+- <code>RpsLabelEventProcessorServiceImpl.processCreate()</code> | path: — | Service 内部消费处理方法，无 Controller 映射；本分片未见新增鉴权绕过点。
+- <code>RpsLabelEventProcessorServiceImpl.processVoid()</code> | path: — | Service 内部状态更新方法，无 Controller 映射；本分片未见新增鉴权绕过点。
+- <code>ProcessTrkKafkaLabelFailureServiceImpl.process()</code> | path: — | 失败补偿任务入口，不是 HTTP 接口；本分片上下文未见用户可直接访问的路径。
+- <code>ProcessTrkKafkaLabelFailureServiceImpl.processBatch()</code> | path: — | 任务处理方法，无 HTTP 暴露面，且直接拒绝批量处理，不构成新增权限面。
+
+接口覆盖率：清单共 6 个接口，已审查 6 个，0 个存在权限风险，6 个无风险，0 个待确认
+
+<strong>分片 11</strong>
+
+本分片新增的失败重试服务整体实现较简洁，未发现 SQL 注入、越权入口、硬编码密钥或敏感日志明文输出等高危安全问题；但 <code>ProcessTrkKafkaLabelFailureServiceImpl.process</code> 对失败表中的 <code>businessData</code> 信任过高，存在两个会把脏数据放大为运行时异常或错误重放的边界条件问题。
+
+<strong>已审查无风险接口</strong>
+- <code>RpsLabelKafkaListener.listen()</code> | path: — | 无 Controller 调用，属于 Kafka 消费入口，不涉及 HTTP 鉴权面；本分片未见新增权限绕过逻辑。
+- <code>RpsLabelPayloadConverter.toPushLabelForm()</code> | path: — | 纯 DTO 转换方法，无外部访问控制语义，不涉及权限判断。
+- <code>RpsLabelEventProcessorServiceImpl.processCreate()</code> | path: — | 纯服务层创建处理，无 Controller 调用；本分片未见新增对外暴露或权限削弱。
+- <code>RpsLabelEventProcessorServiceImpl.processVoid()</code> | path: — | 纯服务层状态更新，无 Controller 调用；本分片未见新增对外暴露或权限削弱。
+- <code>ProcessTrkKafkaLabelFailureServiceImpl.process()</code> | path: — | 失败重试任务入口，无 Controller 调用；本分片未见新增权限绕过逻辑。
+- <code>ProcessTrkKafkaLabelFailureServiceImpl.processBatch()</code> | path: — | 直接抛出 <code>RRException(&quot;not support&quot;)</code>，无 Controller 调用，不形成权限面。
+
+接口覆盖率：清单共 6 个接口，已审查 6 个，0 个存在权限风险，6 个无风险，0 个待确认
+
+<strong>分片 12</strong>
+
+本分片仅包含 <code>tracking-service/src/test/java/io/speedx/trk/service/convert/RpsLabelPayloadConverterTest.java</code> 的新增测试代码，未引入可利用的安全问题；测试中对 <code>CryptoUtil.decrypt</code> 的静态 mock 仅用于单元测试，不影响生产运行时安全边界。
+
+<strong>已审查无风险接口</strong>
+- <code>RpsLabelKafkaListener.listen()</code> + path: 无 Controller 调用；Kafka 消费入口，不属于 HTTP 暴露面，本分片未见新增鉴权绕过代码。
+- <code>RpsLabelPayloadConverter.toPushLabelForm()</code> + path: 无 Controller 调用；纯对象转换方法，本分片仅新增测试，未改变访问控制。
+- <code>RpsLabelEventProcessorServiceImpl.processCreate()</code> + path: 无 Controller 调用；服务方法无直接 HTTP 入口，本分片未见新增权限放开。
+- <code>RpsLabelEventProcessorServiceImpl.processVoid()</code> + path: 无 Controller 调用；服务方法无直接 HTTP 入口，本分片未见新增权限放开。
+- <code>ProcessTrkKafkaLabelFailureServiceImpl.process()</code> + path: 无 Controller 调用；任务处理入口非 HTTP，本分片未见新增角色/数据范围绕过。
+- <code>ProcessTrkKafkaLabelFailureServiceImpl.processBatch()</code> + path: 无 Controller 调用；任务处理入口非 HTTP，本分片未见新增权限风险。
+
+接口覆盖率：清单共 6 个接口，已审查 6 个，0 个存在权限风险，6 个无风险，0 个待确认
+
+<strong>分片 13</strong>
+
+本分片仅包含 <code>tracking-service/src/test/java/io/speedx/trk/service/dto/rps/RpsLabelEventEnvelopeTest.java</code> 的新增测试代码，未引入可执行生产逻辑、HTTP 入口、SQL、权限控制或敏感数据处理变更；从安全维度看无新增风险。
+
+<strong>已审查无风险接口</strong>
+- <code>RpsLabelKafkaListener.listen()</code> | path: 无 Controller 调用 | Kafka 消费入口，不属于 HTTP 暴露面；本分片未改动其实现，未见新增权限风险。
+- <code>RpsLabelPayloadConverter.toPushLabelForm()</code> | path: 无 Controller 调用 | 纯数据转换方法，无用户身份或资源访问控制语义；本分片未改动其实现，未见新增权限风险。
+- <code>RpsLabelEventProcessorServiceImpl.processCreate()</code> | path: 无 Controller 调用 | 服务层内部处理方法，无直接 HTTP 暴露；本分片未改动其实现，未见新增权限风险。
+- <code>RpsLabelEventProcessorServiceImpl.processVoid()</code> | path: 无 Controller 调用 | 服务层内部处理方法，无直接 HTTP 暴露；本分片未改动其实现，未见新增权限风险。
+- <code>ProcessTrkKafkaLabelFailureServiceImpl.process()</code> | path: 无 Controller 调用 | 失败重试作业处理方法，无直接 HTTP 暴露；本分片未改动其实现，未见新增权限风险。
+- <code>ProcessTrkKafkaLabelFailureServiceImpl.processBatch()</code> | path: 无 Controller 调用 | 作业批处理方法，无直接 HTTP 暴露；本分片未改动其实现，未见新增权限风险。
+
+接口覆盖率：清单共 6 个接口，已审查 6 个，0 个存在权限风险，6 个无风险，0 个待确认
+
+<strong>分片 14</strong>
+
+本分片仅包含 <code>tracking-service/src/test/java/io/speedx/trk/service/service/impl/RpsLabelEventProcessorServiceImplTest.java</code> 的新增测试代码，未引入新的生产安全逻辑、权限入口、SQL、外部调用或敏感日志输出；从仅审查新增/修改行的角度，未发现可落到 diff 行号的安全问题。
+
+<strong>已审查无风险接口</strong>
+- <code>RpsLabelKafkaListener.listen()</code> + path: 无 Controller 调用；Kafka 消费入口，不属于 HTTP 暴露面，本分片测试代码未削弱其鉴权或数据范围控制。
+- <code>RpsLabelPayloadConverter.toPushLabelForm()</code> + path: 无 Controller 调用；纯对象转换逻辑，本分片测试代码未改变访问控制行为。
+- <code>RpsLabelEventProcessorServiceImpl.processCreate()</code> + path: 无 Controller 调用；服务方法仅被内部 Kafka/任务链路调用，本分片测试代码未新增越权入口。
+- <code>RpsLabelEventProcessorServiceImpl.processVoid()</code> + path: 无 Controller 调用；服务方法仅被内部 Kafka/任务链路调用，本分片测试代码未新增越权入口。
+- <code>ProcessTrkKafkaLabelFailureServiceImpl.process()</code> + path: 无 Controller 调用；失败补偿任务入口，不是用户直连接口，本分片测试代码未改变权限边界。
+- <code>ProcessTrkKafkaLabelFailureServiceImpl.processBatch()</code> + path: 无 Controller 调用；当前直接抛出 <code>RRException(&quot;not support&quot;)</code>，本分片测试代码未新增访问控制风险。
+
+接口覆盖率：清单共 6 个接口，已审查 6 个，0 个存在权限风险，6 个无风险，0 个待确认</pre></details></div></div>
+      <div class="filter-row">
+        <span class="filter-label">点击筛选:</span>
+        <div class="chips">
+          <span class="chip critical filter-chip" data-filter="critical" onclick="filterBySeverity(this)">Critical: 2</span>
+          <span class="chip major filter-chip" data-filter="major" onclick="filterBySeverity(this)">Major: 6</span>
+          <span class="chip minor filter-chip" data-filter="minor" onclick="filterBySeverity(this)">Minor: 2</span>
+          <span class="chip info filter-chip" data-filter="info" onclick="filterBySeverity(this)">Info: 0</span>
+          <span class="chip">Total: 10</span>
+        </div>
+        <div class="chips-impact-note">牵连影响另有 155 条判定为安全，不计入以上统计</div>
+      </div>
+    </section>
+
+    <div class="charts-row">
+      <div class="chart-section" id="chart-section">
+        <h3 class="section-title">问题分布</h3>
+        <div class="chart-container">
+          <canvas id="categoryChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div id="filter-hint">
+      筛选中: <strong id="filter-hint-label"></strong>，仅显示对应问题
+      <span class="clear-filter" onclick="clearFilter()">清除筛选</span>
+    </div>
+
+    <div class="findings-toolbar" id="findings-toolbar" style="display: none;">
+      <!-- 筛选按钮已下线：与上方「总体结论」区的 filter-row（Critical/Major/Minor/Info 计数
+           chip）功能重复，且从未挂过点击事件，是从未生效的死代码（用户反馈"这个筛选多余了"）。
+           筛选统一走上方 filter-row 的 filterBySeverity()，这里只保留搜索 + 导出。 -->
+      <input type="text" class="findings-search" id="findings-search" placeholder="搜索文件/描述…">
+      <div class="export-dropdown">
+        <button class="toolbar-btn" id="export-btn">导出 ▼</button>
+        <div class="export-menu" id="export-menu" style="display:none;">
+          <a href="#" onclick="exportJira()">导出为 Jira</a>
+          <a href="#" onclick="exportExcel()">导出为 Excel</a>
+          <a href="#" onclick="exportCsv()">导出为 CSV</a>
+        </div>
+      </div>
+    </div>
+
+    
+<style>
+.impact-section { margin: 16px 0 24px; }
+.impact-section .section-title { font-size: 18px; font-weight: 700; margin-bottom: 10px; }
+/* 颜色直接写死（不用 var(--minor-*)）：既往回归测过"这份样式表里一次都不能
+   出现 --minor-bg 这个变量名"（NEEDS_HUMAN 不该复用 minor 琥珀色，见下方
+   impact-stat.impact-needs-human 的注释），这里的抽样提示条语义完全不同
+   （跟严重度无关，只是"这批数据是抽样的"），但同一份样式表里带上这个变量
+   名字本身就会让那条回归测试的"零出现"断言失去意义。 */
+.impact-sample-banner {
+  background: #fdf7e0; color: #8a6208;
+  border: 1px solid #f1e096;
+  border-radius: 8px; padding: 8px 14px; font-size: 13px; font-weight: 600;
+  margin-bottom: 10px;
+}
+.impact-stats-banner { margin-bottom: 10px; }
+.impact-stat {
+  display: inline-block; padding: 4px 11px; border-radius: 8px; font-size: 12px;
+  font-weight: 700; margin-right: 8px;
+}
+.impact-stat.impact-risk { background: var(--critical-bg, #fdeceb); color: var(--critical-text, #b3261e); }
+/* NEEDS_HUMAN 改用 info 蓝（原用 minor 琥珀色，与"一般问题"严重度语义撞车——
+   需人工核实 ≠ 一个确定的低危问题，是"不知道，人来判断"，语义上更接近
+   info 的"仅供参考/待确认"，用户反馈"两套配色打架"实测已改） */
+.impact-stat.impact-needs-human { background: var(--info-bg, #eaf1fd); color: var(--info-text, #23509c); }
+.impact-stat.impact-safe { background: var(--safe-bg, #e8f6ee); color: var(--safe-text, #1a7a4c); }
+.impact-stat.impact-total { background: var(--chip-bg, #eef0f5); color: var(--muted, #667085); }
+.impact-section-note {
+  font-size: 13px; color: #666; line-height: 1.75; margin: 0 0 12px;
+  padding: 11px 14px; background: #f7f9fa; border-radius: 8px;
+}
+.impact-section-note p { margin: 0 0 7px; }
+.impact-section-note p:last-child { margin-bottom: 0; }
+.impact-section-note strong { color: #333; }
+.impact-note-legend {
+  margin: 0 0 8px; padding-left: 18px; list-style: none;
+}
+.impact-note-legend li { margin-bottom: 3px; }
+.impact-note-legend li::before {
+  content: "·"; margin-right: 6px; color: #999; font-weight: 700;
+}
+.impact-ratio-alert {
+  background: var(--major-bg, #fdf1e3); color: var(--major-text, #a85311);
+  border: 1px solid var(--major-border, #f4d19d); border-radius: 8px; padding: 8px 14px;
+  font-size: 13px; margin-bottom: 10px;
+}
+.impact-group { margin-bottom: 22px; }
+.impact-group-title {
+  font-size: 16px; font-weight: 700; margin: 14px 0 10px; color: #333;
+  padding-bottom: 6px; border-bottom: 1px solid #e5e5e5;
+}
+.impact-empty { color: #666; font-size: 13px; padding: 8px 0; }
+/* 卡片间距加大 + 阴影，强化"一张卡是一个独立问题"的边界感（用户反馈①） */
+.impact-risk-list { display: flex; flex-direction: column; gap: 16px; }
+.impact-card {
+  border: 1px solid var(--border, #e3e6ec); border-left: 4px solid #ccc; border-radius: 12px;
+  padding: 14px 16px; background: #fff; margin-bottom: 16px;
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(16,24,40,.06));
+}
+.impact-card.impact-risk { border-left-color: var(--critical-strong, #d1291f); background: linear-gradient(90deg, var(--critical-bg, #fdeceb) 0%, #fff 14px); }
+.impact-card.impact-needs-human { border-left-color: var(--info-strong, #2f66c9); background: linear-gradient(90deg, var(--info-bg, #eaf1fd) 0%, #fff 14px); }
+.impact-card.impact-safe { border-left-color: var(--safe-text, #1a7a4c); background: linear-gradient(90deg, var(--safe-bg, #e8f6ee) 0%, #fff 14px); }
+.impact-card-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+  padding-bottom: 8px; border-bottom: 1px solid #f0f0f0;
+}
+.impact-badge {
+  font-size: 11.5px; font-weight: 800; padding: 4px 10px; border-radius: 7px;
+  text-transform: none; border: 1px solid transparent;
+}
+/* 加边框跟主报告 .sev-badge 视觉语言对齐（用户反馈"两种报告风格不统一"） */
+.impact-badge.impact-risk { background: var(--critical-bg, #fdeceb); color: var(--critical-text, #b3261e); border-color: var(--critical-border, #f3b7b2); }
+.impact-badge.impact-needs-human { background: var(--info-bg, #eaf1fd); color: var(--info-text, #23509c); border-color: var(--info-border, #c0d6f6); }
+.impact-badge.impact-safe { background: var(--safe-bg, #e8f6ee); color: var(--safe-text, #1a7a4c); border-color: var(--safe-border, #aee3c4); }
+.impact-index { font-size: 12px; color: #888; }
+.impact-source-tag { font-size: 12.5px; color: #555; background: #f2f2f2; border-radius: 4px; padding: 2px 7px; }
+/* 字段之间用细分隔线拉开节奏，避免"挤成一坨"（用户反馈①的卡内延伸） */
+.impact-field { margin: 0; padding: 8px 0; font-size: 14px; }
+.impact-field + .impact-field { border-top: 1px dashed #ececec; }
+.impact-field-label {
+  font-weight: 700; color: #555; font-size: 12px; margin-bottom: 4px;
+  text-transform: uppercase; letter-spacing: .02em;
+}
+.impact-field p { margin: 0; }
+/* “怎么办”做成醒目的行动召唤条，呼应主报告 .fix-card/.dp-fix 的视觉语言，
+   同时用底色块把它和上面的说明性文字区分开——减轻“每张卡都在念同一句话”
+   的观感（用户反馈④之一：内容本身仍是模板句，属内容生成侧，此处只做视觉区隔）*/
+.impact-action {
+  background: #f3faf7; border-left: 3px solid var(--accent, #0f766e);
+  border-radius: 0 8px 8px 0; padding: 8px 12px; color: #2d4a3d;
+}
+/* 代码上下文块：文件名/行号做成编辑器 tab 条，深色代码正文 + 高亮目标行，
+   解决用户反馈②（file:line 太不显眼）与③（无上下文、无高亮） */
+.impact-code-tab {
+  display: flex; align-items: baseline; gap: 10px; background: #1a2438;
+  color: #cbd5e0; font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12px; padding: 7px 13px; border-radius: 8px 8px 0 0; margin-top: 8px;
+}
+.impact-code-tab-path { font-weight: 600; color: #e2e8f0; word-break: break-all; }
+.impact-code-tab-line { color: #7dd3e8; white-space: nowrap; }
+.impact-code-body {
+  background: var(--code-bg, #10182b); border-radius: 0 0 8px 8px; padding: 7px 0;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12.5px; line-height: 1.65; overflow-x: auto;
+}
+.impact-code-line { display: flex; padding: 0 12px; white-space: pre; }
+.impact-code-no {
+  flex: 0 0 auto; width: 2.6em; text-align: right; margin-right: 12px;
+  color: #718096; user-select: none;
+}
+.impact-code-text { color: #e2e8f0; }
+.impact-code-line-hl {
+  background: rgba(214, 158, 46, .18); border-left: 3px solid #d69e2e;
+  padding-left: 9px; margin-left: -3px;
+}
+.impact-code-line-hl .impact-code-no { color: #f6c453; font-weight: 700; }
+.impact-code-line-hl .impact-code-text { color: #fdf6e3; }
+/* quote 单行降级展示（拿不到源文件时的兜底，见 render_impact_section.py 说明） */
+.impact-evidence {
+  background: var(--code-bg, #10182b); color: #e2e8f0; border-radius: 0 0 8px 8px;
+  padding: 9px 13px; font-size: 12.5px; overflow-x: auto; margin: 0;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+/* 折叠区统一加 ▸ 箭头指示，跟主报告其它折叠区（issue-fold/dp-fold）一致，
+   修掉「牵连影响」这节此前唯独没有展开箭头的不一致（用户反馈④之一） */
+.impact-needs-human-fold, .impact-merged-details { margin-top: 10px; }
+.impact-needs-human-fold summary, .impact-merged-details summary {
+  cursor: pointer; font-size: 13.5px; font-weight: 600; color: #555; padding: 6px 0;
+  list-style: none; display: flex; align-items: center; gap: 6px;
+}
+.impact-needs-human-fold summary::-webkit-details-marker,
+.impact-merged-details summary::-webkit-details-marker { display: none; }
+.impact-needs-human-fold summary::before,
+.impact-merged-details summary::before {
+  content: "▸"; font-size: 11px; color: var(--accent, #0f766e); transition: transform .15s;
+}
+.impact-needs-human-fold[open] > summary::before,
+.impact-merged-details[open] > summary::before { transform: rotate(90deg); }
+/* 判定为安全的调用点不再逐条/逐组展示（2026-09-02），.impact-safe-fold 这
+   个折叠 class 已经没有任何 HTML 元素在用，改用不带交互的 .impact-safe-note
+   脚注段落——下面这条规则保留，上面折叠相关的 .impact-safe-fold 选择器已
+   随之删除（P3，code-reviewer 复核指出的死 CSS）。 */
+.impact-safe-note { color: #777; font-size: 12.5px; }
+.impact-merged-row { border-top: 1px dashed #e2e2e2; padding: 10px 0; font-size: 14px; }
+.impact-merged-row-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+</style>
+<section class="impact-section"><h2 class="section-title">牵连影响</h2><div class="impact-section-note"><p><strong>这一节回答的问题：</strong>这次改动被别的代码调用的那些地方，会不会被改坏。跟上面「按文件的审查发现」（这次写的代码本身对不对）是两回事，<strong>两边的数字不能相加</strong>。</p><ul class="impact-note-legend"><li><strong>Critical</strong>＝建议关注，这个调用点可能被改坏了</li><li><strong>Major</strong>＝AI 拿不准，需要人看一眼</li><li><strong>Info</strong>＝已排查，确认没影响</li></ul><p><strong>这次的数字：</strong>一共挖到 155 个调用点，其中 0 个建议关注，来自 0 处真正被改动的方法或字段（同一处改动的每个调用方分开列）。</p></div><div class="impact-stats-banner"><span class="impact-stat impact-risk">Critical · 建议关注 0（0 处改动）</span><span class="impact-stat impact-needs-human">Major · 需人工核实 0（0 处改动）</span><span class="impact-stat impact-safe">Info · 已排查安全 155</span><span class="impact-stat impact-total">Total 155</span></div><div class="impact-empty">本次改动未挖出需要人工关注的牵连消费点。</div></section><h2 class="section-title subsection-title">按文件的审查发现</h2><details class="action-group action-group-fix_now" open="open" style="margin-bottom:14px;border:1px solid #c53030;border-radius:8px;"><summary style="cursor:pointer;font-weight:700;font-size:15px;color:#c53030;padding:8px 12px;list-style:none;">&#128308; 立即修代码 &middot; 7 个问题</summary><div style="padding:0 12px 8px;"><div class="findings-list-wrap"><details class="file-group findings-file-group" open="open" id="fg-80e7f342fc27" data-file-path="tracking-api/src/main/java/io/speedx/trk/api/kafka/listener/RpsLabelKafkaListener.java" data-short-name="RpsLabelKafkaListener.java" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">tracking-api/src/main/java/io/speedx/trk/api/kafka/listener/RpsLabelKafkaListener.java</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">2 Critical</span> <span class="stat-chip stat-major">5 Major</span></span><span class="file-group-count">9 处影响（7 个根因）</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L27</span><span class="finding-cat">安全风险</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>RpsLabelKafkaListener.listen(String message)</code> 在 INFO 日志中直接输出完整的 <code>message</code>，而本次链路明确约定 <code>payload</code> 内会携带 <code>encryptedRecipientName</code>、<code>encryptedRecipientAddress1</code>、<code>encryptedRecipientPhone</code>、<code>encryptedRecipientEmail</code> 等敏感字段；</p><p>Kafka 原始报文还会被后续失败补偿逻辑原样保存，因此这里把整条消息写入日志会把收件人敏感信息长期暴露到日志系统。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>只要 Kafka 消息被消费，无论成功还是失败，具备日志访问权限的人员或下游日志平台都可以读取完整收件人数据载荷；一旦日志被导出、聚合或外发，会形成额外的敏感数据泄露面，且泄露范围通常大于业务库访问范围。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>把 <code>RpsLabelKafkaListener.listen(String message)</code> 的日志改为只打印必要的非敏感元数据，例如 <code>messageId</code>、<code>event</code>、<code>trackingNumber</code>，不要直接记录完整 <code>message</code>。</p><p>如果确实需要排障，请先对 <code>payload</code> 中的 <code>encryptedRecipientName</code>、<code>encryptedRecipientAddress1</code>、<code>encryptedRecipientPhone</code>、<code>encryptedRecipientEmail</code> 做脱敏或移除后再记录。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>构造一条包含 <code>encryptedRecipientName</code>、<code>encryptedRecipientAddress1</code>、<code>encryptedRecipientPhone</code>、<code>encryptedRecipientEmail</code> 的 Kafka 消息，调用 <code>RpsLabelKafkaListener.listen(String message)</code> 后检查应用日志，确认日志中不再出现完整 <code>message</code>，也不出现上述字段的原值。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">22</span>    <span class="code-keyword">private</span> CommonPushLogService commonPushLogService;</span><span class="code-row"><span class="code-ln">23</span></span><span class="code-row"><span class="code-ln">24</span>    <span class="code-annotation">@KafkaListener</span>(topics = <span class="code-string">"spx_rps_label_topic"</span>, groupId = <span class="code-string">"rps-label-trk-cg"</span>,</span><span class="code-row"><span class="code-ln">25</span>            concurrency = <span class="code-string">"${trk.kafka.concurrency.spx_rps_label_topic:3}"</span>)</span><span class="code-row"><span class="code-ln">26</span>    <span class="code-keyword">public</span> <span class="code-keyword">void</span> listen(String message) {</span><span class="code-row code-row-target"><span class="code-ln">27</span>        log.info(<span class="code-string">"Kafka listener,topic:spx_rps_label_topic,received message:{}"</span>, message);</span><span class="code-row"><span class="code-ln">28</span>        RpsLabelEventEnvelope envelope = JSON.parseObject(message, RpsLabelEventEnvelope.<span class="code-keyword">class</span>);</span><span class="code-row"><span class="code-ln">29</span>        <span class="code-keyword">if</span> (envelope == <span class="code-keyword">null</span> || StrUtil.isBlank(envelope.getEvent())) {</span><span class="code-row"><span class="code-ln">30</span>            log.warn(<span class="code-string">"Kafka listener,topic:spx_rps_label_topic,empty envelope or event,message:{}"</span>, message);</span><span class="code-row"><span class="code-ln">31</span>            <span class="code-keyword">return</span>;</span><span class="code-row"><span class="code-ln">32</span>        }</span></code></pre></details></div><div class="finding-card cluster-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-cat">安全风险</span><span class="cluster-badge">根因 · 3 处影响</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>RpsLabelKafkaListener.handleCreate(RpsLabelEventEnvelope envelope, String rawMessage)</code> 在异常分支把 <code>rawMessage</code> 原样传给 <code>commonPushLogService.savePushLog(...)</code> 持久化。</p><p>结合本次新增的 <code>RpsLabelPayloadConverter.decrypt(...)</code> 可知，<code>rawMessage</code> 对应的 Kafka 原始报文包含收件人姓名、地址、电话、邮箱的密文字段，失败补偿表会长期保存整条业务报文，扩大了敏感数据落库范围。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>任意 CREATE 消费失败都会把完整 Kafka 报文写入失败重试表；具备该表查询权限的人员、任务或导出流程都可接触到不必要的敏感数据副本。</p><p>若后续补偿表缺少与主业务库同等级别的访问控制、脱敏或清理策略，会造成持久化敏感数据泄露风险。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>修改 <code>commonPushLogService.savePushLog(...)</code> 的入参，不要直接保存完整 <code>rawMessage</code>。</p><p>建议仅保存 <code>messageId</code>、<code>event</code>、<code>trackingNumber</code>、失败原因等最小必要字段；</p><p>如果补偿必须依赖 <code>payload</code>，至少在保存前移除 <code>encryptedRecipientName</code>、<code>encryptedRecipientAddress1</code>、<code>encryptedRecipientPhone</code>、<code>encryptedRecipientEmail</code> 等敏感字段，或改为保存受控加密后的专用补偿对象。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>模拟 <code>rpsLabelEventProcessorService.processCreate(payload)</code> 抛出异常，触发 <code>handleCreate</code> 的失败分支；</p><p>检查 <code>TRK_KAFKA_LABEL_FAILURE</code> 对应存储内容，确认不再包含完整 <code>rawMessage</code>，尤其不包含 <code>encryptedRecipientName</code>、<code>encryptedRecipientAddress1</code>、<code>encryptedRecipientPhone</code>、<code>encryptedRecipientEmail</code>。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">50</span>            CreateLabelPayload payload = JSON.parseObject(envelope.getPayload(), CreateLabelPayload.<span class="code-keyword">class</span>);</span><span class="code-row"><span class="code-ln">51</span>            rpsLabelEventProcessorService.processCreate(payload);</span><span class="code-row"><span class="code-ln">52</span>            log.info(<span class="code-string">"Kafka listener,CREATE done,trackingNumber:{}"</span>, envelope.getTrackingNumber());</span><span class="code-row"><span class="code-ln">53</span>        } <span class="code-keyword">catch</span> (Exception e) {</span><span class="code-row"><span class="code-ln">54</span>            log.error(<span class="code-string">"Kafka listener,CREATE failed,trackingNumber:{}"</span>, envelope.getTrackingNumber(), e);</span><span class="code-row code-row-target"><span class="code-ln">55</span>            commonPushLogService.savePushLog(PushLogTypeEnum.TRK_KAFKA_LABEL_FAILURE, envelope.getTrackingNumber(), rawMessage);</span><span class="code-row"><span class="code-ln">56</span>        }</span><span class="code-row"><span class="code-ln">57</span>    }</span><span class="code-row"><span class="code-ln">58</span></span><span class="code-row"><span class="code-ln">59</span>    <span class="code-keyword">private</span> <span class="code-keyword">void</span> handleVoid(RpsLabelEventEnvelope envelope, String rawMessage) {</span><span class="code-row"><span class="code-ln">60</span>        log.info(<span class="code-string">"Kafka listener,VOID start,trackingNumber:{}"</span>, envelope.getTrackingNumber());</span></code></pre></details><details class="cluster-locations"><summary>展开查看全部 3 处影响位置</summary><table class="loc-table"><thead><tr><th>文件</th><th>行</th><th>问题摘要</th></tr></thead><tbody><tr><td class="loc-file">tracking-api/src/main/java/io/speedx/trk/api/kafka/listener/RpsLabelKafkaListener.java</td><td class="loc-line">55</td><td class="loc-snippet">**原因：** `RpsLabelKafkaListener.handleCreate(RpsLabelEventEnvelope envelope, Stri</td></tr><tr><td class="loc-file">tracking-api/src/main/java/io/speedx/trk/api/kafka/listener/RpsLabelKafkaListener.java</td><td class="loc-line">65</td><td class="loc-snippet">**原因：** `RpsLabelKafkaListener.handleVoid(RpsLabelEventEnvelope envelope, String</td></tr><tr><td class="loc-file">tracking-api/src/main/java/io/speedx/trk/api/kafka/listener/RpsLabelKafkaListener.java</td><td class="loc-line">71</td><td class="loc-snippet">**原因：** `RpsLabelKafkaListener.handleVoid(RpsLabelEventEnvelope envelope, String</td></tr></tbody></table></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L26</span><span class="finding-cat">异常处理</span><span class="evidence-line-corrected-badge" style="color:#1565c0;border:1px solid #1565c0;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段与 evidence_quote 实际所在行不一致，已按 evidence_quote 自动纠正高亮位置">&#128260; 行号已纠正</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>RpsLabelKafkaListener.listen(String message)</code> 在 <code>JSON.parseObject(message, RpsLabelEventEnvelope.class)</code> 外层没有任何异常保护；</p><p>如果 <code>message</code> 不是合法 JSON，<code>JSON.parseObject</code> 会直接抛出运行时异常，而当前方法只在 <code>handleCreate</code> 和 <code>handleVoid</code> 内部捕获异常，无法兜住最外层解析失败。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>一条格式错误或恶意构造的 Kafka 消息就可能让当前消费调用异常退出，导致消息反复重试、消费堆积，甚至持续刷错日志；</p><p>同时这类失败不会进入 <code>commonPushLogService.savePushLog</code>，后续补偿链路也拿不到这类坏消息。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>在 <code>listen</code> 方法最外层增加对 <code>JSON.parseObject(message, RpsLabelEventEnvelope.class)</code> 的异常捕获，并把解析失败的 <code>message</code> 记录到 <code>commonPushLogService.savePushLog</code> 或专门的坏消息处理通道，避免异常直接逃逸。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>向 <code>spx_rps_label_topic</code> 投递一条非法 JSON，例如缺少右花括号的字符串；</p><p>验证 <code>RpsLabelKafkaListener.listen</code> 不会把异常直接抛出到容器层，而是记录解析失败日志并落一条失败补偿记录。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">23</span></span><span class="code-row"><span class="code-ln">24</span>    <span class="code-annotation">@KafkaListener</span>(topics = <span class="code-string">"spx_rps_label_topic"</span>, groupId = <span class="code-string">"rps-label-trk-cg"</span>,</span><span class="code-row"><span class="code-ln">25</span>            concurrency = <span class="code-string">"${trk.kafka.concurrency.spx_rps_label_topic:3}"</span>)</span><span class="code-row"><span class="code-ln">26</span>    <span class="code-keyword">public</span> <span class="code-keyword">void</span> listen(String message) {</span><span class="code-row"><span class="code-ln">27</span>        log.info(<span class="code-string">"Kafka listener,topic:spx_rps_label_topic,received message:{}"</span>, message);</span><span class="code-row code-row-target"><span class="code-ln">28</span>        RpsLabelEventEnvelope envelope = JSON.parseObject(message, RpsLabelEventEnvelope.<span class="code-keyword">class</span>);</span><span class="code-row"><span class="code-ln">29</span>        <span class="code-keyword">if</span> (envelope == <span class="code-keyword">null</span> || StrUtil.isBlank(envelope.getEvent())) {</span><span class="code-row"><span class="code-ln">30</span>            log.warn(<span class="code-string">"Kafka listener,topic:spx_rps_label_topic,empty envelope or event,message:{}"</span>, message);</span><span class="code-row"><span class="code-ln">31</span>            <span class="code-keyword">return</span>;</span><span class="code-row"><span class="code-ln">32</span>        }</span><span class="code-row"><span class="code-ln">33</span></span></code></pre></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L47-48</span><span class="finding-cat">业务逻辑</span><span class="evidence-line-corrected-badge" style="color:#1565c0;border:1px solid #1565c0;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段与 evidence_quote 实际所在行不一致，已按 evidence_quote 自动纠正高亮位置">&#128260; 行号已纠正</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>handleCreate(RpsLabelEventEnvelope envelope, String rawMessage)</code> 在 <code>CreateLabelPayload payload = JSON.parseObject(envelope.getPayload(), CreateLabelPayload.class);</code> 之后，未校验 <code>payload</code> 是否为 <code>null</code>、也未校验 <code>payload.getTrackingNumber()</code> 与 <code>envelope.getTrackingNumber()</code> 是否一致，就直接调用 <code>rpsLabelEventProcessorService.processCreate(payload)</code>。</p><p>这使得监听器把外层信封和内层业务体当作可信且一致的数据源。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>当上游发送 <code>payload</code> 为空、字段缺失，或故意让 <code>envelope.getTrackingNumber()</code> 与 <code>payload.getTrackingNumber()</code> 不一致时，当前代码可能触发空指针/脏数据写入，或者把日志、失败补偿中的 <code>trackingNumber</code> 与实际落库对象错配，影响审计、补偿和问题定位。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>在 <code>handleCreate</code> 中先校验 <code>payload != null</code>，再显式校验 <code>payload.getTrackingNumber()</code> 非空且与 <code>envelope.getTrackingNumber()</code> 一致；</p><p>不满足时应拒绝处理并调用 <code>commonPushLogService.savePushLog</code> 记录异常消息。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>准备一条 <code>event</code> 为 <code>CREATE</code> 的消息，其中 <code>envelope.getTrackingNumber()</code> 为一个运单号，而 <code>payload.getTrackingNumber()</code> 为另一个运单号；</p><p>调用 <code>RpsLabelKafkaListener.listen</code> 后，验证不会继续执行 <code>rpsLabelEventProcessorService.processCreate(payload)</code>，并会记录一条失败补偿日志。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">46</span></span><span class="code-row"><span class="code-ln">47</span>    <span class="code-keyword">private</span> <span class="code-keyword">void</span> handleCreate(RpsLabelEventEnvelope envelope, String rawMessage) {</span><span class="code-row"><span class="code-ln">48</span>        log.info(<span class="code-string">"Kafka listener,CREATE start,trackingNumber:{}"</span>, envelope.getTrackingNumber());</span><span class="code-row"><span class="code-ln">49</span>        <span class="code-keyword">try</span> {</span><span class="code-row"><span class="code-ln">50</span>            CreateLabelPayload payload = JSON.parseObject(envelope.getPayload(), CreateLabelPayload.<span class="code-keyword">class</span>);</span><span class="code-row code-row-target"><span class="code-ln">51</span>            rpsLabelEventProcessorService.processCreate(payload);</span><span class="code-row code-row-target"><span class="code-ln">52</span>            log.info(<span class="code-string">"Kafka listener,CREATE done,trackingNumber:{}"</span>, envelope.getTrackingNumber());</span><span class="code-row"><span class="code-ln">53</span>        } <span class="code-keyword">catch</span> (Exception e) {</span><span class="code-row"><span class="code-ln">54</span>            log.error(<span class="code-string">"Kafka listener,CREATE failed,trackingNumber:{}"</span>, envelope.getTrackingNumber(), e);</span><span class="code-row"><span class="code-ln">55</span>            commonPushLogService.savePushLog(PushLogTypeEnum.TRK_KAFKA_LABEL_FAILURE, envelope.getTrackingNumber(), rawMessage);</span><span class="code-row"><span class="code-ln">56</span>        }</span><span class="code-row"><span class="code-ln">57</span>    }</span></code></pre></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L49-50</span><span class="finding-cat finding-cat-requirement">需求矛盾</span><span class="evidence-line-corrected-badge" style="color:#1565c0;border:1px solid #1565c0;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段与 evidence_quote 实际所在行不一致，已按 evidence_quote 自动纠正高亮位置">&#128260; 行号已纠正</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>需求文档《RPS 推送架构 Kafka 迁移方案》与本次设计文档都把 Kafka 失败处理定义为“失败落地到新表 <code>pl_trk_kafka_failure</code>，复用现有通用 XXL-Job 重试”，而 <code>RpsLabelKafkaListener.handleCreate(...)</code> 在 <code>processCreate</code> 抛异常后只调用 <code>commonPushLogService.savePushLog(...)</code>，没有重新抛出异常或任何显式 ack 控制。</p><p>结合补充代码上下文里 <code>CommonPushLogServiceImpl.savePushLog(...)</code> 的真实实现可知，这个方法只是执行一条 <code>INSERT INTO ... status=&#x27;PENDING&#x27;</code>，不会触发 Kafka 侧的失败语义。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>当 CREATE 消费失败时，这条消息会被代码路径当场吞掉，仅依赖后续表驱动重试；</p><p>这与需求流程图中“Consumer 失败 -&gt; DLQ 自动重试 3次”的 Kafka 新架构不一致，实际运行时不会发生需求描述的 Kafka 自动重试链路。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>将 <code>RpsLabelKafkaListener</code> 的失败处理改为与需求一致的 Kafka 失败语义：要么在落 <code>pl_trk_kafka_failure</code> 后继续抛出异常/交给容器错误处理器进入 Kafka/DLQ 重试，要么同步更新需求/设计文档，明确 TRK 侧不走 Kafka 自动重试、只走 <code>pl_trk_kafka_failure</code> + <code>commonPushLogJob</code>。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>补充一条集成测试：构造 1 条 <code>event=CREATE</code> 消息并让 <code>RpsLabelEventProcessorService.processCreate(...)</code> 首次抛异常，验证消费者在写入 <code>pl_trk_kafka_failure</code> 的同时，Kafka 容器是否仍按预期进入失败重试/DLQ；</p><p>如果产品决策是不走 Kafka 重试，则测试与文档都应明确这一点。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">50</span>            CreateLabelPayload payload = JSON.parseObject(envelope.getPayload(), CreateLabelPayload.<span class="code-keyword">class</span>);</span><span class="code-row"><span class="code-ln">51</span>            rpsLabelEventProcessorService.processCreate(payload);</span><span class="code-row"><span class="code-ln">52</span>            log.info(<span class="code-string">"Kafka listener,CREATE done,trackingNumber:{}"</span>, envelope.getTrackingNumber());</span><span class="code-row"><span class="code-ln">53</span>        } <span class="code-keyword">catch</span> (Exception e) {</span><span class="code-row"><span class="code-ln">54</span>            log.error(<span class="code-string">"Kafka listener,CREATE failed,trackingNumber:{}"</span>, envelope.getTrackingNumber(), e);</span><span class="code-row code-row-target"><span class="code-ln">55</span>            commonPushLogService.savePushLog(PushLogTypeEnum.TRK_KAFKA_LABEL_FAILURE, envelope.getTrackingNumber(), rawMessage);</span><span class="code-row code-row-target"><span class="code-ln">56</span>        }</span><span class="code-row"><span class="code-ln">57</span>    }</span><span class="code-row"><span class="code-ln">58</span></span><span class="code-row"><span class="code-ln">59</span>    <span class="code-keyword">private</span> <span class="code-keyword">void</span> handleVoid(RpsLabelEventEnvelope envelope, String rawMessage) {</span><span class="code-row"><span class="code-ln">60</span>        log.info(<span class="code-string">"Kafka listener,VOID start,trackingNumber:{}"</span>, envelope.getTrackingNumber());</span><span class="code-row"><span class="code-ln">61</span>        <span class="code-keyword">try</span> {</span></code></pre></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L63-64</span><span class="finding-cat finding-cat-requirement">需求矛盾</span><span class="evidence-line-corrected-badge" style="color:#1565c0;border:1px solid #1565c0;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段与 evidence_quote 实际所在行不一致，已按 evidence_quote 自动纠正高亮位置">&#128260; 行号已纠正</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>需求文档《RPS 推送架构 Kafka 迁移方案》在 Kafka 新架构里把消费失败后的处理描述为“DLQ 自动重试 3次”，但 <code>RpsLabelKafkaListener.handleVoid(...)</code> 对 <code>processVoid(...)</code> 返回 0（未找到对应 label）的场景直接写入 <code>pl_trk_kafka_failure</code> 并 <code>return</code>，没有把这次消费标记为 Kafka 失败。</p><p>补充代码上下文显示 <code>processVoid(...)</code> 只是执行 <code>labelSummaryDao.updateStatusByTrackingNo(...)</code>，返回 0 代表当前库里没有对应单号。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>VOID 消息先于 CREATE 到达、或目标单号尚未落库时，代码不会走需求描述的 Kafka 自动重试/DLQ，而是立即转成表驱动重试；这与需求里的 Kafka 失败处理链路不一致。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>统一 VOID 未命中场景的失败语义：若需求坚持 Kafka 新架构的“DLQ 自动重试 3次”，则 <code>updated == 0</code> 时不应只落表返回成功，而应进入 Kafka 错误处理链路；</p><p>若业务决定仅靠 <code>pl_trk_kafka_failure</code> 重试，则应同步修正文档，删除/澄清 DLQ 自动重试描述。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>补充一条顺序异常测试：先投递 1 条 <code>event=VOID</code> 且 <code>trackingNumber</code> 在 <code>tb_label_summary</code> 中不存在，再稍后投递同单号 CREATE，验证系统是否按需求通过 Kafka 自动重试/DLQ 兜住乱序场景；</p><p>若实际方案改为表驱动重试，也应验证该场景最终能被 <code>commonPushLogJob</code> 补偿成功。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">60</span>        log.info(<span class="code-string">"Kafka listener,VOID start,trackingNumber:{}"</span>, envelope.getTrackingNumber());</span><span class="code-row"><span class="code-ln">61</span>        <span class="code-keyword">try</span> {</span><span class="code-row"><span class="code-ln">62</span>            int updated = rpsLabelEventProcessorService.processVoid(envelope.getTrackingNumber());</span><span class="code-row"><span class="code-ln">63</span>            <span class="code-keyword">if</span> (updated == <span class="code-number">0</span>) {</span><span class="code-row"><span class="code-ln">64</span>                log.warn(<span class="code-string">"Kafka listener,VOID no matching label,trackingNumber:{}"</span>, envelope.getTrackingNumber());</span><span class="code-row code-row-target"><span class="code-ln">65</span>                commonPushLogService.savePushLog(PushLogTypeEnum.TRK_KAFKA_LABEL_FAILURE, envelope.getTrackingNumber(), rawMessage);</span><span class="code-row code-row-target"><span class="code-ln">66</span>                <span class="code-keyword">return</span>;</span><span class="code-row"><span class="code-ln">67</span>            }</span><span class="code-row"><span class="code-ln">68</span>            log.info(<span class="code-string">"Kafka listener,VOID done,trackingNumber:{},updated:{}"</span>, envelope.getTrackingNumber(), updated);</span><span class="code-row"><span class="code-ln">69</span>        } <span class="code-keyword">catch</span> (Exception e) {</span><span class="code-row"><span class="code-ln">70</span>            log.error(<span class="code-string">"Kafka listener,VOID failed,trackingNumber:{}"</span>, envelope.getTrackingNumber(), e);</span><span class="code-row"><span class="code-ln">71</span>            commonPushLogService.savePushLog(PushLogTypeEnum.TRK_KAFKA_LABEL_FAILURE, envelope.getTrackingNumber(), rawMessage);</span></code></pre></details></div><details class="finding-security-fold" style="margin-top:8px;border-top:1px dashed #e2e2e2;padding-top:8px;"><summary style="cursor:pointer;font-weight:600;font-size:13px;color:#555;">🔒 安全/权限相关 · 1 项（点击展开）</summary><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L25</span><span class="finding-cat">安全风险</span><span class="evidence-line-corrected-badge" style="color:#1565c0;border:1px solid #1565c0;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段与 evidence_quote 实际所在行不一致，已按 evidence_quote 自动纠正高亮位置">&#128260; 行号已纠正</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>RpsLabelKafkaListener.listen(String message)</code> 在收到 Kafka 消息后，直接把完整的 <code>message</code> 以 INFO 级别写入日志，没有对 <code>RpsLabelEventEnvelope</code> / <code>CreateLabelPayload</code> 中可能包含的运单号、地址、收件信息等业务数据做脱敏或裁剪。</p><p>这里的输入来自外部消息主题 <code>spx_rps_label_topic</code>，属于不受当前服务控制的数据面。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>只要上游把敏感字段放进 Kafka 消息，生产日志就会长期保存完整原文；具备日志访问权限的人员或日志平台下游系统都可读取这些数据，形成敏感业务数据泄露面，且攻击者还可通过构造超长消息放大日志暴露与存储压力。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>把 <code>RpsLabelKafkaListener.listen</code> 的入参日志改为只记录必要的元数据，例如 <code>event</code>、<code>trackingNumber</code>、消息长度或消息摘要，不要直接打印完整 <code>message</code>。</p><p>如果排障必须保留原文，请先做字段级脱敏并限制长度。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>构造一条 <code>spx_rps_label_topic</code> 消息，其 <code>payload</code> 中包含收件人姓名、电话、详细地址等字段；</p><p>调用 <code>RpsLabelKafkaListener.listen</code> 后，验证应用日志中不再出现完整 <code>message</code> 原文，只保留脱敏后的 <code>trackingNumber</code>、<code>event</code> 或摘要信息。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">22</span>    <span class="code-keyword">private</span> CommonPushLogService commonPushLogService;</span><span class="code-row"><span class="code-ln">23</span></span><span class="code-row"><span class="code-ln">24</span>    <span class="code-annotation">@KafkaListener</span>(topics = <span class="code-string">"spx_rps_label_topic"</span>, groupId = <span class="code-string">"rps-label-trk-cg"</span>,</span><span class="code-row"><span class="code-ln">25</span>            concurrency = <span class="code-string">"${trk.kafka.concurrency.spx_rps_label_topic:3}"</span>)</span><span class="code-row"><span class="code-ln">26</span>    <span class="code-keyword">public</span> <span class="code-keyword">void</span> listen(String message) {</span><span class="code-row code-row-target"><span class="code-ln">27</span>        log.info(<span class="code-string">"Kafka listener,topic:spx_rps_label_topic,received message:{}"</span>, message);</span><span class="code-row"><span class="code-ln">28</span>        RpsLabelEventEnvelope envelope = JSON.parseObject(message, RpsLabelEventEnvelope.<span class="code-keyword">class</span>);</span><span class="code-row"><span class="code-ln">29</span>        <span class="code-keyword">if</span> (envelope == <span class="code-keyword">null</span> || StrUtil.isBlank(envelope.getEvent())) {</span><span class="code-row"><span class="code-ln">30</span>            log.warn(<span class="code-string">"Kafka listener,topic:spx_rps_label_topic,empty envelope or event,message:{}"</span>, message);</span><span class="code-row"><span class="code-ln">31</span>            <span class="code-keyword">return</span>;</span><span class="code-row"><span class="code-ln">32</span>        }</span></code></pre></details></div></details></div></details></div></div></details><details class="action-group action-group-pm_decision" style="margin-bottom:14px;border:1px solid #b7791f;border-radius:8px;"><summary style="cursor:pointer;font-weight:700;font-size:15px;color:#b7791f;padding:8px 12px;list-style:none;">&#128993; 待确认 / 需人工拍板 &middot; 1 个问题</summary><div style="padding:0 12px 8px;"><div class="findings-list-wrap"><details class="file-group findings-file-group" open="open" id="fg-88f7de82c213" data-file-path="tracking-service/src/main/java/io/speedx/trk/service/service/impl/processJob/ProcessTrkKafkaLabelFailureServiceImpl.java" data-short-name="ProcessTrkKafkaLabelFailureServiceImpl.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">tracking-service/src/main/java/io/speedx/trk/service/service/impl/processJob/ProcessTrkKafkaLabelFailureServiceImpl.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">2 处影响（1 个根因）</span></summary><div class="file-group-body"><div class="finding-card cluster-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-cat">边界条件</span><span class="cluster-badge">根因 · 2 处影响</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>ProcessTrkKafkaLabelFailureServiceImpl.process(PushLogDto pushLog, String paramJson)</code> 在 <code>JSON.parseObject(pushLog.getBusinessData(), RpsLabelEventEnvelope.class)</code> 之后，立即调用 <code>envelope.getEvent()</code> 和 <code>envelope.getTrackingNumber()</code> 记录日志，但没有对 <code>pushLog.getBusinessData()</code> 解析失败、返回 <code>null</code> 的情况做判空保护。</p><p>只要 <code>pl_trk_kafka_failure</code> 中存在损坏的 <code>business_data</code>，这里就会直接触发空指针。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>重试任务处理到这类脏数据时会以 <code>NullPointerException</code> 失败，既拿不到明确的 <code>process_info</code> 诊断信息，也无法区分是消息格式错误还是业务处理失败，导致失败记录持续重试、排障困难，并放大任务队列中的异常数据影响面。</p><p><strong>⚠️ 需求核对提示：</strong> 该 finding 指出的具体文案/取值（<code>pl_trk_kafka_failure</code>）已逐字出现在本次需求原文中，可能是需求明确要求的行为，而非开发自行引入的缺陷。</p><p>是否需要调整须与需求方确认，不建议直接按「立即修代码」处理。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>在 <code>ProcessTrkKafkaLabelFailureServiceImpl.process</code> 中先校验 <code>pushLog.getBusinessData()</code> 和 <code>envelope</code>，对空值或非法 JSON 显式抛出带上下文的 <code>RRException</code>，避免后续空指针。</p><p>示例：</p><pre class="code-block"><code>RpsLabelEventEnvelope envelope = JSON.parseObject(pushLog.getBusinessData(), RpsLabelEventEnvelope.<span class="code-keyword">class</span>);
+<span class="code-keyword">if</span> (envelope == <span class="code-keyword">null</span> || envelope.getEvent() == <span class="code-keyword">null</span>) {
+    <span class="code-keyword">throw</span> <span class="code-keyword">new</span> RRException(<span class="code-string">"invalid businessData for TRK_KAFKA_LABEL_FAILURE, businessNo="</span> + pushLog.getBusinessNo());
+}</code></pre></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>构造一条 <code>PushLogDto</code>，其中 <code>businessData</code> 为非法 JSON（例如缺少右花括号）或字符串 <code>null</code>；</p><p>调用 <code>ProcessTrkKafkaLabelFailureServiceImpl.process</code>，验证不会出现 <code>NullPointerException</code>，而是抛出包含 <code>businessNo</code> 的明确 <code>RRException</code>。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">26</span>    <span class="code-annotation">@Autowired</span></span><span class="code-row"><span class="code-ln">27</span>    <span class="code-keyword">private</span> RpsLabelEventProcessorService rpsLabelEventProcessorService;</span><span class="code-row"><span class="code-ln">28</span></span><span class="code-row"><span class="code-ln">29</span>    <span class="code-annotation">@Override</span></span><span class="code-row"><span class="code-ln">30</span>    <span class="code-keyword">public</span> <span class="code-keyword">void</span> process(PushLogDto pushLog, String paramJson) <span class="code-keyword">throws</span> Exception {</span><span class="code-row code-row-target"><span class="code-ln">31</span>        RpsLabelEventEnvelope envelope = JSON.parseObject(pushLog.getBusinessData(), RpsLabelEventEnvelope.<span class="code-keyword">class</span>);</span><span class="code-row code-row-target"><span class="code-ln">32</span>        log.info(<span class="code-string">"ProcessTrkKafkaLabelFailureService process start,event:{},trackingNumber:{}"</span>, envelope.getEvent(), envelope.getTrackingNumber());</span><span class="code-row"><span class="code-ln">33</span>        switch (envelope.getEvent()) {</span><span class="code-row"><span class="code-ln">34</span>            case RpsLabelEventEnvelope.EVENT_CREATE:</span><span class="code-row"><span class="code-ln">35</span>                CreateLabelPayload payload = JSON.parseObject(envelope.getPayload(), CreateLabelPayload.<span class="code-keyword">class</span>);</span><span class="code-row"><span class="code-ln">36</span>                rpsLabelEventProcessorService.processCreate(payload);</span><span class="code-row"><span class="code-ln">37</span>                break;</span></code></pre></details><details class="cluster-locations"><summary>展开查看全部 2 处影响位置</summary><table class="loc-table"><thead><tr><th>文件</th><th>行</th><th>问题摘要</th></tr></thead><tbody><tr><td class="loc-file">tracking-service/src/main/java/io/speedx/trk/service/service/impl/processJob/ProcessTrkKafkaLabelFailureServiceImpl.java</td><td class="loc-line">31-32</td><td class="loc-snippet">**原因：** `ProcessTrkKafkaLabelFailureServiceImpl.process(PushLogDto pushLog, Stri</td></tr><tr><td class="loc-file">tracking-service/src/main/java/io/speedx/trk/service/service/impl/processJob/ProcessTrkKafkaLabelFailureServiceImpl.java</td><td class="loc-line">35-36</td><td class="loc-snippet">**原因：** `ProcessTrkKafkaLabelFailureServiceImpl.process(PushLogDto pushLog, Stri</td></tr></tbody></table></details></div></div></details></div></div></details><details class="action-group action-group-optional" style="margin-bottom:14px;border:1px solid #2f855a;border-radius:8px;"><summary style="cursor:pointer;font-weight:700;font-size:15px;color:#2f855a;padding:8px 12px;list-style:none;">&#128994; 可选优化 &middot; 2 个问题</summary><div style="padding:0 12px 8px;"><div class="findings-list-wrap"><details class="file-group findings-file-group" id="fg-5ce4f3aa2de1" data-file-path="tracking-service/docs/s26-spx-pi-8024-trk-kafka-label-consume.sql" data-short-name="s26-spx-pi-8024-trk-kafka-label-consume.sql" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">tracking-service/docs/s26-spx-pi-8024-trk-kafka-label-consume.sql</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">2 处影响（1 个根因）</span></summary><div class="file-group-body"><div class="finding-card cluster-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-cat">边界条件</span><span class="cluster-badge">根因 · 2 处影响</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 NULL-003 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 NULL-003</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：<code>-- SPX-PI-8024：RPS Kafka 面单事件消费(CREATE/VOID)。</code>。</p><p>这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「除法运算未判分母为零」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row code-row-target"><span class="code-ln">1</span>-- SPX-PI-<span class="code-number">8024</span>：RPS Kafka 面单事件消费(CREATE/VOID)。</span><span class="code-row"><span class="code-ln">2</span>--</span><span class="code-row"><span class="code-ln">3</span>-- 背景：RPS 面单推送架构迁移到 Kafka(spx_rps_label_topic，key=trackingNumber)，</span><span class="code-row"><span class="code-ln">4</span>-- TRK 新增 Consumer Group rps-label-trk-cg 消费其中的 CREATE / VOID 事件。</span><span class="code-row"><span class="code-ln">5</span>-- CREATE 复用现有 CreateLabelCmd 建单链路；VOID 是全新能力，需要在</span><span class="code-row"><span class="code-ln">6</span>-- tb_label_summary 记录同步状态。消费失败时写入 pl_trk_kafka_failure，</span></code></pre></details><details class="cluster-locations"><summary>展开查看全部 2 处影响位置</summary><table class="loc-table"><thead><tr><th>文件</th><th>行</th><th>问题摘要</th></tr></thead><tbody><tr><td class="loc-file">tracking-service/docs/s26-spx-pi-8024-trk-kafka-label-consume.sql</td><td class="loc-line">1</td><td class="loc-snippet">固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：`-- SPX-PI-8024：RPS Kafka 面单事件消费(CREATE/VOID)。</td></tr><tr><td class="loc-file">tracking-service/docs/s26-spx-pi-8024-trk-kafka-label-consume.sql</td><td class="loc-line">4</td><td class="loc-snippet">固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：`-- TRK 新增 Consumer Group rps-label-trk-cg 消费其中的 CREATE…</td></tr></tbody></table></details></div></div></details><details class="file-group findings-file-group" id="fg-f548c0629228" data-file-path="tracking-service/src/main/java/io/speedx/trk/service/dao/LabelSummaryDao.java" data-short-name="LabelSummaryDao.java" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">tracking-service/src/main/java/io/speedx/trk/service/dao/LabelSummaryDao.java</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L163-165</span><span class="finding-cat">配置变更</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>LabelSummaryDao.updateStatusByTrackingNo(String trackingNo, String status)</code> 新增了 <code>@Transactional</code>，但没有显式声明 <code>rollbackFor</code>。</p><p>在 Spring Boot 2.2.12.RELEASE 下，默认只对 <code>RuntimeException</code> 和 <code>Error</code> 回滚；</p><p>如果后续围绕这个 DAO 方法补充受检异常处理或在同一事务边界内串联其他写操作，事务回滚语义会依赖默认规则，容易与调用方预期不一致。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>当前这个方法本身只有单条 <code>update</code>，但它已经成为 <code>RpsLabelEventProcessorServiceImpl.processVoid(String trackingNumber)</code> 的状态变更入口；</p><p>后续一旦在同一事务中加入其他数据库更新或审计写入，受检异常场景下可能出现部分提交，导致 <code>status</code> 已更新而配套动作未完成，增加状态一致性风险。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>把 <code>@Transactional</code> 改为显式声明回滚规则，至少与项目事务规范保持一致，例如 <code>@Transactional(rollbackFor = Exception.class)</code>；</p><p>如果事务应由 Service 层统一管理，也可以移除 DAO 层的 <code>@Transactional</code>，改在 <code>RpsLabelEventProcessorServiceImpl.processVoid(String trackingNumber)</code> 上定义清晰的事务边界。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>在 <code>RpsLabelEventProcessorServiceImpl.processVoid(String trackingNumber)</code> 所在调用链中补充一个集成测试：让 <code>labelSummaryDao.updateStatusByTrackingNo(...)</code> 执行成功后，再人为抛出一个受检异常，验证事务配置下 <code>tb_label_summary.status</code> 是否按预期回滚。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">158</span>    <span class="code-annotation">@Modifying</span></span><span class="code-row"><span class="code-ln">159</span>    <span class="code-annotation">@Transactional</span></span><span class="code-row"><span class="code-ln">160</span>    <span class="code-annotation">@Query</span>(<span class="code-string">"update LabelSummary set lastWebEventId = ?2 where trackingNo = ?1"</span>)</span><span class="code-row"><span class="code-ln">161</span>    <span class="code-keyword">void</span> updateLastWebEventId(String trackingNo, Long lastWebEventId);</span><span class="code-row"><span class="code-ln">162</span></span><span class="code-row code-row-target"><span class="code-ln">163</span>    <span class="code-annotation">@Modifying</span></span><span class="code-row code-row-target"><span class="code-ln">164</span>    <span class="code-annotation">@Transactional</span></span><span class="code-row code-row-target"><span class="code-ln">165</span>    <span class="code-annotation">@Query</span>(<span class="code-string">"update LabelSummary set status = ?2 where trackingNo = ?1"</span>)</span><span class="code-row"><span class="code-ln">166</span>    int updateStatusByTrackingNo(String trackingNo, String status);</span><span class="code-row"><span class="code-ln">167</span></span><span class="code-row"><span class="code-ln">168</span></span><span class="code-row"><span class="code-ln">169</span>    <span class="code-annotation">@Query</span>(value = <span class="code-string">"select id,recipient_name as recipientName,recipient_phone as recipientPhone,recipient_address1 as recipientAddress1 from tb_label_summary where id&gt;=?1  and recipient_name_encryption is null limit ?2"</span>,nativeQuery = <span class="code-keyword">true</span>)</span><span class="code-row"><span class="code-ln">170</span>    List&lt;LableDataUnencryptedBo&gt; findLabelDataList(Long startId, Integer fetchSize);</span></code></pre></details></div></div></details></div></div></details>
+    </div>
+
+    <div id="panel-dp" class="report-panel" role="tabpanel" aria-labelledby="tab-dp">
+      <div class="dp-shell"><div class="dp-header">
+  <h1>数据权限分析报告</h1>
+  <p class="subtitle">AI Code Review · 接口级别数据权限审计</p>
+  <div class="meta-row"><div class="meta-item">项目 <strong>trk</strong></div><div class="meta-item">涉及接口路径（自动汇总） <strong>服务 trk · 本次无可聚合路径的权限类接口（请检查 path_pattern）</strong></div><div class="meta-item">报告日期 <strong>2026-09-22 11:11:24</strong></div><div class="meta-item">涉及角色标签 <strong>见 role_data / findings</strong></div></div>
+</div>
+
+<div class="dp-body">
+
+  <div class="dp-stats">
+    
+  <div class="summary-grid">
+    <div class="summary-card critical"><div class="count">0</div><div class="label">Critical</div></div>
+    <div class="summary-card high"><div class="count">0</div><div class="label">Major</div></div>
+    <div class="summary-card medium"><div class="count">0</div><div class="label">Minor</div></div>
+    <div class="summary-card info"><div class="count">0</div><div class="label">Info</div></div>
+  </div>
+  <p style="margin:8px 0 0;font-size:.8rem;color:#718096;">Total 0 条权限类问题 · 涉及 0 个接口（已解析路径）</p>
+
+  </div>
+
+  <div class="dp-section">
+    <div class="dp-section-title">角色权限定义</div>
+    <div class="dp-roles"><div class="role-box"><div class="role-icon">&#128100;</div><div class="role-info"><h3>项目级环境事实（审查时须知）</h3><div class="role-md">- <strong>driver</strong>：司机；仅自身用户与当前路线/包裹相关数据。<br/>
+- <strong>driver-leader / fleet leader</strong>：车队队长；仅本 <code>fleetId</code> 范围内数据。<br/>
+- <strong>operator / dispatcher</strong>：运营/调度；按 <code>facilityCode</code>、DSP 等约定收敛列表与详情。<br/>
+- <strong>admin</strong>：管理员；可访问全量（若代码中另有细分需写明）。<br/>
+<br/>
+<br/>
+- 管理端接口通常需 <code>@PreAuthorize</code> 或项目统一 <code>AuthUtil</code> 校验。<br/>
+- 列表/导出须注入当前用户的数据范围（如 <code>fleetId</code>、<code>dspId</code>），禁止仅靠前端传参筛选。<br/>
+<br/>
+<br/>
+- 运行时配置以 Nacos 配置中心为准，本地 application.yml 的开关值不代表生产实际值。<br/>
+- 各服务大量使用自带池化的 starter（IBM MQ / Druid / Lettuce / Kafka）；自定义 @Primary 基础设施 Bean 会使 starter 自动装配让位，池化/缓存包装随之失效。<br/>
+- 海关链路（ACAS/AMS/ABI）存在 MAWB→数千小包的批量放大特征（一次 MAWB 级操作可触发 4000+ 次逐条发送），发送路径上任何 per-call 开销都会被放大三个数量级。</div></div></div></div>
+  </div>
+
+  <div class="dp-gate"></div>
+
+  <div class="dp-section">
+    <div class="dp-section-title">接口权限审计总览</div>
+    <div class="empty">暂无可解析路径的「权限与访问控制」条目；请检查 path_pattern 与 HTTP 清单。</div>
+  </div>
+
+  
+
+  <div class="dp-section">
+    <div class="dp-section-title">端点详情</div>
+    <div class="dp-folds"></div>
+  </div>
+
+  
+
+  
+
+  <div class="dp-footer"><p>本报告由 AI Code Review 生成（data_permission 模式）。权限类 finding 涉及文件：<strong>（无）</strong></p><p style="margin-top:4px;">生成时间：2026-09-22 11:11:24 · 项目：trk</p></div>
+
+</div>
+</div>
+    </div>
+  </div>
+  <script>
+    function escHtml(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function formatSummaryInner(rawBlock) {
+      var lines = rawBlock.split(/\r?\n/);
+      var html = '';
+      var listType = null;
+
+      function closeList() {
+        if (listType) { html += '</' + listType + '>'; listType = null; }
+      }
+
+      function renderInline(text) {
+        var st = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        st = st.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        st = st.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+        return st;
+      }
+
+      lines.forEach(function(line) {
+        var trimmed = line.trim();
+        if (!trimmed) { closeList(); return; }
+
+        if (/^#{1,3}\s+/.test(trimmed)) {
+          closeList();
+          var title = trimmed.replace(/^#{1,3}\s+/, '');
+          html += '<p class="summary-section-title">' + renderInline(title) + '</p>';
+          return;
+        }
+
+        if (/^\*\*[^*]+\*\*[：:。]?$/.test(trimmed)) {
+          closeList();
+          var title2 = trimmed.replace(/^\*\*|\*\*[：:。]?$/g, '');
+          html += '<p class="summary-section-title">' + renderInline(title2) + '</p>';
+          return;
+        }
+
+        if (/^[【「『].*[】」』]$/.test(trimmed) ||
+            (trimmed.length <= 30 && /[：:]$/.test(trimmed) && !/^\d/.test(trimmed))) {
+          closeList();
+          var title3 = trimmed.replace(/^[【「『]|[】」』]$/g, '').replace(/[：:]$/, '');
+          html += '<p class="summary-section-title">' + renderInline(title3) + '</p>';
+          return;
+        }
+
+        if (/^[-*]\s+/.test(trimmed)) {
+          if (listType !== 'ul') { closeList(); html += '<ul>'; listType = 'ul'; }
+          var content = trimmed.replace(/^[-*]\s+/, '');
+          html += '<li>' + renderInline(content) + '</li>';
+          return;
+        }
+
+        if (/^[\(（]?\d+[\)）.\、]\s*/.test(trimmed)) {
+          if (listType !== 'ol') { closeList(); html += '<ol>'; listType = 'ol'; }
+          var content2 = trimmed.replace(/^[\(（]?\d+[\)）.\、]\s*/, '');
+          html += '<li>' + renderInline(content2) + '</li>';
+          return;
+        }
+
+        closeList();
+        if (trimmed.length > 280 && /[。！？][\s\u3000]/.test(trimmed)) {
+          var chunks = trimmed.split(/(?<=[。！？])[\s\u3000]+/).filter(function (c) { return c.trim(); });
+          if (chunks.length > 1) {
+            chunks.forEach(function (c) {
+              html += '<p>' + renderInline(c.trim()) + '</p>';
+            });
+            return;
+          }
+        }
+        html += '<p>' + renderInline(trimmed) + '</p>';
+      });
+
+      closeList();
+      return html;
+    }
+
+    function formatSummary() {
+      var el = document.getElementById('summary-text');
+      if (!el) return;
+      if (el.classList.contains('summary-preformatted')) return;
+      var raw = el.textContent || '';
+      raw = raw.replace(/\s+(?=本分片)/g, '\n---SHARD---\n');
+      var shards = raw.split(/\n---SHARD---\n/).map(function(s) { return s.trim(); }).filter(Boolean);
+      if (!shards.length) shards = [raw.trim()].filter(Boolean);
+
+      if (shards.length <= 1) {
+        var inner = formatSummaryInner(shards[0] || '');
+        if (inner) el.innerHTML = inner;
+        return;
+      }
+
+      var htmlShards = [];
+      for (var i = 0; i < shards.length; i++) {
+        var blockHtml = formatSummaryInner(shards[i]);
+        if (blockHtml) htmlShards.push('<div class="summary-shard">' + blockHtml + '</div>');
+      }
+      var head = htmlShards.slice(0, 3).join('');
+      var tail = htmlShards.slice(3).join('');
+      var moreBtn = '';
+      if (tail) {
+        moreBtn = '<button type="button" class="summary-toggle" id="summary-toggle-btn" aria-expanded="false">展开全部分片结论 (' + (htmlShards.length - 3) + ')</button>';
+      }
+      el.innerHTML = '<div class="summary-shards-wrap">' + head +
+        (tail ? '<div class="summary-more" id="summary-more-block" hidden>' + tail + '</div>' : '') +
+        moreBtn + '</div>';
+
+      var btn = document.getElementById('summary-toggle-btn');
+      var more = document.getElementById('summary-more-block');
+      if (btn && more) {
+        btn.addEventListener('click', function() {
+          var ex = btn.getAttribute('aria-expanded') === 'true';
+          more.hidden = ex;
+          btn.setAttribute('aria-expanded', ex ? 'false' : 'true');
+          btn.textContent = ex
+            ? ('展开全部分片结论 (' + (htmlShards.length - 3) + ')')
+            : '收起分片结论';
+        });
+      }
+    }
+
+    function switchReportTab(which) {
+      var panels = ['panel-general', 'panel-dp'];
+      var tabs = ['tab-general', 'tab-dp'];
+      var activePanel = which === 'dp' ? 'panel-dp' : 'panel-general';
+      var activeTab = which === 'dp' ? 'tab-dp' : 'tab-general';
+      panels.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) { el.classList.toggle('is-active', id === activePanel); }
+      });
+      tabs.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) { el.setAttribute('aria-selected', id === activeTab ? 'true' : 'false'); }
+      });
+    }
+
+    var activeFilter = null;
+
+    function getSearchQuery() {
+      var inp = document.getElementById('findings-search');
+      return inp ? String(inp.value || '').trim().toLowerCase() : '';
+    }
+
+    function applyFindingsFilter() {
+      var hint = document.getElementById('filter-hint');
+      var hintLabel = document.getElementById('filter-hint-label');
+
+      if (activeFilter) {
+        hintLabel.textContent = activeFilter.toUpperCase();
+        hint.style.display = 'block';
+      } else {
+        hint.style.display = 'none';
+      }
+
+      var q = getSearchQuery();
+
+      document.querySelectorAll('.findings-file-group').forEach(function(group) {
+        var visible = 0;
+        group.querySelectorAll('.finding-card').forEach(function(card) {
+          var sev = card.getAttribute('data-severity') || 'info';
+          var sevOk = !activeFilter || sev === activeFilter;
+          var textOk = !q || card.textContent.toLowerCase().indexOf(q) !== -1;
+          var show = sevOk && textOk;
+          card.style.display = show ? '' : 'none';
+          if (show) visible++;
+        });
+        group.style.display = visible === 0 ? 'none' : '';
+        // 任务115续作：finding 现在可能嵌套在 <details class="action-group"> 里，
+        // 该祖先关闭时子元素无论 style.display 如何都不会渲染，命中过滤结果时须一并展开。
+        if (visible > 0) {
+          var actionGroup = group.closest('.action-group');
+          if (actionGroup) actionGroup.open = true;
+        }
+      });
+
+      document.querySelectorAll('.file-block').forEach(function(block) {
+        if (block.classList.contains('findings-file-group')) return;
+        var rows = block.querySelectorAll('tbody tr');
+        if (!rows.length) return;
+        var vis = 0;
+        rows.forEach(function(row) {
+          if (!activeFilter || row.querySelector('.chip.' + activeFilter)) {
+            row.style.display = '';
+            vis++;
+          } else {
+            row.style.display = 'none';
+          }
+        });
+        block.style.display = vis === 0 ? 'none' : '';
+      });
+
+      // 顶部 Critical/Major 计数把「牵连影响」的 RISK/NEEDS_HUMAN 也并了进去
+      // （用户拍板口径），但这些卡片不是 .finding-card，之前点 Critical 只会
+      // 过滤上面两段、对牵连影响毫无反应，数字和实际看到的东西对不上
+      // （build TEST_pus-exchange-api/222 反馈）。按同一套口径把牵连影响的卡
+      // 也纳入过滤：RISK 对应 critical，NEEDS_HUMAN 对应 major；筛 minor/info
+      // 时牵连影响没有对应桶，全部隐藏是符合口径的。
+      var impactLevelMap = { critical: 'RISK', major: 'NEEDS_HUMAN' };
+      document.querySelectorAll('.impact-card[data-impact-level]').forEach(function(card) {
+        var level = card.getAttribute('data-impact-level');
+        var show = !activeFilter || impactLevelMap[activeFilter] === level;
+        card.style.display = show ? '' : 'none';
+        if (show && activeFilter) {
+          var d = card.closest('details');
+          if (d) d.open = true;
+        }
+      });
+    }
+
+    function filterBySeverity(chip) {
+      var filter = chip.dataset.filter;
+      if (activeFilter === filter) {
+        clearFilter();
+        return;
+      }
+      activeFilter = filter;
+      document.querySelectorAll('.filter-chip').forEach(function(c) {
+        if (c.dataset.filter === filter) {
+          c.classList.add('active');
+          c.classList.remove('dimmed');
+        } else {
+          c.classList.remove('active');
+          c.classList.add('dimmed');
+        }
+      });
+      applyFindingsFilter();
+    }
+
+    function clearFilter() {
+      activeFilter = null;
+      document.querySelectorAll('.filter-chip').forEach(function(c) {
+        c.classList.remove('active', 'dimmed');
+      });
+      applyFindingsFilter();
+    }
+
+    function initFindingsToolbar() {
+      var tb = document.getElementById('findings-toolbar');
+      if (!tb) return;
+      var groups = document.querySelectorAll('#panel-general .findings-file-group');
+      tb.style.display = groups.length ? '' : 'none';
+    }
+
+    (function () {
+      var chips = document.querySelectorAll('table .chip');
+      for (var i = 0; i < chips.length; i++) {
+        chips[i].textContent = chips[i].textContent.toUpperCase();
+      }
+
+      formatSummary();
+
+      initFindingsToolbar();
+
+      var ex = document.getElementById('expand-all-files');
+      var cl = document.getElementById('collapse-all-files');
+      if (ex) ex.addEventListener('click', function() {
+        document.querySelectorAll('.findings-file-group').forEach(function(d) { d.open = true; });
+        document.querySelectorAll('.action-group').forEach(function(d) { d.open = true; });
+      });
+      if (cl) cl.addEventListener('click', function() {
+        document.querySelectorAll('.findings-file-group').forEach(function(d) { d.open = false; });
+        document.querySelectorAll('.action-group').forEach(function(d) { d.open = false; });
+      });
+
+      var search = document.getElementById('findings-search');
+      if (search) {
+        search.addEventListener('input', function() { applyFindingsFilter(); });
+      }
+    })();
+
+    // Chart.js initialization
+    function renderCategoryChart(categoryData) {
+      var ctx = document.getElementById('categoryChart');
+      if (!ctx) return;
+      ctx = ctx.getContext('2d');
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: Object.keys(categoryData),
+          datasets: [{
+            label: '问题数量',
+            data: Object.values(categoryData),
+            // 跟报告主色（teal 系）协调的低饱和度调色板，替换 Chart.js 默认的
+            // 高饱和度七彩配色（用户反馈报告"不好看"，实测截图确认默认色彩
+            // 花哨刺眼、跟品牌色不搭）；18 色覆盖 VALID_CATEGORIES 全量枚举，
+            // 保证再多分类同时出现也不会因为数组不够长而退化成无色
+            backgroundColor: [
+              '#0f766e', '#b5651d', '#4a6fa5', '#8e6c96',
+              '#6b8f71', '#b58a3d', '#b56576', '#5c7a89',
+              '#3d8a8a', '#a3703f', '#5f7a9d', '#7a6b9d',
+              '#7fa17f', '#c29b5c', '#9d6b7a', '#6b8a9d',
+              '#8a9d6b', '#9d7a5f'
+            ]
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: true } }
+        }
+      });
+    }
+
+    // 这个短列表只是一句话摘要，不值得把 markdown 代码块渲染进一个 <li> 里——
+    // 直接去掉标记符本身，露出裸文本即可（跟 _render_markdown_lite 的完整
+    // 渲染不同，这里要的是"别露出字面 ** 和 ``` "，不是"渲染出富文本"）
+    function stripMdLite(text) {
+      return (text || '')
+        .replace(/```[a-zA-Z]*\n?/g, '')
+        .replace(/```/g, '')
+        .replace(/\*\*([^*]+)\*\*/g, '$1')
+        .replace(/`([^`]+)`/g, '$1');
+    }
+
+    function renderTopCriticals(topCriticals) {
+      var list = document.getElementById('top-criticals-list');
+      var box = document.getElementById('top-criticals');
+      if (!list) return;
+      // 一条都没有时整块收起，不留「标题 + 暂无 Critical 问题」空框占首屏
+      if (!topCriticals || !topCriticals.length) {
+        if (box) box.hidden = true;
+        list.innerHTML = '';
+        return;
+      }
+      if (box) box.hidden = false;
+      list.innerHTML = topCriticals.map(function(c) {
+        var desc = stripMdLite(c.description || '');
+        if (desc.length > 120) desc = desc.substring(0, 120) + '…';
+        // source 只有牵连影响条目才带：不标来源的话，读者会把"改动波及到的
+        // 其他调用点"当成"这段代码本身写错了"，两者要采取的动作不一样
+        var tag = c.source
+          ? '<span class="tc-source">' + escHtml(c.source) + '</span>'
+          : '';
+        return '<li>' + tag + '<strong>' + escHtml(c.file + (c.line ? ':' + c.line : '')) +
+               '</strong><span class="tc-desc">' + escHtml(desc) + '</span></li>';
+      }).join('');
+    }
+
+    // Export stubs (implemented in Task 5)
+    function exportJira() { alert('导出为 Jira 功能待实现'); }
+    function exportExcel() { alert('导出为 Excel 功能待实现'); }
+    function exportCsv() { alert('导出为 CSV 功能待实现'); }
+
+    // Inject summary data (Task 5)
+    if (typeof renderCategoryChart === 'function') renderCategoryChart({"\u5b89\u5168\u98ce\u9669": 3, "\u9700\u6c42\u77db\u76fe": 2, "\u8fb9\u754c\u6761\u4ef6": 2, "\u5f02\u5e38\u5904\u7406": 1, "\u4e1a\u52a1\u903b\u8f91": 1, "\u914d\u7f6e\u53d8\u66f4": 1});
+if (typeof renderTopCriticals === 'function') renderTopCriticals([{"file": "tracking-api/src/main/java/io/speedx/trk/api/kafka/listener/RpsLabelKafkaListener.java", "line": "27", "severity": "critical", "category": "安全风险", "description": "**原因：** `RpsLabelKafkaListener.listen(String message)` 在 INFO 日志中直接输出完整的 `message`，而本次链路明确约定 `payload` 内会携带 `encryptedRecipientName`、`encryptedRecipientAddress1`、`encryptedRecipientPhone`、`encryptedRecipientEmail` 等敏感字段；Kafka 原始报文还会被后续失败补偿逻辑原样保存，因此这里把整条消息写入日志会把收件人敏感信息长期暴露到日志系统。\n\n**影响：** 只要 Kafka 消息被消费，无论成功还是失败，具备日志访问权限的人员或下游日志平台都可以读取完整收件人数据载荷；一旦日志被导出、聚合或外发，会形成额外的敏感数据泄露面，且泄露范围通常大于业务库访问范围。", "suggestion": "把 `RpsLabelKafkaListener.listen(String message)` 的日志改为只打印必要的非敏感元数据，例如 `messageId`、`event`、`trackingNumber`，不要直接记录完整 `message`。如果确实需要排障，请先对 `payload` 中的 `encryptedRecipientName`、`encryptedRecipientAddress1`、`encryptedRecipientPhone`、`encryptedRecipientEmail` 做脱敏或移除后再记录。", "test_scenario": "构造一条包含 `encryptedRecipientName`、`encryptedRecipientAddress1`、`encryptedRecipientPhone`、`encryptedRecipientEmail` 的 Kafka 消息，调用 `RpsLabelKafkaListener.listen(String message)` 后检查应用日志，确认日志中不再出现完整 `message`，也不出现上述字段的原值。", "http_method": "", "path_pattern": "", "permission_tags": [], "java_entry_method": "", "expected_permission": "", "actual_behavior": "", "evidence_refs": [], "risk_label_zh": "", "evidence_quote": "log.info(\"Kafka listener,topic:spx_rps_label_topic,received message:{}\", message);", "requirement_ref": "", "unimplemented_feature": "", "deviation_rationale_check": ""}, {"file": "tracking-api/src/main/java/io/speedx/trk/api/kafka/listener/RpsLabelKafkaListener.java", "line": "55", "severity": "critical", "category": "安全风险", "description": "**原因：** `RpsLabelKafkaListener.handleCreate(RpsLabelEventEnvelope envelope, String rawMessage)` 在异常分支把 `rawMessage` 原样传给 `commonPushLogService.savePushLog(...)` 持久化。结合本次新增的 `RpsLabelPayloadConverter.decrypt(...)` 可知，`rawMessage` 对应的 Kafka 原始报文包含收件人姓名、地址、电话、邮箱的密文字段，失败补偿表会长期保存整条业务报文，扩大了敏感数据落库范围。\n\n**影响：** 任意 CREATE 消费失败都会把完整 Kafka 报文写入失败重试表；具备该表查询权限的人员、任务或导出流程都可接触到不必要的敏感数据副本。若后续补偿表缺少与主业务库同等级别的访问控制、脱敏或清理策略，会造成持久化敏感数据泄露风险。", "suggestion": "修改 `commonPushLogService.savePushLog(...)` 的入参，不要直接保存完整 `rawMessage`。建议仅保存 `messageId`、`event`、`trackingNumber`、失败原因等最小必要字段；如果补偿必须依赖 `payload`，至少在保存前移除 `encryptedRecipientName`、`encryptedRecipientAddress1`、`encryptedRecipientPhone`、`encryptedRecipientEmail` 等敏感字段，或改为保存受控加密后的专用补偿对象。", "test_scenario": "模拟 `rpsLabelEventProcessorService.processCreate(payload)` 抛出异常，触发 `handleCreate` 的失败分支；检查 `TRK_KAFKA_LABEL_FAILURE` 对应存储内容，确认不再包含完整 `rawMessage`，尤其不包含 `encryptedRecipientName`、`encryptedRecipientAddress1`、`encryptedRecipientPhone`、`encryptedRecipientEmail`。", "http_method": "", "path_pattern": "", "permission_tags": [], "java_entry_method": "", "expected_permission": "", "actual_behavior": "", "evidence_refs": [], "risk_label_zh": "", "evidence_quote": "commonPushLogService.savePushLog(PushLogTypeEnum.TRK_KAFKA_LABEL_FAILURE, envelope.getTrackingNumber(), rawMessage);", "requirement_ref": "", "unimplemented_feature": "", "deviation_rationale_check": "", "_cluster_count": 3, "_cluster_locations": [{"file": "tracking-api/src/main/java/io/speedx/trk/api/kafka/listener/RpsLabelKafkaListener.java", "line": "55", "description_snippet": "**原因：** `RpsLabelKafkaListener.handleCreate(RpsLabelEventEnvelope envelope, Stri"}, {"file": "tracking-api/src/main/java/io/speedx/trk/api/kafka/listener/RpsLabelKafkaListener.java", "line": "65", "description_snippet": "**原因：** `RpsLabelKafkaListener.handleVoid(RpsLabelEventEnvelope envelope, String"}, {"file": "tracking-api/src/main/java/io/speedx/trk/api/kafka/listener/RpsLabelKafkaListener.java", "line": "71", "description_snippet": "**原因：** `RpsLabelKafkaListener.handleVoid(RpsLabelEventEnvelope envelope, String"}]}]);
+
+    // Export dropdown toggle
+    (function() {
+      var btn = document.getElementById('export-btn');
+      var menu = document.getElementById('export-menu');
+      if (!btn || !menu) return;
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var shown = menu.style.display === 'block';
+        menu.style.display = shown ? 'none' : 'block';
+      });
+      document.addEventListener('click', function() {
+        menu.style.display = 'none';
+      });
+    })();
+  </script>
+</body>
+</html>
