@@ -1,0 +1,2273 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Code Review Report</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      /* 重新设计（用户反馈"前端样式不好看"）：底色/正文/次要文字/边框/标题
+         此前全部带一层绿色调（跟 --accent 撞在一起，显得到处都是同一种绿），
+         改成中性板岩灰基调 + 一个teal 强调色，层次更清楚，也更耐看。 */
+      --bg: #f3f4f7;
+      --card: #ffffff;
+      --text: #1c2333;
+      --muted: #667085;
+      --border: #e3e6ec;
+      --heading: #0f1420;
+      --accent: #0f766e;
+      --accent-dark: #0b5850;
+      --accent-soft: #e6f4f2;
+
+      --critical-bg: #fdeceb;
+      --critical-text: #b3261e;
+      --critical-border: #f3b7b2;
+      --critical-strong: #d1291f;
+
+      --major-bg: #fdf1e3;
+      --major-text: #a85311;
+      --major-border: #f4d19d;
+      --major-strong: #d5720f;
+
+      --minor-bg: #fdf7e0;
+      --minor-text: #8a6208;
+      --minor-border: #f1e096;
+      --minor-strong: #a37d0a;
+
+      --info-bg: #eaf1fd;
+      --info-text: #23509c;
+      --info-border: #c0d6f6;
+      --info-strong: #2f66c9;
+
+      --safe-bg: #e8f6ee;
+      --safe-text: #1a7a4c;
+      --safe-border: #aee3c4;
+
+      --chip-bg: #eef0f5;
+      --code-bg: #10182b;
+      --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+      --shadow: 0 8px 24px rgba(16, 24, 40, 0.08);
+      --shadow-lg: 0 20px 44px rgba(16, 24, 40, 0.14);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans SC", Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .page {
+      max-width: 1180px;
+      margin: 28px auto 48px;
+      padding: 0 20px;
+    }
+
+    /* 重新设计：原来是一大片高饱和绿色渐变斜切块，视觉上很"闹"；
+       改成深板岩底色 + 顶部一条细 teal 强调线，克制一些，也更像专业
+       研发工具的报告头，而不是营销落地页banner。 */
+    .hero {
+      position: relative;
+      background: linear-gradient(165deg, #0b1220 0%, #121a2c 55%, #0e2422 100%);
+      color: #f4f7fb;
+      border-radius: 18px;
+      padding: 26px 28px 24px;
+      box-shadow: var(--shadow-lg);
+      margin-bottom: 18px;
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 3px;
+      background: linear-gradient(90deg, #14b8a6, #22d3ee 45%, #14b8a6 100%);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -60px;
+      top: -60px;
+      width: 220px;
+      height: 220px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(20, 184, 166, 0.22), transparent 70%);
+      pointer-events: none;
+    }
+
+    .hero h1 {
+      margin: 0 0 10px;
+      font-size: 24px;
+      font-weight: 700;
+      line-height: 1.25;
+      letter-spacing: 0.1px;
+    }
+
+    .hero-meta {
+      margin: 0;
+      font-size: 13.5px;
+      color: #aab4c8;
+      letter-spacing: 0.01em;
+    }
+
+    .summary {
+      background: var(--card);
+      padding: 16px 18px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      margin-bottom: 20px;
+    }
+
+    .summary h2,
+    .section-title {
+      margin: 0 0 12px;
+      font-size: 18px;
+      color: var(--heading);
+    }
+
+    .subsection-title {
+      margin-top: 28px;
+    }
+
+    .api-permission-block code {
+      font-size: 12px;
+      word-break: break-all;
+    }
+
+    .api-surface-sub {
+      margin: 18px 0 8px;
+      font-size: 16px;
+      color: var(--heading);
+    }
+
+    .inferred-hint {
+      margin: 0 0 12px;
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    /* 总体结论正文区 */
+    .summary-body {
+      margin: 0 0 16px;
+      font-size: 14px;
+      color: var(--text);
+      line-height: 1.75;
+    }
+
+    .summary-body p {
+      margin: 0 0 10px;
+    }
+
+    .summary-body p:last-child {
+      margin-bottom: 0;
+    }
+
+    .summary-body ol,
+    .summary-body ul {
+      margin: 4px 0 12px;
+      padding-left: 22px;
+    }
+
+    .summary-body ol li,
+    .summary-body ul li {
+      margin-bottom: 6px;
+      line-height: 1.65;
+    }
+
+    .summary-body .summary-section-title {
+      font-weight: 700;
+      color: var(--heading);
+      margin: 16px 0 6px;
+      font-size: 13px;
+      letter-spacing: 0.3px;
+      padding-left: 8px;
+      border-left: 3px solid var(--accent);
+    }
+
+    .summary-body .summary-section-title:first-child {
+      margin-top: 0;
+    }
+
+    .summary-body strong {
+      color: var(--heading);
+      font-weight: 700;
+    }
+
+    /* 严重级别筛选区 */
+    .filter-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-top: 6px;
+    }
+
+    .filter-label {
+      font-size: 12px;
+      color: var(--muted);
+      margin-right: 2px;
+    }
+
+    .chips-impact-note {
+      width: 100%;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 5px 13px;
+      border-radius: 9px;
+      font-size: 12.5px;
+      font-weight: 700;
+      background: var(--chip-bg);
+      color: var(--heading);
+      border: 1px solid transparent;
+    }
+
+    .filter-chip {
+      cursor: pointer;
+      transition: transform 0.12s, box-shadow 0.12s, opacity 0.12s;
+      user-select: none;
+    }
+
+    .filter-chip:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 3px 8px rgba(0,0,0,0.12);
+    }
+
+    .filter-chip.active {
+      box-shadow: 0 0 0 2.5px currentColor;
+      transform: translateY(-1px);
+    }
+
+    .filter-chip.dimmed {
+      opacity: 0.4;
+    }
+
+    .critical { background: var(--critical-bg); color: var(--critical-text); border-color: var(--critical-border); }
+    .major { background: var(--major-bg); color: var(--major-text); border-color: var(--major-border); }
+    .minor { background: var(--minor-bg); color: var(--minor-text); border-color: var(--minor-border); }
+    .info { background: var(--info-bg); color: var(--info-text); border-color: var(--info-border); }
+
+    /* 筛选状态提示条 */
+    #filter-hint {
+      display: none;
+      margin: -10px 0 14px;
+      padding: 8px 14px;
+      background: var(--accent-soft);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    #filter-hint .clear-filter {
+      margin-left: 8px;
+      color: var(--accent);
+      cursor: pointer;
+      font-weight: 600;
+      text-decoration: underline;
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    /* 工具栏：搜索 + 展开折叠 */
+    .findings-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+      padding: 12px 14px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+    }
+
+    .findings-search {
+      flex: 1 1 220px;
+      min-width: 0;
+      padding: 10px 14px;
+      font: inherit;
+      font-size: 14px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+      color: var(--text);
+    }
+
+    .findings-search:focus {
+      outline: none;
+      box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.35);
+      border-color: var(--accent);
+    }
+
+    .findings-toolbar-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .toolbar-btn {
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--chip-bg);
+      color: var(--heading);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .toolbar-btn:hover {
+      background: #e3e6ec;
+    }
+
+    /* 文件 TOC */
+    .findings-toc {
+      margin-bottom: 16px;
+      padding: 10px 12px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+    }
+
+    .toc-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 8px;
+      letter-spacing: 0.04em;
+    }
+
+    .toc-pill-wrap {
+      display: flex;
+      flex-wrap: nowrap;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .toc-pill {
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      text-decoration: none;
+      color: var(--heading);
+      background: var(--chip-bg);
+      border: 1px solid var(--border);
+      transition: transform 0.12s, box-shadow 0.12s;
+    }
+
+    .toc-pill:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+
+    .toc-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .toc-dot.sev-critical { background: var(--critical-text); }
+    .toc-dot.sev-major { background: var(--major-text); }
+    .toc-dot.sev-minor { background: var(--minor-text); }
+    .toc-dot.sev-info { background: var(--info-text); }
+
+    /* 总体结论：多分片 */
+    .summary-shards-wrap {
+      margin-bottom: 4px;
+    }
+
+    .summary-shard {
+      margin-bottom: 14px;
+      padding: 12px 14px;
+      background: #fafbfd;
+      border-radius: 10px;
+      border-left: 4px solid var(--accent);
+    }
+
+    .summary-shard:last-of-type {
+      margin-bottom: 10px;
+    }
+
+    .summary-more[hidden] {
+      display: none !important;
+    }
+
+    .summary-toggle {
+      display: inline-block;
+      margin-top: 4px;
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 16px;
+      border-radius: 8px;
+      border: 1px solid var(--accent);
+      background: #fff;
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .summary-toggle:hover {
+      background: #eef8f5;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details {
+      margin-top: 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0 12px 10px;
+      background: #fafbfc;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details summary {
+      cursor: pointer;
+      padding: 10px 0;
+      font-weight: 600;
+      color: var(--accent);
+      list-style: none;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .summary-raw-pre {
+      margin: 0;
+      max-height: 420px;
+      overflow: auto;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* 按文件 findings：可折叠组 + 卡片 */
+    .findings-list-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    details.file-group.findings-file-group {
+      margin: 0;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .file-group-summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 14px;
+      padding: 14px 16px;
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .file-group-summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .file-group-title {
+      display: inline-flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 14px;
+      color: var(--heading);
+      flex: 1 1 200px;
+      min-width: 0;
+    }
+
+    .file-path-text {
+      word-break: break-all;
+      line-height: 1.45;
+    }
+
+    .sev-indicator {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      margin-top: 4px;
+    }
+
+    .sev-indicator.sev-critical { background: var(--critical-text); box-shadow: 0 0 0 2px var(--critical-bg); }
+    .sev-indicator.sev-major { background: var(--major-text); box-shadow: 0 0 0 2px var(--major-bg); }
+    .sev-indicator.sev-minor { background: var(--minor-text); box-shadow: 0 0 0 2px var(--minor-bg); }
+    .sev-indicator.sev-info { background: var(--info-text); box-shadow: 0 0 0 2px var(--info-bg); }
+
+    .file-group-stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .stat-chip {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 999px;
+    }
+
+    .stat-chip.stat-critical { background: var(--critical-bg); color: var(--critical-text); }
+    .stat-chip.stat-major { background: var(--major-bg); color: var(--major-text); }
+    .stat-chip.stat-minor { background: var(--minor-bg); color: var(--minor-text); }
+    .stat-chip.stat-info { background: var(--info-bg); color: var(--info-text); }
+
+    .file-group-count {
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .file-group-body {
+      padding: 12px 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .finding-card {
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: #fff;
+      padding: 15px 17px;
+      border-left-width: 4px;
+      border-left-style: solid;
+      box-shadow: var(--shadow-sm);
+      transition: box-shadow 0.15s;
+    }
+
+    .finding-card:hover { box-shadow: var(--shadow); }
+
+    .finding-card.severity-critical { border-left-color: var(--critical-strong); background: linear-gradient(90deg, var(--critical-bg) 0%, #fff 14px); }
+    .finding-card.severity-major { border-left-color: var(--major-strong); background: linear-gradient(90deg, var(--major-bg) 0%, #fff 14px); }
+    .finding-card.severity-minor { border-left-color: var(--minor-strong); background: linear-gradient(90deg, var(--minor-bg) 0%, #fff 14px); }
+    .finding-card.severity-info { border-left-color: var(--info-strong); background: linear-gradient(90deg, var(--info-bg) 0%, #fff 14px); }
+
+    .finding-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .sev-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 4px 12px;
+      border-radius: 7px;
+      font-size: 11.5px;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .sev-badge.critical { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .sev-badge.major { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .sev-badge.minor { background: var(--minor-bg); color: var(--minor-text); border: 1px solid var(--minor-border); }
+    .sev-badge.info { background: var(--info-bg); color: var(--info-text); border: 1px solid var(--info-border); }
+
+    .finding-line {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      background: var(--chip-bg);
+      padding: 4px 8px;
+      border-radius: 6px;
+    }
+
+    .finding-cat {
+      font-size: 12.5px;
+      font-weight: 700;
+      color: var(--accent-dark);
+      background: var(--accent-soft);
+      padding: 3px 9px;
+      border-radius: 6px;
+    }
+
+    /* 需求对账三类（需求未实现/需求矛盾/需求外动作）用色块徽章而非纯文字，
+       跟严重级别徽章一样醒目——用户反馈普通文字分类容易在列表里被漏看，
+       尤其"需求未实现"现在总是 Critical。*/
+    .finding-cat-requirement {
+      background: var(--critical-bg);
+      color: var(--critical-text);
+      border: 1px solid var(--critical-border);
+      border-radius: 6px;
+      padding: 3px 10px;
+    }
+
+    /* ── 接口审查覆盖清单 ── */
+    .endpoint-coverage {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px 18px;
+      box-shadow: var(--shadow);
+      margin-bottom: 20px;
+    }
+
+    .ec-note {
+      margin: 0 0 10px;
+      font-size: 13px;
+      line-height: 1.7;
+      color: var(--muted);
+    }
+
+    .ec-note-warn {
+      padding: 9px 12px;
+      border-radius: 8px;
+      background: var(--major-bg);
+      border-left: 4px solid var(--major-strong);
+      color: var(--major-text);
+    }
+
+    .ec-note-warn strong { color: var(--major-strong); }
+
+    .ec-table-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid var(--border); }
+
+    .ec-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .ec-table th {
+      text-align: left;
+      padding: 9px 12px;
+      background: #fafbfd;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .ec-table td {
+      padding: 10px 12px;
+      border-top: 1px solid var(--border);
+      vertical-align: top;
+      line-height: 1.65;
+    }
+
+    .ec-table tbody tr:first-child td { border-top: none; }
+
+    .ec-table .ec-method,
+    .ec-table .ec-verdict { white-space: nowrap; }
+
+    .ec-table .ec-path code {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+      word-break: break-all;
+    }
+
+    .ec-table .ec-reason { color: var(--muted); }
+
+    .ec-badge {
+      display: inline-block;
+      padding: 2px 9px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .ec-badge.ec-risk { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .ec-badge.ec-pending { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .ec-badge.ec-safe { background: var(--safe-bg); color: var(--safe-text); border: 1px solid var(--safe-border); }
+
+    tr.ec-risk td { background: #fffbfa; }
+    tr.ec-pending td { background: #fffdf9; }
+
+    /* 分片没审成时的披露条：必须比正文更抢眼，否则读者会把
+       「报告里没写」误当成「这里没问题」 */
+    .shard-health-alert {
+      margin: 0 0 12px;
+      padding: 12px 15px;
+      border-radius: 10px;
+      background: var(--critical-bg);
+      border: 1px solid var(--critical-border);
+      border-left: 4px solid var(--critical-strong);
+      color: var(--critical-text);
+      font-size: 13.5px;
+      line-height: 1.7;
+    }
+
+    .shard-health-alert strong { color: var(--critical-strong); }
+
+    .finding-desc {
+      font-size: 14px;
+      line-height: 1.65;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* finding 卡片正文的四行结构（问题 / 后果 / 怎么改 / 怎么验）。
+       用户反馈（build 532）"文案挤在一团，难以阅读"：此前正文是一整段
+       `原因：…影响：…` 靠 white-space:pre-wrap 原样糊上去，修复建议和测试
+       场景又被折叠藏起来。改成左标签 + 右正文的两列网格，每行一个语义单元，
+       段落之间有明确留白，长句由 Python 侧按句末标点拆成多个 <p>。 */
+    .finding-body {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      font-size: 14px;
+      line-height: 1.7;
+      color: var(--text);
+    }
+
+    .fb-row {
+      display: grid;
+      grid-template-columns: 68px minmax(0, 1fr);
+      gap: 2px 14px;
+      padding: 10px 0;
+      border-top: 1px dashed var(--border);
+    }
+
+    .fb-row:first-child {
+      border-top: none;
+      padding-top: 2px;
+    }
+
+    /* 重新设计：标签从"一段带颜色的纯文字"改成小色块标签（跟 sev-badge/
+       finding-cat 同一套视觉语言），扫一眼列表就能靠色块分辨这行是"问题"
+       还是"怎么改"，比单靠文字颜色更容易一眼分辨。 */
+    .fb-label {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1.6;
+      letter-spacing: 0.03em;
+      white-space: nowrap;
+      padding: 2px 8px;
+      border-radius: 6px;
+      margin-top: 1px;
+    }
+
+    .fb-problem .fb-label { color: var(--major-text); background: var(--major-bg); }
+    .fb-impact .fb-label { color: var(--critical-text); background: var(--critical-bg); }
+    .fb-fix .fb-label { color: var(--accent-dark); background: var(--accent-soft); }
+    .fb-test .fb-label { color: var(--info-text); background: var(--info-bg); }
+
+    .fb-text {
+      min-width: 0;
+      word-break: break-word;
+    }
+
+    .fb-text > p {
+      margin: 0 0 7px;
+    }
+
+    .fb-text > p:last-child {
+      margin-bottom: 0;
+    }
+
+    .fb-text .rt-list {
+      margin: 2px 0 6px;
+      padding-left: 20px;
+    }
+
+    .fb-text .rt-list li {
+      margin-bottom: 4px;
+    }
+
+    .fb-text .code-block {
+      margin: 8px 0 4px;
+      font-size: 12.5px;
+    }
+
+    .fb-text code {
+      background: var(--chip-bg);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+    }
+
+    /* 窄屏（Jenkins 里报告常挤在窗格里看）时标签落到正文上方，不再抢走
+       62px 宽度，避免正文被压成一列细条 */
+    @media (max-width: 720px) {
+      .fb-row {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 2px;
+      }
+    }
+
+    /* 证据代码块从固定 div 改成可折叠 details（默认展开）——一份报告里
+       十几张卡片各带 8-10 行代码，读者需要能收起来快速扫结论 */
+    details.finding-evidence > summary {
+      cursor: pointer;
+      list-style: none;
+    }
+
+    details.finding-evidence > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    details.finding-evidence > summary::before {
+      content: "▾ ";
+      color: var(--muted);
+    }
+
+    details.finding-evidence:not([open]) > summary::before {
+      content: "▸ ";
+    }
+
+    /* 证据代码块（2026-07-19 补）：evidence_quote 的稳定展示位置，不再依赖
+       模型是否顺手把代码写进 description 里；纯 CSS + Python 正则高亮，
+       不引外部 JS 库，内网报告零外部依赖风险。 */
+    .finding-evidence {
+      margin-top: 10px;
+    }
+
+    .finding-evidence .detail-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .code-block {
+      margin: 0;
+      padding: 12px 15px;
+      background: var(--code-bg);
+      color: #e6edf3;
+      border-radius: 9px;
+      overflow-x: auto;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+      line-height: 1.6;
+    }
+
+    .code-block code {
+      white-space: pre;
+      /* 2026-09-02 用户反馈：安全/权限折叠卡里"怎么改"给的整段修复示意代码
+         （``` 代码围栏渲染出来也是 <pre class="code-block"><code>）看不清——
+         根因是 .fb-text code（第 833 行，给"问题/后果/怎么改/怎么验"正文里
+         `existsActive` 这类行内代码片段配的浅灰底色）跟这里选择器优先级/
+         特异性相同，同一个 <code> 标签只要落在 .fb-text 范围内就会被套上
+         浅灰底，而 .code-annotation/.code-keyword 这套语法高亮配色是给
+         .code-block 本来的深色底（--code-bg）设计的，叠在浅灰底上对比度
+         塌陷，几乎看不见字。显式声明透明背景覆盖掉那条通用规则，让
+         .code-block 自己的深色底透出来。 */
+      background: transparent;
+    }
+
+    .code-comment { color: #8b949e; font-style: italic; }
+    .code-string { color: #a5d6ff; }
+    .code-annotation { color: #d2a8ff; }
+    .code-keyword { color: #ff7b72; font-weight: 600; }
+    .code-number { color: #79c0ff; }
+
+    /* 带上下文的证据代码块（逐行渲染，问题行整行高亮）*/
+    .code-row {
+      display: block;
+      padding: 0 6px;
+      border-left: 3px solid transparent;
+    }
+
+    .code-row-target {
+      background: rgba(255, 123, 114, 0.16);
+      border-left-color: #ff7b72;
+    }
+
+    .code-ln {
+      display: inline-block;
+      min-width: 2.5em;
+      margin-right: 12px;
+      color: #6e7681;
+      text-align: right;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    .finding-details {
+      margin-top: 12px;
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+      padding: 0;
+      background: #fafbfd;
+    }
+
+    .finding-details > summary {
+      cursor: pointer;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--heading);
+      list-style: none;
+    }
+
+    .finding-details > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .finding-details-body {
+      padding: 0 14px 14px;
+      border-top: 1px solid var(--border);
+    }
+
+    .detail-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin: 12px 0 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .finding-suggestion p,
+    .finding-test p {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.65;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .file-block {
+      margin: 14px 0 18px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: var(--shadow);
+    }
+
+    .file-block h3 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      color: var(--heading);
+      word-break: break-all;
+    }
+
+    table {
+      border-collapse: separate;
+      border-spacing: 0;
+      width: 100%;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+    }
+
+    th, td {
+      border-bottom: 1px solid var(--border);
+      padding: 10px;
+      vertical-align: top;
+      text-align: left;
+      font-size: 13px;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      background: #fafbfd;
+      color: var(--heading);
+      font-weight: 700;
+      z-index: 1;
+    }
+
+    tbody tr:nth-child(even) { background: #fafbfd; }
+    tbody tr:last-child td { border-bottom: none; }
+
+    .empty {
+      padding: 18px;
+      border: 1px dashed var(--border);
+      border-radius: 14px;
+      color: var(--muted);
+      background: #fafbfd;
+    }
+
+    @media (max-width: 900px) {
+      .hero h1 { font-size: 22px; }
+      .summary,
+      .file-block { padding: 12px; }
+      th, td { padding: 8px; font-size: 12px; }
+      .charts-row { flex-direction: column; }
+    }
+
+    /* ── 报告标签页 ──
+       重新设计：从"按钮选中变绿色渐变块"改成分段控件（segmented control）
+       的样式——浅灰底槽 + 选中项浮成白色药丸，更接近成熟工具（如 GitHub/
+       Linear）里的页签观感，也跟下面卡片的白底形成呼应。 */
+    .report-tabs {
+      display: inline-flex;
+      gap: 2px;
+      padding: 4px;
+      margin-bottom: 18px;
+      background: #e9ebf0;
+      border-radius: 12px;
+      flex-wrap: wrap;
+    }
+    .report-tabs button {
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 18px;
+      border-radius: 9px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 13.5px;
+      transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+    }
+    .report-tabs button:hover {
+      color: var(--heading);
+    }
+    .report-tabs button[aria-selected="true"] {
+      background: #ffffff;
+      color: var(--heading);
+      box-shadow: var(--shadow-sm);
+    }
+    .report-panel { display: none; }
+    .report-panel.is-active { display: block; }
+
+    /* ── 数据权限页（嵌入，与综合页隔离） ── */
+    .dp-shell {
+      font-family: "Avenir Next", "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif;
+      color: #1a2b22;
+      line-height: 1.6;
+    }
+
+    /* 重置全局 table 样式污染 */
+    .dp-shell table {
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+    }
+    .dp-shell th, .dp-shell td {
+      border: none !important;
+      border-bottom: 1px solid #edf2f7 !important;
+      background: transparent !important;
+    }
+
+    .dp-shell .dp-header {
+      position: relative;
+      background: linear-gradient(165deg, #0b1220 0%, #121a2c 55%, #0e2422 100%);
+      color: #f4f7fb;
+      padding: 26px 28px 24px;
+      border-radius: 18px;
+      margin-bottom: 24px;
+      box-shadow: var(--shadow-lg);
+      overflow: hidden;
+    }
+    .dp-shell .dp-header::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 3px;
+      background: linear-gradient(90deg, #14b8a6, #22d3ee 45%, #14b8a6 100%);
+    }
+    .dp-shell .dp-header h1 { font-size: 1.4rem; font-weight: 700; letter-spacing: .01em; margin: 0 0 6px; }
+    .dp-shell .dp-header .subtitle { margin: 0; color: #aab4c8; font-size: .9rem; }
+    .dp-shell .dp-header .meta-row { margin-top: 16px; display: flex; gap: 24px; flex-wrap: wrap; }
+    .dp-shell .dp-header .meta-item { font-size: .8rem; color: #8b95ab; }
+    .dp-shell .dp-header .meta-item strong { color: #8ce8d4; font-weight: 600; }
+
+    .dp-shell .dp-body { padding: 0 0 32px; }
+
+    /* ── dp-shell 内部组件（与 Python 生成的类名严格对齐） ── */
+
+    /* 统计卡片区（Python 生成 .summary-grid / .summary-card） */
+    .dp-shell .dp-stats { margin-bottom: 4px; }
+    .dp-shell .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+    .dp-shell .summary-card {
+      background: #fff;
+      border-radius: 14px;
+      padding: 18px 20px;
+      box-shadow: var(--shadow-sm);
+      border: 1px solid var(--border);
+      border-top: 3px solid transparent;
+    }
+    .dp-shell .summary-card.critical { border-top-color: var(--critical-strong); }
+    .dp-shell .summary-card.high     { border-top-color: var(--major-strong); }
+    .dp-shell .summary-card.medium   { border-top-color: var(--minor-strong); }
+    .dp-shell .summary-card.info     { border-top-color: var(--info-strong); }
+    .dp-shell .summary-card .count   { font-size: 2.1rem; font-weight: 800; line-height: 1; }
+    .dp-shell .summary-card.critical .count { color: var(--critical-text); }
+    .dp-shell .summary-card.high     .count { color: var(--major-text); }
+    .dp-shell .summary-card.medium   .count { color: var(--minor-text); }
+    .dp-shell .summary-card.info     .count { color: var(--info-text); }
+    .dp-shell .summary-card .label   { margin-top: 8px; font-size: .72rem; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .07em; }
+
+    /* 区块标题 */
+    .dp-shell .dp-section { margin-bottom: 24px; }
+    .dp-shell .dp-section-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--heading);
+      margin: 0 0 14px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* 角色定义盒（Python 生成 .role-box / .role-icon / .role-info） */
+    .dp-shell .dp-roles { display: flex; flex-direction: column; gap: 10px; }
+    .dp-shell .role-box {
+      background: #fff;
+      border-radius: 12px;
+      padding: 16px 20px;
+      box-shadow: 0 2px 10px rgba(17,51,38,.07);
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+    }
+    .dp-shell .role-box.muted {
+      background: #f8f9fb;
+      border: 1px solid var(--border);
+      box-shadow: none;
+    }
+    .dp-shell .role-icon { font-size: 1.8rem; line-height: 1; flex-shrink: 0; }
+    .dp-shell .role-info { flex: 1; min-width: 0; }
+    .dp-shell .role-info h3 { font-size: 1rem; font-weight: 700; color: var(--heading); margin: 0 0 4px; }
+    .dp-shell .role-info .role-md { font-size: .88rem; color: #4a5568; margin-top: 8px; line-height: 1.65; word-break: break-word; }
+    .dp-shell .role-info code { background: #edf2f7; padding: 1px 6px; border-radius: 4px; font-size: .85em; }
+
+    /* gate banner */
+    .dp-shell .dp-gate { margin-bottom: 20px; }
+
+    /* 审计表格包装（Python 生成 .table-wrap > table.dp-audit）
+       表头从深绿底改成跟报告其它表格（.ec-table）同一套浅底大写小标签，
+       整份报告的表格风格统一，不再是"深色表头 vs 浅色表头"两套语言。 */
+    .dp-shell .table-wrap {
+      overflow-x: auto;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow-sm);
+    }
+    .dp-shell table.dp-audit {
+      width: 100% !important;
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+      font-size: .84rem;
+    }
+    .dp-shell .dp-audit th {
+      background: #fafbfd !important;
+      color: var(--muted) !important;
+      padding: 11px 14px !important;
+      text-align: left !important;
+      font-size: .68rem !important;
+      font-weight: 700 !important;
+      text-transform: uppercase !important;
+      letter-spacing: .07em !important;
+      white-space: nowrap !important;
+      border-bottom: 1px solid var(--border) !important;
+      position: sticky;
+      top: 0;
+    }
+    .dp-shell .dp-audit td {
+      padding: 11px 14px !important;
+      border-bottom: 1px solid var(--border) !important;
+      vertical-align: top !important;
+      color: var(--text) !important;
+      background: transparent !important;
+    }
+    .dp-shell .dp-audit tr:last-child td { border-bottom: none !important; }
+    .dp-shell .dp-audit tr:hover td { background: #f8f9fb !important; }
+    .dp-shell .dp-audit tr.row-critical td { background: var(--critical-bg) !important; }
+    .dp-shell .dp-audit tr.row-critical:hover td { background: #fbdcda !important; }
+    .dp-shell .dp-audit tr.row-major td { background: var(--major-bg) !important; }
+    .dp-shell .dp-audit tr.row-major:hover td { background: #fbe4c4 !important; }
+
+    /* HTTP 方法 & 严重性徽标（Python 生成 .badge .badge-*） */
+    .dp-shell .badge {
+      display: inline-block; padding: 2px 9px; border-radius: 6px;
+      font-size: .72rem; font-weight: 700; letter-spacing: .04em; white-space: nowrap;
+    }
+    .dp-shell .badge-get    { background: var(--info-bg); color: var(--info-text); }
+    .dp-shell .badge-post   { background: var(--safe-bg); color: var(--safe-text); }
+    .dp-shell .badge-put    { background: var(--minor-bg); color: var(--minor-text); }
+    .dp-shell .badge-delete { background: var(--critical-bg); color: var(--critical-text); }
+    .dp-shell .badge-patch  { background: #f4f0fd; color: #6b46c1; }
+    .dp-shell .badge-critical { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .dp-shell .badge-high     { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .dp-shell .badge-medium   { background: var(--minor-bg); color: var(--minor-text); border: 1px solid var(--minor-border); }
+    .dp-shell .badge-info     { background: var(--info-bg); color: var(--info-text); border: 1px solid var(--info-border); }
+
+    /* 风险文字 */
+    .dp-shell .risk-zh { font-size: .82rem; color: var(--text); font-weight: 600; line-height: 1.4; }
+
+    /* Issue 列表（Python 生成 .issue-list） */
+    .dp-shell .issue-list { list-style: none !important; margin: 6px 0 0; padding: 0; }
+    .dp-shell .issue-list li { position: relative; padding: 3px 0 3px 18px; font-size: .84rem; color: #4a5568; line-height: 1.55; }
+    .dp-shell .issue-list li::before { content: "▸"; position: absolute; left: 2px; color: #e53e3e; }
+    .dp-shell .issue-list li strong { color: var(--heading); }
+    .dp-shell .issue-list code { background: #edf2f7; padding: 1px 5px; border-radius: 3px; font-size: .85em; }
+
+    /* 修复建议卡片（Python 生成 .fix-card） */
+    .dp-shell .fix-card {
+      background: #f0faf5;
+      border-left: 4px solid var(--accent);
+      border-radius: 0 10px 10px 0;
+      padding: 13px 16px;
+      margin-top: 10px;
+    }
+    .dp-shell .fix-card h4 { font-size: .84rem; font-weight: 700; color: var(--heading); margin: 0 0 6px; }
+    .dp-shell .fix-card p, .dp-shell .fix-card li { font-size: .83rem; color: #2d4a3d; line-height: 1.6; margin: 0; }
+    .dp-shell .fix-card ul, .dp-shell .fix-card ol { padding-left: 18px; margin: 6px 0; }
+    .dp-shell .fix-card code { background: #d4efe4; padding: 1px 5px; border-radius: 4px; font-size: .85em; }
+
+    /* 代码块（Python 生成 .code-block） */
+    .dp-shell .code-block {
+      background: var(--code-bg); color: #e2e8f0; border-radius: 9px;
+      padding: 12px 16px; margin-top: 8px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: .78rem; line-height: 1.55; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+    }
+
+    /* 端点详情折叠（Python 生成 details.issue-fold） */
+    .dp-shell details.issue-fold {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: var(--shadow-sm);
+      margin-bottom: 12px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .dp-shell details.issue-fold > summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 13px 16px;
+      font-weight: 600;
+      font-size: .9rem;
+      color: var(--heading);
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid transparent;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transition: background .15s;
+    }
+    .dp-shell details.issue-fold > summary::-webkit-details-marker { display: none; }
+    .dp-shell details.issue-fold > summary::before { content: "▸"; font-size: 11px; color: var(--accent); transition: transform .15s; }
+    .dp-shell details.issue-fold[open] > summary::before { transform: rotate(90deg); }
+    .dp-shell details.issue-fold[open] > summary { border-bottom-color: var(--border); background: var(--accent-soft); }
+    .dp-shell .issue-fold-body { padding: 16px 20px; font-size: .85rem; color: #4a5568; }
+    .dp-shell .issue-fold-body p { margin: 6px 0; line-height: 1.65; }
+    .dp-shell .issue-fold-body strong { color: var(--heading); }
+
+    /* dp-fold（端点详情另一种渲染，Python 生成 details.dp-fold） */
+    .dp-shell .dp-folds { display: flex; flex-direction: column; gap: 10px; }
+    .dp-shell .dp-fold {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
+    }
+    .dp-shell .dp-fold > summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 13px 16px;
+      font-weight: 600;
+      font-size: .9rem;
+      color: var(--heading);
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .dp-shell .dp-fold > summary::-webkit-details-marker { display: none; }
+    .dp-shell .dp-fold > summary::before { content: "▸"; font-size: 11px; color: var(--accent); transition: transform .15s; }
+    .dp-shell .dp-fold[open] > summary::before { transform: rotate(90deg); }
+    .dp-shell .dp-fold-body { padding: 16px; font-size: .85rem; color: #4a5568; }
+
+    /* issue list（dp-fold 内部用） */
+    .dp-shell .dp-issue-list { list-style: none; margin: 8px 0 0; padding: 0; }
+    .dp-shell .dp-issue-list li { position: relative; padding: 3px 0 3px 18px; font-size: .84rem; color: #4a5568; }
+    .dp-shell .dp-issue-list li::before { content: "▸"; position: absolute; left: 2px; color: #e53e3e; }
+
+    /* dp-fix（dp-fold 内部修复建议） */
+    .dp-shell .dp-fix {
+      background: #f0faf5;
+      border-left: 4px solid var(--accent);
+      border-radius: 0 10px 10px 0;
+      padding: 12px 16px;
+      margin-top: 10px;
+    }
+    .dp-shell .dp-fix h4 { font-size: .84rem; font-weight: 700; color: var(--heading); margin: 0 0 6px; }
+    .dp-shell .dp-fix p, .dp-shell .dp-fix li { font-size: .83rem; color: #2d4a3d; line-height: 1.6; margin: 0; }
+    .dp-shell .dp-fix code { background: #d4efe4; padding: 1px 5px; border-radius: 4px; font-size: .85em; }
+
+    /* dp-code（dp-fold 内部代码块） */
+    .dp-shell .dp-code {
+      background: var(--code-bg); color: #e2e8f0; border-radius: 9px;
+      padding: 12px 16px; margin-top: 8px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: .78rem; line-height: 1.55; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+    }
+
+    /* 存量越权风险区块（dp-shell 内，全文扫描）*/
+    .dp-shell .legacy-privilege-block {
+      background: var(--minor-bg);
+      border: 1px solid var(--minor-border);
+      border-left: 4px solid var(--minor-strong);
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin-bottom: 16px;
+    }
+    .dp-shell .legacy-privilege-block .lp-title { font-size: 14px; font-weight: 700; color: var(--minor-strong); margin: 0 0 4px; }
+    .dp-shell .legacy-privilege-block .lp-subtitle { font-size: 12px; color: var(--minor-text); margin: 0 0 14px; }
+
+    .dp-shell .dp-footer {
+      text-align: center; font-size: .78rem; color: #a0aec0;
+      margin-top: 36px; padding-top: 20px; border-top: 1px solid var(--border);
+    }
+
+    /* ── 综合审查 Tab 权限接口表（privilege_endpoints 模式，在 dp-shell 外） ── */
+    .perm-table-wrap {
+      overflow-x: auto;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow-sm);
+    }
+    .perm-table {
+      width: 100%;
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+      font-size: .84rem;
+    }
+    .perm-table th {
+      background: #fafbfd !important;
+      color: var(--muted) !important;
+      padding: 10px 14px !important;
+      text-align: left !important;
+      font-size: .68rem !important;
+      font-weight: 700 !important;
+      text-transform: uppercase !important;
+      letter-spacing: .07em !important;
+      white-space: nowrap !important;
+      border-bottom: 1px solid var(--border) !important;
+    }
+    .perm-table td {
+      padding: 10px 14px !important;
+      border-bottom: 1px solid var(--border) !important;
+      vertical-align: top !important;
+      color: var(--text) !important;
+      background: transparent !important;
+    }
+    .perm-table tr:last-child td { border-bottom: none !important; }
+    .perm-table tr:hover td { background: #f8f9fb !important; }
+    .api-permission-block { overflow-x: auto; }
+
+    /* 存量越权风险区块（综合审查 Tab，全文扫描） */
+    .legacy-privilege-block {
+      background: var(--minor-bg);
+      border: 1px solid var(--minor-border);
+      border-left: 4px solid var(--minor-strong);
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin-bottom: 16px;
+    }
+    .legacy-privilege-block .lp-title { font-size: 14px; font-weight: 700; color: var(--minor-strong); margin: 0 0 4px; }
+    .legacy-privilege-block .lp-subtitle { font-size: 12px; color: var(--minor-text); margin: 0 0 14px; }
+    /* 根因聚合卡片 */
+    .cluster-card { border-left: 4px solid #6366f1; }
+    .cluster-badge {
+      background: #6366f1; color: #fff;
+      font-size: 11px; padding: 2px 8px;
+      border-radius: 10px; margin-left: 8px;
+      font-weight: 600; letter-spacing: .02em;
+    }
+    .cluster-locations { margin: 8px 0 4px; }
+    .cluster-locations > summary {
+      cursor: pointer; color: #6366f1;
+      font-size: 13px; font-weight: 500;
+    }
+    .cluster-locations > summary:hover { text-decoration: underline; }
+    .loc-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+    .loc-table th, .loc-table td {
+      padding: 4px 8px; border: 1px solid #e5e7eb; text-align: left;
+    }
+    .loc-table th { background: #f9fafb; font-weight: 600; }
+    .loc-file { font-family: monospace; color: #374151; }
+    .loc-line { text-align: center; color: #6b7280; white-space: nowrap; }
+    .loc-snippet { color: #4b5563; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* ── Charts Row (并列布局) ── */
+    .charts-row {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    /* ── Chart Section ── */
+    .chart-section {
+      flex: 1 1 0;
+      min-width: 0;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .chart-container {
+      position: relative;
+      height: 260px;
+    }
+
+    /* ── Top 3 Criticals in Hero ── */
+    .top-criticals {
+      position: relative;
+      margin-top: 18px;
+      padding-top: 16px;
+      border-top: 1px solid rgba(255,255,255,0.12);
+    }
+
+    .top-criticals h3 {
+      margin: 0 0 10px;
+      font-size: 13px;
+      font-weight: 700;
+      color: #ff9d94;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .top-criticals ul {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .top-criticals li {
+      font-size: 13px;
+      color: #d6dcea;
+      line-height: 1.5;
+      padding: 9px 12px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.09);
+      border-left: 3px solid #f2645a;
+      border-radius: 0 8px 8px 0;
+    }
+
+    .top-criticals li strong {
+      color: #ffe1dc;
+      font-weight: 700;
+      display: block;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12px;
+    }
+
+    .top-criticals[hidden] { display: none !important; }
+
+    .top-criticals .tc-desc {
+      display: block;
+      margin-top: 3px;
+    }
+
+    .top-criticals .tc-source {
+      display: inline-block;
+      margin-bottom: 4px;
+      padding: 1px 7px;
+      border-radius: 5px;
+      background: rgba(255,255,255,0.14);
+      color: #f4f7fb;
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    /* ── Export Dropdown ── */
+    .export-dropdown {
+      position: relative;
+    }
+
+    .export-menu {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 4px);
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+      min-width: 160px;
+      z-index: 100;
+      overflow: hidden;
+    }
+
+    .export-menu a {
+      display: block;
+      padding: 10px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--heading);
+      text-decoration: none;
+      transition: background 0.12s;
+    }
+
+    .export-menu a:hover {
+      background: #eef5f1;
+    }
+
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <h1>AI Code Review 报告</h1>
+      <p class="hero-meta">服务: pos-web | 生成时间: 2026-09-30 17:46:37</p>
+      <div class="top-criticals" id="top-criticals" hidden>
+        <h3>最需要先看的问题（Critical）</h3>
+        <ul id="top-criticals-list"></ul>
+      </div>
+    </header>
+
+    <div class="report-tabs" role="tablist" aria-label="报告视图">
+      <button type="button" role="tab" id="tab-general" aria-controls="panel-general" aria-selected="true" onclick="switchReportTab('general')">综合审查</button>
+      <button type="button" role="tab" id="tab-dp" aria-controls="panel-dp" aria-selected="false" onclick="switchReportTab('dp')">权限与业务规则</button>
+    </div>
+
+    <div id="panel-general" class="report-panel is-active" role="tabpanel" aria-labelledby="tab-general">
+    <section class="summary">
+      <h2>总体结论</h2>
+      <div id="summary-text" class="summary-body summary-preformatted"><div class="summary-condensed"><p>合并 <strong>12</strong> 个分片审查，共 <strong>14</strong> 条发现 （Critical 4 · Major 5 · Minor 5 · Info 0）。</p><p>逐条明细见下方「按文件的审查发现」；接口与数据权限维度见顶部「权限与业务规则」页签。</p><details class="summary-raw-details"><summary>展开各分片原文结论</summary><pre class="summary-raw-pre"><strong>分片 1</strong>
+
+本分片发现 2 个安全问题，均来自 <code>config/proxy.ts</code> 新增的 <code>/cdn-pod/</code> 动态代理：把路径中的 <code>host</code> 直接作为代理目标，形成明显的 SSRF/内网探测风险，且在 <code>dev</code> 与 <code>test</code> 两套配置中重复出现。其余本分片可见变更主要是路由与文档调整，未看到新增 HTTP 后端入口映射。
+
+<strong>分片 2</strong>
+
+本分片新增/修改代码未发现可直接落在 diff 新增行上的安全问题。已检查的接口调用、前端权限开关、上传参数拼装与并发状态处理未见新增越权、敏感信息暴露或明显的异常处理缺陷。
+
+<strong>分片 3</strong>
+
+本分片仅涉及 <code>src/utils/file.ts</code> 与 <code>src/utils/shared.ts</code> 的前端工具函数新增，未发现基于本次 diff 可直接确认的安全、权限或 API 契约风险；新增逻辑主要是文件名字符校验与请求参数空值剔除，边界处理在当前变更范围内是自洽的。
+
+<strong>分片 4</strong>
+
+本分片未发现新增越权、XSS、密钥泄露等高危安全问题，但发现 1 处异常处理导致的时间展示失真风险：<code>formatTrackingEventTime</code> 在 <code>timeZone</code> 解析失败时静默回退为无时区解析，可能把轨迹事件时间展示成错误的本地时间。
+
+<strong>分片 5</strong>
+
+本分片未发现新增越权、XSS、硬编码密钥或接口鉴权缺失问题；主要安全风险是测试处理器把扫描原文直接输出到控制台，存在业务标识泄露面。
+
+<strong>分片 6</strong>
+
+本分片可见的新增内容仅为 <code>src/components/ScannerTest/usps-sample-pdf.ts</code> 中导出的测试用 <code>USPS_SAMPLE_PDF_BASE64</code> 常量；未发现新增 HTTP 入口、鉴权放宽、敏感凭证硬编码、XSS、命令执行、文件路径拼接或其他可从本 diff 直接确认的安全问题。
+
+<strong>分片 7</strong>
+
+本分片未发现新增 HTTP 接口层鉴权放开问题，但新增的两个前端 hook 都存在明显状态一致性风险：<code>useAuthImage</code> 会在 <code>url</code> 清空后残留上一张已授权图片，<code>useTrackingQuery</code> 会在并发查询时发生结果串单覆盖。建议优先补齐状态重置与请求竞态保护。
+
+<strong>分片 8</strong>
+
+本分片新增的 chute-binding 前端代码未发现可直接从 diff 证明的安全问题。对外 WCS 调用显式使用 <code>fetch</code> 且设置了 <code>credentials: &#x27;omit&#x27;</code>、未注入内部鉴权头，并补充了超时与错误处理，整体安全控制较完整。
+
+<strong>分片 9</strong>
+
+本分片新增/修改代码未发现可直接落在 diff 新增行上的安全问题。变更主要集中在前端输入校验、历史快照取数切换、扫描页守卫与测试补充，未见新增越权入口、敏感信息持久化或硬编码密钥等高风险实现。
+
+<strong>分片 10</strong>
+
+本分片新增的前端设备管理相关代码未发现可直接从 diff 证明的安全问题。凭据展示仅停留在一次性弹窗内，未见写入 localStorage/sessionStorage/cookie、未见日志输出、未见新增 HTTP 入口映射或前端显式放宽权限控制的代码。
+
+<strong>分片 11</strong>
+
+本分片发现 2 条安全问题，均集中在 <code>automation/device</code> 新增的凭据重置链路：前端把设备 <code>appSecret</code> 作为明文业务对象接收并存入 React 状态，新增了明显的敏感信息暴露面。其余变更未见可从 diff 直接确认的新增越权、XSS 或鉴权绕过问题。
+
+<strong>分片 12</strong>
+
+本分片新增/修改代码未发现可直接落在 diff 新增行上的安全问题。变更主要为前端页面、抽屉组件与测试补充，已见到基于 <code>Access</code> / <code>useAccess</code> 的前端权限门禁，且本分片未出现新的 HTTP 映射入口、敏感信息落盘、危险渲染或明显并发/异常处理缺陷。</pre></details></div></div>
+      <div class="filter-row">
+        <span class="filter-label">点击筛选:</span>
+        <div class="chips">
+          <span class="chip critical filter-chip" data-filter="critical" onclick="filterBySeverity(this)">Critical: 4</span>
+          <span class="chip major filter-chip" data-filter="major" onclick="filterBySeverity(this)">Major: 5</span>
+          <span class="chip minor filter-chip" data-filter="minor" onclick="filterBySeverity(this)">Minor: 5</span>
+          <span class="chip info filter-chip" data-filter="info" onclick="filterBySeverity(this)">Info: 0</span>
+          <span class="chip">Total: 14</span>
+        </div>
+        
+      </div>
+    </section>
+
+    <div class="charts-row">
+      <div class="chart-section" id="chart-section">
+        <h3 class="section-title">问题分布</h3>
+        <div class="chart-container">
+          <canvas id="categoryChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div id="filter-hint">
+      筛选中: <strong id="filter-hint-label"></strong>，仅显示对应问题
+      <span class="clear-filter" onclick="clearFilter()">清除筛选</span>
+    </div>
+
+    <div class="findings-toolbar" id="findings-toolbar" style="display: none;">
+      <!-- 筛选按钮已下线：与上方「总体结论」区的 filter-row（Critical/Major/Minor/Info 计数
+           chip）功能重复，且从未挂过点击事件，是从未生效的死代码（用户反馈"这个筛选多余了"）。
+           筛选统一走上方 filter-row 的 filterBySeverity()，这里只保留搜索 + 导出。 -->
+      <input type="text" class="findings-search" id="findings-search" placeholder="搜索文件/描述…">
+      <div class="export-dropdown">
+        <button class="toolbar-btn" id="export-btn">导出 ▼</button>
+        <div class="export-menu" id="export-menu" style="display:none;">
+          <a href="#" onclick="exportJira()">导出为 Jira</a>
+          <a href="#" onclick="exportExcel()">导出为 Excel</a>
+          <a href="#" onclick="exportCsv()">导出为 CSV</a>
+        </div>
+      </div>
+    </div>
+
+    
+<style>
+.impact-section { margin: 16px 0 24px; }
+.impact-section .section-title { font-size: 18px; font-weight: 700; margin-bottom: 10px; }
+/* 颜色直接写死（不用 var(--minor-*)）：既往回归测过"这份样式表里一次都不能
+   出现 --minor-bg 这个变量名"（NEEDS_HUMAN 不该复用 minor 琥珀色，见下方
+   impact-stat.impact-needs-human 的注释），这里的抽样提示条语义完全不同
+   （跟严重度无关，只是"这批数据是抽样的"），但同一份样式表里带上这个变量
+   名字本身就会让那条回归测试的"零出现"断言失去意义。 */
+.impact-sample-banner {
+  background: #fdf7e0; color: #8a6208;
+  border: 1px solid #f1e096;
+  border-radius: 8px; padding: 8px 14px; font-size: 13px; font-weight: 600;
+  margin-bottom: 10px;
+}
+.impact-stats-banner { margin-bottom: 10px; }
+.impact-stat {
+  display: inline-block; padding: 4px 11px; border-radius: 8px; font-size: 12px;
+  font-weight: 700; margin-right: 8px;
+}
+.impact-stat.impact-risk { background: var(--critical-bg, #fdeceb); color: var(--critical-text, #b3261e); }
+/* NEEDS_HUMAN 改用 info 蓝（原用 minor 琥珀色，与"一般问题"严重度语义撞车——
+   需人工核实 ≠ 一个确定的低危问题，是"不知道，人来判断"，语义上更接近
+   info 的"仅供参考/待确认"，用户反馈"两套配色打架"实测已改） */
+.impact-stat.impact-needs-human { background: var(--info-bg, #eaf1fd); color: var(--info-text, #23509c); }
+.impact-stat.impact-safe { background: var(--safe-bg, #e8f6ee); color: var(--safe-text, #1a7a4c); }
+.impact-stat.impact-total { background: var(--chip-bg, #eef0f5); color: var(--muted, #667085); }
+.impact-section-note {
+  font-size: 13px; color: #666; line-height: 1.75; margin: 0 0 12px;
+  padding: 11px 14px; background: #f7f9fa; border-radius: 8px;
+}
+.impact-section-note p { margin: 0 0 7px; }
+.impact-section-note p:last-child { margin-bottom: 0; }
+.impact-section-note strong { color: #333; }
+.impact-note-legend {
+  margin: 0 0 8px; padding-left: 18px; list-style: none;
+}
+.impact-note-legend li { margin-bottom: 3px; }
+.impact-note-legend li::before {
+  content: "·"; margin-right: 6px; color: #999; font-weight: 700;
+}
+.impact-ratio-alert {
+  background: var(--major-bg, #fdf1e3); color: var(--major-text, #a85311);
+  border: 1px solid var(--major-border, #f4d19d); border-radius: 8px; padding: 8px 14px;
+  font-size: 13px; margin-bottom: 10px;
+}
+.impact-group { margin-bottom: 22px; }
+.impact-group-title {
+  font-size: 16px; font-weight: 700; margin: 14px 0 10px; color: #333;
+  padding-bottom: 6px; border-bottom: 1px solid #e5e5e5;
+}
+.impact-empty { color: #666; font-size: 13px; padding: 8px 0; }
+/* 卡片间距加大 + 阴影，强化"一张卡是一个独立问题"的边界感（用户反馈①） */
+.impact-risk-list { display: flex; flex-direction: column; gap: 16px; }
+.impact-card {
+  border: 1px solid var(--border, #e3e6ec); border-left: 4px solid #ccc; border-radius: 12px;
+  padding: 14px 16px; background: #fff; margin-bottom: 16px;
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(16,24,40,.06));
+}
+.impact-card.impact-risk { border-left-color: var(--critical-strong, #d1291f); background: linear-gradient(90deg, var(--critical-bg, #fdeceb) 0%, #fff 14px); }
+.impact-card.impact-needs-human { border-left-color: var(--info-strong, #2f66c9); background: linear-gradient(90deg, var(--info-bg, #eaf1fd) 0%, #fff 14px); }
+.impact-card.impact-safe { border-left-color: var(--safe-text, #1a7a4c); background: linear-gradient(90deg, var(--safe-bg, #e8f6ee) 0%, #fff 14px); }
+.impact-card-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+  padding-bottom: 8px; border-bottom: 1px solid #f0f0f0;
+}
+.impact-badge {
+  font-size: 11.5px; font-weight: 800; padding: 4px 10px; border-radius: 7px;
+  text-transform: none; border: 1px solid transparent;
+}
+/* 加边框跟主报告 .sev-badge 视觉语言对齐（用户反馈"两种报告风格不统一"） */
+.impact-badge.impact-risk { background: var(--critical-bg, #fdeceb); color: var(--critical-text, #b3261e); border-color: var(--critical-border, #f3b7b2); }
+.impact-badge.impact-needs-human { background: var(--info-bg, #eaf1fd); color: var(--info-text, #23509c); border-color: var(--info-border, #c0d6f6); }
+.impact-badge.impact-safe { background: var(--safe-bg, #e8f6ee); color: var(--safe-text, #1a7a4c); border-color: var(--safe-border, #aee3c4); }
+.impact-index { font-size: 12px; color: #888; }
+.impact-source-tag { font-size: 12.5px; color: #555; background: #f2f2f2; border-radius: 4px; padding: 2px 7px; }
+/* 字段之间用细分隔线拉开节奏，避免"挤成一坨"（用户反馈①的卡内延伸） */
+.impact-field { margin: 0; padding: 8px 0; font-size: 14px; }
+.impact-field + .impact-field { border-top: 1px dashed #ececec; }
+.impact-field-label {
+  font-weight: 700; color: #555; font-size: 12px; margin-bottom: 4px;
+  text-transform: uppercase; letter-spacing: .02em;
+}
+.impact-field p { margin: 0; }
+/* “怎么办”做成醒目的行动召唤条，呼应主报告 .fix-card/.dp-fix 的视觉语言，
+   同时用底色块把它和上面的说明性文字区分开——减轻“每张卡都在念同一句话”
+   的观感（用户反馈④之一：内容本身仍是模板句，属内容生成侧，此处只做视觉区隔）*/
+.impact-action {
+  background: #f3faf7; border-left: 3px solid var(--accent, #0f766e);
+  border-radius: 0 8px 8px 0; padding: 8px 12px; color: #2d4a3d;
+}
+/* 代码上下文块：文件名/行号做成编辑器 tab 条，深色代码正文 + 高亮目标行，
+   解决用户反馈②（file:line 太不显眼）与③（无上下文、无高亮） */
+.impact-code-tab {
+  display: flex; align-items: baseline; gap: 10px; background: #1a2438;
+  color: #cbd5e0; font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12px; padding: 7px 13px; border-radius: 8px 8px 0 0; margin-top: 8px;
+}
+.impact-code-tab-path { font-weight: 600; color: #e2e8f0; word-break: break-all; }
+.impact-code-tab-line { color: #7dd3e8; white-space: nowrap; }
+.impact-code-body {
+  background: var(--code-bg, #10182b); border-radius: 0 0 8px 8px; padding: 7px 0;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12.5px; line-height: 1.65; overflow-x: auto;
+}
+.impact-code-line { display: flex; padding: 0 12px; white-space: pre; }
+.impact-code-no {
+  flex: 0 0 auto; width: 2.6em; text-align: right; margin-right: 12px;
+  color: #718096; user-select: none;
+}
+.impact-code-text { color: #e2e8f0; }
+.impact-code-line-hl {
+  background: rgba(214, 158, 46, .18); border-left: 3px solid #d69e2e;
+  padding-left: 9px; margin-left: -3px;
+}
+.impact-code-line-hl .impact-code-no { color: #f6c453; font-weight: 700; }
+.impact-code-line-hl .impact-code-text { color: #fdf6e3; }
+/* quote 单行降级展示（拿不到源文件时的兜底，见 render_impact_section.py 说明） */
+.impact-evidence {
+  background: var(--code-bg, #10182b); color: #e2e8f0; border-radius: 0 0 8px 8px;
+  padding: 9px 13px; font-size: 12.5px; overflow-x: auto; margin: 0;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+/* 折叠区统一加 ▸ 箭头指示，跟主报告其它折叠区（issue-fold/dp-fold）一致，
+   修掉「牵连影响」这节此前唯独没有展开箭头的不一致（用户反馈④之一） */
+.impact-needs-human-fold, .impact-merged-details { margin-top: 10px; }
+.impact-needs-human-fold summary, .impact-merged-details summary {
+  cursor: pointer; font-size: 13.5px; font-weight: 600; color: #555; padding: 6px 0;
+  list-style: none; display: flex; align-items: center; gap: 6px;
+}
+.impact-needs-human-fold summary::-webkit-details-marker,
+.impact-merged-details summary::-webkit-details-marker { display: none; }
+.impact-needs-human-fold summary::before,
+.impact-merged-details summary::before {
+  content: "▸"; font-size: 11px; color: var(--accent, #0f766e); transition: transform .15s;
+}
+.impact-needs-human-fold[open] > summary::before,
+.impact-merged-details[open] > summary::before { transform: rotate(90deg); }
+/* 判定为安全的调用点不再逐条/逐组展示（2026-09-02），.impact-safe-fold 这
+   个折叠 class 已经没有任何 HTML 元素在用，改用不带交互的 .impact-safe-note
+   脚注段落——下面这条规则保留，上面折叠相关的 .impact-safe-fold 选择器已
+   随之删除（P3，code-reviewer 复核指出的死 CSS）。 */
+.impact-safe-note { color: #777; font-size: 12.5px; }
+.impact-merged-row { border-top: 1px dashed #e2e2e2; padding: 10px 0; font-size: 14px; }
+.impact-merged-row-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+</style>
+<section class="impact-section"><h2 class="section-title">牵连影响</h2><p class="impact-section-note">本节分析改动波及的其他 Java 调用点，目前仅支持 Java 调用链。</p><div class="impact-empty">本次改动的 179 个文件均非 .java，未分析（不代表已排查安全，如需评估该改动的牵连范围，请人工核实）。</div></section><h2 class="section-title subsection-title">按文件的审查发现</h2><details class="action-group action-group-fix_now" open="open" style="margin-bottom:14px;border:1px solid #c53030;border-radius:8px;"><summary style="cursor:pointer;font-weight:700;font-size:15px;color:#c53030;padding:8px 12px;list-style:none;">&#128308; 立即修代码 &middot; 9 个问题</summary><div style="padding:0 12px 8px;"><div class="findings-list-wrap"><details class="file-group findings-file-group" open="open" id="fg-2f37be7271d4" data-file-path="config/proxy.ts" data-short-name="proxy.ts" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">config/proxy.ts</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">2 Critical</span></span><span class="file-group-count">2 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L106-109</span><span class="finding-cat">安全风险</span><span class="evidence-line-corrected-badge" style="color:#1565c0;border:1px solid #1565c0;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段与 evidence_quote 实际所在行不一致，已按 evidence_quote 自动纠正高亮位置">&#128260; 行号已纠正</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>test</code> 环境下同样新增了 <code>/cdn-pod/</code> 动态代理，并继续把 <code>req.path</code> 首段未经校验地拼进 <code>https://${host}/</code>。</p><p>这不是单点疏漏，而是在另一个环境配置中重复引入同一条不受控出站代理链路。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>测试环境通常比开发环境更接近真实网络边界，若该代理对测试人员、自动化脚本或预发页面开放，攻击者可利用它访问测试网段内的内部服务，形成横向探测或敏感接口访问风险；</p><p>由于问题在 <code>test</code> 配置中重复存在，单独修一个环境仍会留下可利用入口。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>同步收敛 <code>test</code> 环境的 <code>/cdn-pod/</code> 代理策略，复用同一套受控 <code>host</code> 校验逻辑，不要在两个环境各自维护一份可绕过的动态 <code>router</code>。</p><p>建议抽出共享校验函数，并在非法 <code>host</code> 时直接拒绝代理。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>在 <code>test</code> 环境分别请求 <code>/cdn-pod/169.254.169.254/latest/meta-data/</code> 和 <code>/cdn-pod/localhost:3000/</code>，确认当前配置会把请求路由到非 POD 目标；</p><p>修复后这些请求应失败，而 <code>/cdn-pod/&lt;白名单POD域名&gt;/&lt;合法路径&gt;</code> 仍可正常取图。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">108</span>    <span class="code-string">'/cdn-pod/'</span>: {</span><span class="code-row"><span class="code-ln">109</span>      target: <span class="code-string">'https://placeholder.invalid/'</span>,</span><span class="code-row"><span class="code-ln">110</span>      changeOrigin: <span class="code-keyword">true</span>,</span><span class="code-row"><span class="code-ln">111</span>      router: (req: { path: string }) =&gt; {</span><span class="code-row"><span class="code-ln">112</span>        <span class="code-keyword">const</span> host = req.path.replace(/^\/cdn-pod\<span class="code-comment">//, '').split('/')[0];</span></span><span class="code-row code-row-target"><span class="code-ln">113</span>        <span class="code-keyword">return</span> `https:<span class="code-comment">//${host}/`;</span></span><span class="code-row code-row-target"><span class="code-ln">114</span>      },</span><span class="code-row code-row-target"><span class="code-ln">115</span>      pathRewrite: (path: string) =&gt; path.replace(/^\/cdn-pod\/[^/]+/, <span class="code-string">''</span>),</span><span class="code-row code-row-target"><span class="code-ln">116</span>    },</span><span class="code-row"><span class="code-ln">117</span>    <span class="code-string">'/dms-api/'</span>: {</span><span class="code-row"><span class="code-ln">118</span>      <span class="code-comment">// 要代理的地址</span></span><span class="code-row"><span class="code-ln">119</span>      <span class="code-comment">// target: 'http://47.251.12.171:9076/',</span></span><span class="code-row"><span class="code-ln">120</span>      target: <span class="code-string">'https://pos.speedx.io/'</span>,</span><span class="code-row"><span class="code-ln">121</span>      <span class="code-comment">// 配置了这个可以从 http 代理到 https</span></span></code></pre></details></div><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L95-98</span><span class="finding-cat">安全风险</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>新增的 <code>/cdn-pod/</code> 代理把 <code>req.path</code> 中用户可控的首段直接当作 <code>router</code> 的目标主机，<code>return </code>https://${host}/<code>;</code> 没有任何白名单、格式校验或内网地址拦截。</p><p>这样前端只要请求 <code>/cdn-pod/&lt;任意host&gt;/&lt;path&gt;</code>，开发/测试环境代理就会代表浏览器向该 <code>&lt;任意host&gt;</code> 发起服务端请求。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>这会把本地开发机或测试环境变成开放式 SSRF 跳板。攻击者可借助页面中可控图片地址或手工构造 URL，探测并访问内网地址、云元数据地址或仅代理机可达的管理端点；</p><p>同时 <code>changeOrigin: true</code> 还会伪造目标 Host 头，放大对内网 HTTP 服务的访问能力。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>把 <code>router</code> 改成只允许明确白名单中的 POD 域名，禁止直接信任路径里的 <code>host</code>。</p><p>至少同时做三层限制：校验 <code>host</code> 仅匹配预期域名后缀、拒绝 IP 字面量/localhost/私网网段、对非法值直接返回固定 <code>target</code> 或拒绝请求。例如：</p><pre class="code-block"><code><span class="code-keyword">const</span> ALLOWED_POD_HOSTS = <span class="code-keyword">new</span> Set([<span class="code-string">'pod-cdn.speedx.io'</span>, <span class="code-string">'pod-img.speedx.io'</span>]);
+router: (req: { path: string }) =&gt; {
+  <span class="code-keyword">const</span> host = req.path.replace(/^\/cdn-pod\<span class="code-comment">//, '').split('/')[0];</span>
+  <span class="code-keyword">if</span> (!ALLOWED_POD_HOSTS.has(host)) {
+    <span class="code-keyword">throw</span> <span class="code-keyword">new</span> Error(`invalid cdn-pod host: ${host}`);
+  }
+  <span class="code-keyword">return</span> `https:<span class="code-comment">//${host}/`;</span>
+}</code></pre><p>如果业务必须支持多 host，也应改为后端下发受控映射，而不是把完整主机名暴露为路径参数。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>在开发或测试环境访问 <code>/cdn-pod/169.254.169.254/latest/meta-data/</code>、<code>/cdn-pod/127.0.0.1:8080/actuator</code>、<code>/cdn-pod/internal.service.cluster.local/health</code>，验证代理当前会尝试把请求转发到这些非预期目标；</p><p>修复后应全部被拒绝，仅允许预设 POD 域名。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln"> 90</span>    },</span><span class="code-row"><span class="code-ln"> 91</span>    <span class="code-comment">// POD 图片：host 不固定，前端把绝对地址改写为 /cdn-pod/&lt;host&gt;/&lt;path&gt; 走代理，</span></span><span class="code-row"><span class="code-ln"> 92</span>    <span class="code-comment">// 这里按路径首段 host 动态选 target，再剥掉 /cdn-pod/&lt;host&gt; 前缀</span></span><span class="code-row"><span class="code-ln"> 93</span>    <span class="code-string">'/cdn-pod/'</span>: {</span><span class="code-row"><span class="code-ln"> 94</span>      target: <span class="code-string">'https://placeholder.invalid/'</span>, <span class="code-comment">// 实际 target 由 router 动态决定</span></span><span class="code-row code-row-target"><span class="code-ln"> 95</span>      changeOrigin: <span class="code-keyword">true</span>,</span><span class="code-row code-row-target"><span class="code-ln"> 96</span>      router: (req: { path: string }) =&gt; {</span><span class="code-row code-row-target"><span class="code-ln"> 97</span>        <span class="code-keyword">const</span> host = req.path.replace(/^\/cdn-pod\<span class="code-comment">//, '').split('/')[0];</span></span><span class="code-row code-row-target"><span class="code-ln"> 98</span>        <span class="code-keyword">return</span> `https:<span class="code-comment">//${host}/`;</span></span><span class="code-row"><span class="code-ln"> 99</span>      },</span><span class="code-row"><span class="code-ln">100</span>      pathRewrite: (path: string) =&gt; path.replace(/^\/cdn-pod\/[^/]+/, <span class="code-string">''</span>),</span><span class="code-row"><span class="code-ln">101</span>    },</span><span class="code-row"><span class="code-ln">102</span>  },</span><span class="code-row"><span class="code-ln">103</span>  test: {</span></code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-31086ca5f42f" data-file-path="config/routes.ts" data-short-name="routes.ts" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">config/routes.ts</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L1438-1457</span><span class="finding-cat finding-cat-requirement">需求外动作</span><span class="evidence-line-corrected-badge" style="color:#1565c0;border:1px solid #1565c0;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段与 evidence_quote 实际所在行不一致，已按 evidence_quote 自动纠正高亮位置">&#128260; 行号已纠正</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>本次正式需求文档是「Delivery Batch | 自动完结批次」，验收点集中在 SC 级自动完结配置、到点执行、跳过规则、重试与执行记录；</p><p>但 diff 在 <code>config/routes.ts</code> 里新增了一个全新的 <code>/automation</code> 菜单分组及其 <code>device</code>、<code>chute-binding</code> 两个页面路由，这些内容与需求原文中的任何配置项、执行逻辑或记录表都没有对应关系。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>本次改动会把与“自动完结批次”无关的新菜单和页面一并带入发布范围，增加需求外功能变更面，后续即使自动完结功能本身验收通过，也无法证明这两个入口是本需求要求上线的内容。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请将 <code>/automation</code> 路由拆分到独立需求/MR，或在本次需求文档/MR 中补充明确的需求依据后再合入。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>核对本次需求验收范围：进入菜单配置后确认除“自动完结批次”相关页面外，不应新增 <code>/automation/device</code>、<code>/automation/chute-binding</code> 这类无需求依据的菜单入口。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">1456</span>        ],</span><span class="code-row"><span class="code-ln">1457</span>      },</span><span class="code-row"><span class="code-ln">1458</span>    ],</span><span class="code-row"><span class="code-ln">1459</span>  },</span><span class="code-row"><span class="code-ln">1460</span>  {</span><span class="code-row code-row-target"><span class="code-ln">1461</span>    path: <span class="code-string">'/automation'</span>,</span><span class="code-row code-row-target"><span class="code-ln">1462</span>    name: <span class="code-string">'automation'</span>,</span><span class="code-row code-row-target"><span class="code-ln">1463</span>    icon: <span class="code-string">'setting'</span>,</span><span class="code-row code-row-target"><span class="code-ln">1464</span>    access: <span class="code-string">'automation'</span>,</span><span class="code-row code-row-target"><span class="code-ln">1465</span>    <span class="code-comment">// 自动化设施域，紧邻 Sort(order 23) 分组</span></span><span class="code-row code-row-target"><span class="code-ln">1466</span>    order: <span class="code-number">23.5</span>,</span><span class="code-row code-row-target"><span class="code-ln">1467</span>    routes: [</span><span class="code-row code-row-target"><span class="code-ln">1468</span>      {</span><span class="code-row code-row-target"><span class="code-ln">1469</span>        path: <span class="code-string">'device'</span>,</span><span class="code-row code-row-target"><span class="code-ln">1470</span>        name: <span class="code-string">'device'</span>,</span><span class="code-row code-row-target"><span class="code-ln">1471</span>        access: <span class="code-string">'baseData:sorterEquipment:query'</span>,</span><span class="code-row code-row-target"><span class="code-ln">1472</span>        component: <span class="code-string">'./manager/automation/device'</span>,</span><span class="code-row code-row-target"><span class="code-ln">1473</span>      },</span><span class="code-row code-row-target"><span class="code-ln">1474</span>      {</span><span class="code-row code-row-target"><span class="code-ln">1475</span>        path: <span class="code-string">'chute-binding'</span>,</span><span class="code-row code-row-target"><span class="code-ln">1476</span>        name: <span class="code-string">'chuteBinding'</span>,</span><span class="code-row code-row-target"><span class="code-ln">1477</span>        access: <span class="code-string">'sorter:chute:verify'</span>,</span><span class="code-row code-row-target"><span class="code-ln">1478</span>        component: <span class="code-string">'./automation/chute-binding'</span>,</span><span class="code-row code-row-target"><span class="code-ln">1479</span>      },</span><span class="code-row code-row-target"><span class="code-ln">1480</span>    ],</span><span class="code-row"><span class="code-ln">1481</span>  },</span><span class="code-row"><span class="code-ln">1482</span>  {</span><span class="code-row"><span class="code-ln">1483</span>    path: <span class="code-string">'/rps'</span>,</span><span class="code-row"><span class="code-ln">1484</span>    name: <span class="code-string">'rps'</span>,</span><span class="code-row"><span class="code-ln">1485</span>    icon: <span class="code-string">'robot'</span>,</span></code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-626a7cc85904" data-file-path="src/components/PackageDetails/dateTime.ts" data-short-name="dateTime.ts" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">src/components/PackageDetails/dateTime.ts</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L22-24</span><span class="finding-cat">异常处理</span><span class="evidence-line-unverified-badge" style="color:#c62828;border:1px solid #c62828;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段附近 &#177;5 行内未找到 evidence_quote 摘抄的原文，行号未经核实，下方证据代码可能不是问题真正所在的位置，请人工核实">&#9888; 行号未验证</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>formatTrackingEventTime</code> 在解析 <code>timeZone</code> 失败时直接吞掉异常，并回退到 <code>formatUnzonedDateTime(eventTs)</code>。</p><p>这会把带有明确 <code>timeZone</code> 的业务时间按浏览器本地时区重新解释，而不是保留原始字符串或显式标记解析失败，导致 <code>eventTs</code> 与 <code>timeZone</code> 的组合被静默篡改。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>当后端返回了非法或未受支持的 <code>timeZone</code> 时，页面会展示一个看似正常但实际错误的事件时间。操作员据此判断包裹轨迹先后顺序、站点处理时刻时会被误导，而且因为异常被完全吞掉，前端与测试都难以及时发现数据质量问题。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>修改 <code>formatTrackingEventTime</code> 的异常分支，不要把带 <code>timeZone</code> 的 <code>eventTs</code> 当作无时区时间再次本地化；</p><p>应直接返回原始 <code>eventTs</code>（或 <code>EMPTY_DATE_TIME</code>），并把异常场景与“无时区”场景区分开。示例：</p><pre class="code-block"><code><span class="code-keyword">export</span> <span class="code-keyword">function</span> formatTrackingEventTime(eventTs?: string, timeZone?: string): string {
+  <span class="code-keyword">if</span> (!eventTs) <span class="code-keyword">return</span> EMPTY_DATE_TIME;
+  <span class="code-keyword">if</span> (!timeZone) <span class="code-keyword">return</span> formatUnzonedDateTime(eventTs);
+
+  <span class="code-keyword">try</span> {
+    <span class="code-keyword">const</span> eventTime = dayjs.tz(eventTs, timeZone);
+    <span class="code-keyword">return</span> eventTime.isValid() ? eventTime.local().format(DATE_TIME_FORMAT) : eventTs;
+  } <span class="code-keyword">catch</span> {
+    <span class="code-keyword">return</span> eventTs;
+  }
+}</code></pre></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>构造 <code>eventTs=&#x27;2026-08-15 18:36:42&#x27;</code>、<code>timeZone=&#x27;Invalid/TimeZone&#x27;</code> 的轨迹事件，断言页面不要把它转换成浏览器本地时区对应的新时间；</p><p>应显示原始 <code>eventTs</code> 或统一占位符，并与 <code>timeZone</code> 为空时的展示行为区分开。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">17</span>  <span class="code-keyword">if</span> (!eventTs) <span class="code-keyword">return</span> EMPTY_DATE_TIME;</span><span class="code-row"><span class="code-ln">18</span>  <span class="code-keyword">if</span> (!timeZone) <span class="code-keyword">return</span> formatUnzonedDateTime(eventTs);</span><span class="code-row"><span class="code-ln">19</span></span><span class="code-row"><span class="code-ln">20</span>  <span class="code-keyword">try</span> {</span><span class="code-row"><span class="code-ln">21</span>    <span class="code-keyword">const</span> eventTime = dayjs.tz(eventTs, timeZone);</span><span class="code-row code-row-target"><span class="code-ln">22</span>    <span class="code-keyword">return</span> eventTime.isValid() ? eventTime.local().format(DATE_TIME_FORMAT) : EMPTY_DATE_TIME;</span><span class="code-row code-row-target"><span class="code-ln">23</span>  } <span class="code-keyword">catch</span> {</span><span class="code-row code-row-target"><span class="code-ln">24</span>    <span class="code-keyword">return</span> formatUnzonedDateTime(eventTs);</span><span class="code-row"><span class="code-ln">25</span>  }</span><span class="code-row"><span class="code-ln">26</span>}</span></code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-8ab71c2eb16a" data-file-path="src/components/ScannerTest/mockScanWithPrintHandler.ts" data-short-name="mockScanWithPrintHandler.ts" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">src/components/ScannerTest/mockScanWithPrintHandler.ts</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L18</span><span class="finding-cat">日志规范</span><span class="evidence-line-unverified-badge" style="color:#c62828;border:1px solid #c62828;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段附近 &#177;5 行内未找到 evidence_quote 摘抄的原文，行号未经核实，下方证据代码可能不是问题真正所在的位置，请人工核实">&#9888; 行号未验证</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>mockScanWithPrintHandler</code> 在成功分支直接用 <code>console.log</code> 输出 <code>val</code>，而 <code>val</code> 是扫描输入的原始值，可能包含运单号、面单条码或其它业务标识；</p><p>该新增日志没有做脱敏，也没有限制仅在本地开发环境启用。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>任何调用 <code>mockScanWithPrintHandler</code> 的测试/演示页面在浏览器控制台都会暴露真实扫描内容，现场排障录屏、共享浏览器日志或远程调试时都可能把包裹标识泄露给无关人员，形成不必要的数据暴露面。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>删除这条 <code>console.log</code>，或至少改为仅在显式开发开关下输出脱敏后的值，例如只保留前后少量字符，不要直接打印完整 <code>val</code>。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>在接入 <code>mockScanWithPrintHandler</code> 的页面扫描一条包含完整运单号的字符串，确认浏览器控制台不再出现完整 <code>val</code>；若保留调试日志，验证输出内容已脱敏且生产构建不会打印。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">13</span>): Promise&lt;API.Response&gt; =&gt; {</span><span class="code-row"><span class="code-ln">14</span>  <span class="code-keyword">await</span> <span class="code-keyword">new</span> Promise((resolve) =&gt; setTimeout(resolve, <span class="code-number">200</span>));</span><span class="code-row"><span class="code-ln">15</span>  <span class="code-keyword">const</span> isSuccess = Math.random() &gt; <span class="code-number">0.2</span>;</span><span class="code-row"><span class="code-ln">16</span>  <span class="code-keyword">if</span> (isSuccess) {</span><span class="code-row"><span class="code-ln">17</span>    <span class="code-keyword">const</span> fixRouteDate = <span class="code-keyword">new</span> Date();</span><span class="code-row code-row-target"><span class="code-ln">18</span>    <span class="code-keyword">const</span> routeCode = `${String(fixRouteDate.getMonth() + <span class="code-number">1</span>).padStart(<span class="code-number">2</span>, <span class="code-string">'0'</span>)}${String(fixRouteDate.getDate()).padStart(<span class="code-number">2</span>, <span class="code-string">'0'</span>)}-${String.fromCharCode(<span class="code-number">65</span> + Math.floor(Math.random() * <span class="code-number">26</span>))}${Math.floor(Math.random() * <span class="code-number">20</span>)}-${Math.floor(Math.random() * <span class="code-number">5</span>) + <span class="code-number">1</span>}`;</span><span class="code-row"><span class="code-ln">19</span>    console.log(<span class="code-string">'Scanned value:'</span>, val, <span class="code-string">'Generated route code:'</span>, routeCode);</span><span class="code-row"><span class="code-ln">20</span>    <span class="code-comment">// 仅打印模式才返回面单 base64，其它模式不下发，避免触发无意义的打印/下载</span></span><span class="code-row"><span class="code-ln">21</span>    <span class="code-keyword">const</span> isPrint = inputType === ProcessMode.Print;</span><span class="code-row"><span class="code-ln">22</span>    <span class="code-keyword">return</span> {</span><span class="code-row"><span class="code-ln">23</span>      code: <span class="code-number">200</span>,</span></code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-8cf1a8610041" data-file-path="src/hooks/useAuthImage.ts" data-short-name="useAuthImage.ts" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">src/hooks/useAuthImage.ts</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L24</span><span class="finding-cat">状态管理</span><span class="evidence-line-unverified-badge" style="color:#c62828;border:1px solid #c62828;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段附近 &#177;5 行内未找到 evidence_quote 摘抄的原文，行号未经核实，下方证据代码可能不是问题真正所在的位置，请人工核实">&#9888; 行号未验证</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>useAuthImage</code> 在 <code>if (!url) return;</code> 这一分支直接退出 <code>useEffect</code>，没有同步重置 <code>src</code>、<code>loading</code> 和 <code>error</code>。</p><p>当同一个组件先加载过一个有效 <code>url</code>，随后把 <code>url</code> 改成 <code>undefined</code> 或空值时，hook 会继续保留上一次请求生成的 <code>blob:</code> 地址和状态。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>调用方在清空图片地址、切换记录或收起敏感图片时，界面仍可能继续显示上一张已授权加载的图片，造成前一个业务对象的图片在当前上下文中残留展示；</p><p>这属于典型的状态泄漏，尤其在复用同一个组件查看不同包裹或不同 POD 图片时会把旧数据暴露给后续查看者。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>在 <code>useAuthImage</code> 的 <code>if (!url)</code> 分支里显式清空状态，并在必要时撤销上一次 <code>objectUrl</code>。</p><p>至少应把 <code>setSrc(&#x27;&#x27;)</code>、<code>setError(null)</code> 和 <code>setLoading(false)</code> 放到空 <code>url</code> 分支，确保调用方清空 <code>url</code> 后不会继续展示旧图片。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>先用 <code>useAuthImage(&#x27;https://example.com/pod-a.jpg&#x27;)</code> 成功加载出 <code>src</code>，再在同一个 hook 实例中把 <code>url</code> 更新为 <code>undefined</code>；</p><p>断言 <code>src</code> 被清空、<code>loading</code> 为 <code>false</code>，且页面不再显示上一张 <code>pod-a.jpg</code>。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">19</span></span><span class="code-row"><span class="code-ln">20</span>  <span class="code-comment">// 序列化 headers 作为依赖，避免每次渲染传入新对象导致重复请求</span></span><span class="code-row"><span class="code-ln">21</span>  <span class="code-keyword">const</span> headersKey = JSON.stringify(headers || {});</span><span class="code-row"><span class="code-ln">22</span></span><span class="code-row"><span class="code-ln">23</span>  useEffect(() =&gt; {</span><span class="code-row code-row-target"><span class="code-ln">24</span>    <span class="code-keyword">if</span> (!url) <span class="code-keyword">return</span>;</span><span class="code-row"><span class="code-ln">25</span></span><span class="code-row"><span class="code-ln">26</span>    <span class="code-keyword">let</span> objectUrl = <span class="code-string">''</span>;</span><span class="code-row"><span class="code-ln">27</span>    <span class="code-keyword">const</span> controller = <span class="code-keyword">new</span> AbortController();</span><span class="code-row"><span class="code-ln">28</span></span><span class="code-row"><span class="code-ln">29</span>    setLoading(<span class="code-keyword">true</span>);</span></code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-c055ed78f7bd" data-file-path="src/hooks/useTrackingQuery.ts" data-short-name="useTrackingQuery.ts" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">src/hooks/useTrackingQuery.ts</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L56-67</span><span class="finding-cat">状态管理</span><span class="evidence-line-unverified-badge" style="color:#c62828;border:1px solid #c62828;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段附近 &#177;5 行内未找到 evidence_quote 摘抄的原文，行号未经核实，下方证据代码可能不是问题真正所在的位置，请人工核实">&#9888; 行号未验证</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>useTrackingQuery</code> 的 <code>query</code> 每次调用都会直接发起 <code>fetchTrackingViewModel(trackingNo)</code>，但没有请求序号、取消机制或“仅最后一次请求可落库”的保护。</p><p>这样多个 <code>query</code> 并发时，较早发出的慢请求仍然可以在较晚发出的快请求之后执行 <code>setData(viewModel)</code> / <code>setError(err)</code> 覆盖最新结果。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>用户连续扫描或快速重复查询不同 <code>trackingNo</code> 时，界面可能最终展示旧单号的数据或旧请求的错误，导致把前一个包裹的轨迹、司机、路线信息错误地显示到当前查询结果中；</p><p>在扫码查询场景下，这会直接造成业务误判和敏感物流信息串单展示。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>在 <code>useTrackingQuery</code> 中为每次 <code>query</code> 生成递增请求标识，只有当前最新请求返回时才允许执行 <code>setData</code>、<code>setError</code> 和 <code>setLoading</code>；</p><p>如果底层请求支持取消，也应在发起新查询时中止上一次请求。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>先让 <code>query(&#x27;TRACK001&#x27;)</code> 对应的 <code>fetchTrackingViewModel</code> 延迟返回，再立即调用 <code>query(&#x27;TRACK002&#x27;)</code> 并让其先返回；</p><p>断言最终 <code>data.trackingNo</code> 仍是 <code>TRACK002</code>，随后 <code>TRACK001</code> 返回时不会覆盖 <code>TRACK002</code> 的结果，也不会把 <code>loading</code> 或 <code>error</code> 改回旧状态。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">51</span> * 一次只查一个单号，发起新查询覆盖旧结果；报错时清空结果并置位 error</span><span class="code-row"><span class="code-ln">52</span> */</span><span class="code-row"><span class="code-ln">53</span><span class="code-keyword">export</span> <span class="code-keyword">function</span> useTrackingQuery(): UseTrackingQuery {</span><span class="code-row"><span class="code-ln">54</span>  <span class="code-keyword">const</span> [data, setData] = useState&lt;TrackingViewModel&gt;();</span><span class="code-row"><span class="code-ln">55</span>  <span class="code-keyword">const</span> [loading, setLoading] = useState(<span class="code-keyword">false</span>);</span><span class="code-row code-row-target"><span class="code-ln">56</span>  <span class="code-keyword">const</span> [error, setError] = useState&lt;unknown&gt;();</span><span class="code-row code-row-target"><span class="code-ln">57</span></span><span class="code-row code-row-target"><span class="code-ln">58</span>  <span class="code-keyword">const</span> query = useCallback((trackingNo: string) =&gt; {</span><span class="code-row code-row-target"><span class="code-ln">59</span>    setLoading(<span class="code-keyword">true</span>);</span><span class="code-row code-row-target"><span class="code-ln">60</span>    setError(undefined);</span><span class="code-row code-row-target"><span class="code-ln">61</span>    fetchTrackingViewModel(trackingNo)</span><span class="code-row code-row-target"><span class="code-ln">62</span>      .then((viewModel) =&gt; {</span><span class="code-row code-row-target"><span class="code-ln">63</span>        setData(viewModel);</span><span class="code-row code-row-target"><span class="code-ln">64</span>      })</span><span class="code-row code-row-target"><span class="code-ln">65</span>      .<span class="code-keyword">catch</span>((err) =&gt; {</span><span class="code-row code-row-target"><span class="code-ln">66</span>        setError(err);</span><span class="code-row code-row-target"><span class="code-ln">67</span>        setData(undefined);</span><span class="code-row"><span class="code-ln">68</span>      })</span><span class="code-row"><span class="code-ln">69</span>      .<span class="code-keyword">finally</span>(() =&gt; {</span><span class="code-row"><span class="code-ln">70</span>        setLoading(<span class="code-keyword">false</span>);</span><span class="code-row"><span class="code-ln">71</span>      });</span><span class="code-row"><span class="code-ln">72</span>  }, []);</span></code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-a315650ffb50" data-file-path="src/pages/manager/automation/device/index.tsx" data-short-name="index.tsx" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">src/pages/manager/automation/device/index.tsx</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">1 Critical</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L39-45</span><span class="finding-cat">安全风险</span><span class="evidence-line-corrected-badge" style="color:#1565c0;border:1px solid #1565c0;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段与 evidence_quote 实际所在行不一致，已按 evidence_quote 自动纠正高亮位置">&#128260; 行号已纠正</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>handleResetSecret</code> 在调用 <code>resetSorterEquipmentSecret(record.id)</code> 后，直接把后端返回的 <code>SorterEquipmentSecret</code> 放进组件状态 <code>secret</code>，而同一分片的类型定义明确包含明文 <code>appSecret</code>。</p><p>这意味着页面会在前端内存中持有可直接使用的设备凭据，且该凭据随后会被 <code>ModalSecret</code> 展示。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>一旦该页面存在浏览器扩展、前端埋点、错误上报、第三方脚本或同源页面调试读取 React 状态的场景，明文 <code>appSecret</code> 会被前端侧直接窃取，造成分拣设备身份被冒用，属于新增的敏感密钥暴露面。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>将 <code>resetSorterEquipmentSecret</code> 的返回改为一次性下载文件或后端生成短时效展示令牌，避免把 <code>appSecret</code> 作为普通 JSON 字段进入 React 状态；</p><p>至少应改为后端返回一次性受控查看地址，并在 <code>ModalSecret</code> 关闭后立即使该查看凭证失效。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>以有权操作设备凭据重置的账号打开页面，触发一次 <code>onResetSecret</code>；</p><p>在 <code>ModalSecret</code> 打开期间通过 React DevTools 或前端错误采集钩子读取组件状态，确认是否能直接拿到 <code>secret.appSecret</code> 明文。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">42</span>    <span class="code-keyword">try</span> {</span><span class="code-row"><span class="code-ln">43</span>      result = <span class="code-keyword">await</span> resetSorterEquipmentSecret(record.id);</span><span class="code-row"><span class="code-ln">44</span>    } <span class="code-keyword">catch</span> {</span><span class="code-row"><span class="code-ln">45</span>      <span class="code-keyword">return</span>;</span><span class="code-row"><span class="code-ln">46</span>    }</span><span class="code-row code-row-target"><span class="code-ln">47</span>    setSecret(result);</span><span class="code-row code-row-target"><span class="code-ln">48</span>  };</span><span class="code-row code-row-target"><span class="code-ln">49</span></span><span class="code-row code-row-target"><span class="code-ln">50</span>  <span class="code-comment">// 后端是硬删除，且设备仍绑定 plan 时会拒绝。拒绝原因由 http.ts 的全局拦截器提示，</span></span><span class="code-row code-row-target"><span class="code-ln">51</span>  <span class="code-comment">// 这里只需吞掉 rejection：Popconfirm 的 onConfirm 不接管 promise，</span></span><span class="code-row code-row-target"><span class="code-ln">52</span>  <span class="code-comment">// 抛出去会变成 unhandled rejection</span></span><span class="code-row code-row-target"><span class="code-ln">53</span>  <span class="code-keyword">const</span> handleDelete = <span class="code-keyword">async</span> (record: SorterEquipmentItem) =&gt; {</span><span class="code-row"><span class="code-ln">54</span>    <span class="code-keyword">try</span> {</span><span class="code-row"><span class="code-ln">55</span>      <span class="code-keyword">await</span> deleteSorterEquipment([record.id]);</span><span class="code-row"><span class="code-ln">56</span>    } <span class="code-keyword">catch</span> {</span><span class="code-row"><span class="code-ln">57</span>      <span class="code-keyword">return</span>;</span><span class="code-row"><span class="code-ln">58</span>    }</span></code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-0d389ba97dcd" data-file-path="src/pages/manager/automation/device/types.ts" data-short-name="types.ts" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">src/pages/manager/automation/device/types.ts</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">1 Critical</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L79</span><span class="finding-cat">安全风险</span><span class="evidence-line-unverified-badge" style="color:#c62828;border:1px solid #c62828;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段附近 &#177;5 行内未找到 evidence_quote 摘抄的原文，行号未经核实，下方证据代码可能不是问题真正所在的位置，请人工核实">&#9888; 行号未验证</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>新增类型 <code>SorterEquipmentSecret</code> 明确定义了 <code>appSecret: string;</code>，并且同文件注释写明这是“明文且仅此一次返回”。</p><p>这不是脱敏占位字段，而是把真实设备密钥作为前端业务对象的一部分建模。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>当前端类型和调用链都围绕 <code>appSecret</code> 明文设计后，后续任何日志、埋点、缓存、测试桩、状态持久化或异常上报都更容易把真实密钥带出浏览器边界，扩大凭据泄露面并增加误用概率。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>删除前端对 <code>appSecret</code> 明文字段的常规业务建模，改为只处理一次性展示载体；</p><p>如果业务必须展示，至少将返回结构限制为后端生成的短时效展示凭证，而不是把 <code>appSecret</code> 作为 <code>SorterEquipmentSecret</code> 的稳定字段。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>检查一次重置凭据后的前端调用链，确认是否存在任何把 <code>SorterEquipmentSecret</code> 传入日志、埋点、缓存或测试快照的路径；重点验证 <code>appSecret</code> 是否会出现在网络响应解析后的对象树中。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">74</span>};</span><span class="code-row"><span class="code-ln">75</span></span><span class="code-row"><span class="code-ln">76</span><span class="code-comment">// 重置凭据的返回。appSecret 是**明文且仅此一次**返回 ——</span></span><span class="code-row"><span class="code-ln">77</span><span class="code-comment">// /detail 不含该字段，没有任何二次查看途径</span></span><span class="code-row"><span class="code-ln">78</span><span class="code-keyword">export</span> type SorterEquipmentSecret = {</span><span class="code-row code-row-target"><span class="code-ln">79</span>  equipmentCode: string;</span><span class="code-row"><span class="code-ln">80</span>  appKey: string;</span><span class="code-row"><span class="code-ln">81</span>  appSecret: string;</span><span class="code-row"><span class="code-ln">82</span>};</span></code></pre></details></div></div></details></div></div></details><details class="action-group action-group-optional" style="margin-bottom:14px;border:1px solid #2f855a;border-radius:8px;"><summary style="cursor:pointer;font-weight:700;font-size:15px;color:#2f855a;padding:8px 12px;list-style:none;">&#128994; 可选优化 &middot; 5 个问题</summary><div style="padding:0 12px 8px;"><div class="findings-list-wrap"><details class="file-group findings-file-group" id="fg-2f37be7271d4" data-file-path="config/proxy.ts" data-short-name="proxy.ts" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">config/proxy.ts</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L91-99</span><span class="finding-cat finding-cat-requirement">需求外动作</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>需求文档只要求实现 Delivery Batch 自动完结批次的配置与执行逻辑，没有任何关于 POD 图片代理、CDN 转发或前端代理规则的验收点；</p><p>但 diff 在 <code>config/proxy.ts</code> 的 dev/test 环境新增了 <code>/cdn-pod/</code> 动态代理，并通过 <code>router</code> 按路径首段拼接目标 host。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>这会在本次需求之外引入新的网络访问路径和调试行为，扩大变更范围；即使它本身可能有用途，也不属于“自动完结批次”需求要求交付的内容。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请把 <code>/cdn-pod/</code> 代理配置移出本 MR，或补充与本次需求直接相关的设计说明后再保留。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>在需求验收时分别检查 dev/test 代理清单：除自动完结批次所需接口外，不应新增 <code>/cdn-pod/</code> 这类与需求无关的代理前缀。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln"> 86</span>      <span class="code-comment">// target: 'https://tmsapi-dev.nimbusgroup.us/', // 新tms-tda环境</span></span><span class="code-row"><span class="code-ln"> 87</span>      <span class="code-comment">// 配置了这个可以从 http 代理到 https</span></span><span class="code-row"><span class="code-ln"> 88</span>      <span class="code-comment">// 依赖 origin 的功能可能需要这个，比如 cookie</span></span><span class="code-row"><span class="code-ln"> 89</span>      changeOrigin: <span class="code-keyword">true</span>,</span><span class="code-row"><span class="code-ln"> 90</span>    },</span><span class="code-row code-row-target"><span class="code-ln"> 91</span>    <span class="code-comment">// POD 图片：host 不固定，前端把绝对地址改写为 /cdn-pod/&lt;host&gt;/&lt;path&gt; 走代理，</span></span><span class="code-row code-row-target"><span class="code-ln"> 92</span>    <span class="code-comment">// 这里按路径首段 host 动态选 target，再剥掉 /cdn-pod/&lt;host&gt; 前缀</span></span><span class="code-row code-row-target"><span class="code-ln"> 93</span>    <span class="code-string">'/cdn-pod/'</span>: {</span><span class="code-row code-row-target"><span class="code-ln"> 94</span>      target: <span class="code-string">'https://placeholder.invalid/'</span>, <span class="code-comment">// 实际 target 由 router 动态决定</span></span><span class="code-row code-row-target"><span class="code-ln"> 95</span>      changeOrigin: <span class="code-keyword">true</span>,</span><span class="code-row code-row-target"><span class="code-ln"> 96</span>      router: (req: { path: string }) =&gt; {</span><span class="code-row code-row-target"><span class="code-ln"> 97</span>        <span class="code-keyword">const</span> host = req.path.replace(/^\/cdn-pod\<span class="code-comment">//, '').split('/')[0];</span></span><span class="code-row code-row-target"><span class="code-ln"> 98</span>        <span class="code-keyword">return</span> `https:<span class="code-comment">//${host}/`;</span></span><span class="code-row code-row-target"><span class="code-ln"> 99</span>      },</span><span class="code-row"><span class="code-ln">100</span>      pathRewrite: (path: string) =&gt; path.replace(/^\/cdn-pod\/[^/]+/, <span class="code-string">''</span>),</span><span class="code-row"><span class="code-ln">101</span>    },</span><span class="code-row"><span class="code-ln">102</span>  },</span><span class="code-row"><span class="code-ln">103</span>  test: {</span><span class="code-row"><span class="code-ln">104</span>    <span class="code-string">'/pos-exchange-api/'</span>: {</span></code></pre></details></div></div></details><details class="file-group findings-file-group" id="fg-31086ca5f42f" data-file-path="config/routes.ts" data-short-name="routes.ts" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">config/routes.ts</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">6 处影响（1 个根因）</span></summary><div class="file-group-body"><div class="finding-card cluster-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-cat">边界条件</span><span class="cluster-badge">根因 · 6 处影响</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 NULL-003 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 NULL-003</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：<code>component: &#x27;./tms-pda/batch-bind-scan&#x27;,</code>。</p><p>这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「除法运算未判分母为零」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">134</span>        hideInMenu: <span class="code-keyword">true</span>,</span><span class="code-row"><span class="code-ln">135</span>        mobileHideHeader: <span class="code-keyword">true</span>,</span><span class="code-row"><span class="code-ln">136</span>      },</span><span class="code-row"><span class="code-ln">137</span>      {</span><span class="code-row"><span class="code-ln">138</span>        path: <span class="code-string">'batch-bind-scan'</span>,</span><span class="code-row code-row-target"><span class="code-ln">139</span>        component: <span class="code-string">'./tms-pda/batch-bind-scan'</span>,</span><span class="code-row"><span class="code-ln">140</span>        exact: <span class="code-keyword">true</span>,</span><span class="code-row"><span class="code-ln">141</span>        hideInMenu: <span class="code-keyword">true</span>,</span><span class="code-row"><span class="code-ln">142</span>        mobileHideHeader: <span class="code-keyword">true</span>,</span><span class="code-row"><span class="code-ln">143</span>      },</span><span class="code-row"><span class="code-ln">144</span>      {</span></code></pre></details><details class="cluster-locations"><summary>展开查看全部 6 处影响位置</summary><table class="loc-table"><thead><tr><th>文件</th><th>行</th><th>问题摘要</th></tr></thead><tbody><tr><td class="loc-file">config/routes.ts</td><td class="loc-line">139</td><td class="loc-snippet">固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：`component: &#x27;./tms-pda/batch-bind-scan&#x27;,`。</td></tr><tr><td class="loc-file">config/routes.ts</td><td class="loc-line">1472</td><td class="loc-snippet">固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：`component: &#x27;./manager/automation/device&#x27;,`。</td></tr><tr><td class="loc-file">config/routes.ts</td><td class="loc-line">1478</td><td class="loc-snippet">固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：`component: &#x27;./automation/chute-binding&#x27;,`。</td></tr><tr><td class="loc-file">config/routes.ts</td><td class="loc-line">271</td><td class="loc-snippet">固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：`component: &#x27;./receiving/ctn-search&#x27;,`。</td></tr><tr><td class="loc-file">config/routes.ts</td><td class="loc-line">78</td><td class="loc-snippet">固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：`component: &#x27;./dms/track/scan-tracking&#x27;,`。</td></tr><tr><td class="loc-file">config/routes.ts</td><td class="loc-line">961</td><td class="loc-snippet">固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：`component: &#x27;./sorter/primary-sort-profile&#x27;,`。</td></tr></tbody></table></details></div></div></details><details class="file-group findings-file-group" id="fg-e78d10a2f76e" data-file-path="prototypes/chute-binding.html" data-short-name="chute-binding.html" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">prototypes/chute-binding.html</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L169</span><span class="finding-cat">边界条件</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 NULL-003 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 NULL-003</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：<code>&lt;div class=&quot;path-preview&quot; id=&quot;pathPreview&quot;&gt;/api/chute/bind-result&lt;/div&gt;</code>。</p><p>这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「除法运算未判分母为零」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">164</span>            &lt;p <span class="code-keyword">class</span>=<span class="code-string">"sheet-copy"</span>&gt;The host is saved on <span class="code-keyword">this</span> Android PDA. POS supplies the callback path.&lt;/p&gt;</span><span class="code-row"><span class="code-ln">165</span>            &lt;label <span class="code-keyword">class</span>=<span class="code-string">"address-label"</span> <span class="code-keyword">for</span>=<span class="code-string">"hostInput"</span>&gt;WCS host&lt;/label&gt;</span><span class="code-row"><span class="code-ln">166</span>            &lt;input <span class="code-keyword">class</span>=<span class="code-string">"address-input"</span> id=<span class="code-string">"hostInput"</span> type=<span class="code-string">"url"</span> inputmode=<span class="code-string">"text"</span> autocomplete=<span class="code-string">"off"</span> placeholder=<span class="code-string">"http://192.168.10.24:8080"</span> /&gt;</span><span class="code-row"><span class="code-ln">167</span>            &lt;p <span class="code-keyword">class</span>=<span class="code-string">"field-error"</span> id=<span class="code-string">"hostError"</span> aria-live=<span class="code-string">"polite"</span>&gt;&lt;/p&gt;</span><span class="code-row"><span class="code-ln">168</span>            &lt;span <span class="code-keyword">class</span>=<span class="code-string">"address-label"</span>&gt;Callback path&lt;/span&gt;</span><span class="code-row code-row-target"><span class="code-ln">169</span>            &lt;div <span class="code-keyword">class</span>=<span class="code-string">"path-preview"</span> id=<span class="code-string">"pathPreview"</span>&gt;/api/chute/bind-result&lt;/div&gt;</span><span class="code-row"><span class="code-ln">170</span>            &lt;p <span class="code-keyword">class</span>=<span class="code-string">"full-address"</span> id=<span class="code-string">"fullAddress"</span>&gt;&lt;/p&gt;</span><span class="code-row"><span class="code-ln">171</span>            &lt;div <span class="code-keyword">class</span>=<span class="code-string">"sheet-actions"</span>&gt;</span><span class="code-row"><span class="code-ln">172</span>              &lt;button <span class="code-keyword">class</span>=<span class="code-string">"secondary-button"</span> id=<span class="code-string">"cancelAddress"</span> type=<span class="code-string">"button"</span>&gt;Cancel&lt;/button&gt;</span><span class="code-row"><span class="code-ln">173</span>              &lt;button <span class="code-keyword">class</span>=<span class="code-string">"primary-button"</span> id=<span class="code-string">"saveAddress"</span> type=<span class="code-string">"button"</span>&gt;Save address&lt;/button&gt;</span><span class="code-row"><span class="code-ln">174</span>            &lt;/div&gt;</span></code></pre></details></div></div></details><details class="file-group findings-file-group" id="fg-2dc0fc863f8f" data-file-path="src/components/BatchModeUnavailable/AuditScanUnavailable.tsx" data-short-name="AuditScanUnavailable.tsx" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">src/components/BatchModeUnavailable/AuditScanUnavailable.tsx</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L1</span><span class="finding-cat">边界条件</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 NULL-003 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 NULL-003</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：<code>import { PageContainer } from &#x27;@ant-design/pro-layout&#x27;;</code>。</p><p>这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「除法运算未判分母为零」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row code-row-target"><span class="code-ln">1</span><span class="code-keyword">import</span> { PageContainer } from <span class="code-string">'@ant-design/pro-layout'</span>;</span><span class="code-row"><span class="code-ln">2</span><span class="code-keyword">import</span> { history, useIntl } from <span class="code-string">'@umijs/max'</span>;</span><span class="code-row"><span class="code-ln">3</span><span class="code-keyword">import</span> { BatchModeUnavailable } from <span class="code-string">'./BatchModeUnavailable'</span>;</span><span class="code-row"><span class="code-ln">4</span></span><span class="code-row"><span class="code-ln">5</span>/**</span><span class="code-row"><span class="code-ln">6</span> * <span class="code-number">3.0</span>（弱化批次）facility 上稽核扫描页的不可用提示页。</span></code></pre></details></div></div></details><details class="file-group findings-file-group" id="fg-c1734d05d578" data-file-path="src/components/FormUploadFile/UploadFileButton.tsx" data-short-name="UploadFileButton.tsx" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">src/components/FormUploadFile/UploadFileButton.tsx</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L108-116</span><span class="finding-cat finding-cat-requirement">需求外动作</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>正式需求文档聚焦 Delivery Batch 自动完结批次，没有任何关于上传文件名校验、禁止逗号/空格文件名或弹窗提示的要求；</p><p>但 <code>UploadFileButton</code> 新增了 <code>validateFilename</code> 分支，在 <code>beforeUpload</code> 中直接拦截文件并弹出 <code>showUnsupportedFilenameModal()</code>。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>这会改变现有上传组件的通用行为，引入与本需求无关的前端校验策略；若其他页面后续开启该参数，用户上传体验会发生变化，但该变化没有本需求依据。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请将文件名校验改动拆分到独立需求，或在本次需求材料中补充明确的上传规则来源。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>选择两类文件分别验证：第 1 个文件名包含空格/逗号，第 2 个文件名不包含特殊字符；在“自动完结批次”需求验收范围内，不应因为本需求引入新的通用上传拦截逻辑。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">103</span>      fieldProps: {</span><span class="code-row"><span class="code-ln">104</span>        fileList,</span><span class="code-row"><span class="code-ln">105</span>        multiple,</span><span class="code-row"><span class="code-ln">106</span>        onRemove: (file) =&gt; {</span><span class="code-row"><span class="code-ln">107</span>          onRemove?.();</span><span class="code-row code-row-target"><span class="code-ln">108</span>          setFileList(fileList.filter((item) =&gt; item.uid !== file.uid));</span><span class="code-row code-row-target"><span class="code-ln">109</span>        },</span><span class="code-row code-row-target"><span class="code-ln">110</span>        beforeUpload: (file, files) =&gt; {</span><span class="code-row code-row-target"><span class="code-ln">111</span>          <span class="code-comment">// Block filenames containing comma / whitespace, which break blob</span></span><span class="code-row code-row-target"><span class="code-ln">112</span>          <span class="code-comment">// storage URLs and `Content-Disposition` parsing on the server.</span></span><span class="code-row code-row-target"><span class="code-ln">113</span>          <span class="code-keyword">if</span> (validateFilename &amp;&amp; hasUnsupportedFilenameChars(file.name)) {</span><span class="code-row code-row-target"><span class="code-ln">114</span>            <span class="code-comment">// A batch of invalid files only opens one modal (deduped in helper).</span></span><span class="code-row code-row-target"><span class="code-ln">115</span>            showUnsupportedFilenameModal();</span><span class="code-row code-row-target"><span class="code-ln">116</span>            <span class="code-keyword">return</span> Upload.LIST_IGNORE;</span><span class="code-row"><span class="code-ln">117</span>          }</span><span class="code-row"><span class="code-ln">118</span>          <span class="code-keyword">if</span> (multiple) {</span><span class="code-row"><span class="code-ln">119</span>            <span class="code-keyword">const</span> isFirstFileInBatch = files[<span class="code-number">0</span>].uid === file.uid;</span><span class="code-row"><span class="code-ln">120</span>            <span class="code-keyword">if</span> (isFirstFileInBatch) {</span><span class="code-row"><span class="code-ln">121</span>              <span class="code-keyword">const</span> validFiles = validateFilename</span></code></pre></details></div></div></details></div></div></details>
+    </div>
+
+    <div id="panel-dp" class="report-panel" role="tabpanel" aria-labelledby="tab-dp">
+      <div class="dp-shell"><div class="dp-header">
+  <h1>数据权限分析报告</h1>
+  <p class="subtitle">AI Code Review · 接口级别数据权限审计</p>
+  <div class="meta-row"><div class="meta-item">项目 <strong>pos-web</strong></div><div class="meta-item">涉及接口路径（自动汇总） <strong>服务 pos-web · 本次无可聚合路径的权限类接口（请检查 path_pattern）</strong></div><div class="meta-item">报告日期 <strong>2026-09-30 17:46:37</strong></div><div class="meta-item">涉及角色标签 <strong>见 role_data / findings</strong></div></div>
+</div>
+
+<div class="dp-body">
+
+  <div class="dp-stats">
+    
+  <div class="summary-grid">
+    <div class="summary-card critical"><div class="count">0</div><div class="label">Critical</div></div>
+    <div class="summary-card high"><div class="count">0</div><div class="label">Major</div></div>
+    <div class="summary-card medium"><div class="count">0</div><div class="label">Minor</div></div>
+    <div class="summary-card info"><div class="count">0</div><div class="label">Info</div></div>
+  </div>
+  <p style="margin:8px 0 0;font-size:.8rem;color:#718096;">Total 0 条权限类问题 · 涉及 0 个接口（已解析路径）</p>
+
+  </div>
+
+  <div class="dp-section">
+    <div class="dp-section-title">角色权限定义</div>
+    <div class="dp-roles"><div class="role-box muted"><div class="role-icon">&#128100;</div><div class="role-info"><h3>未提供 role_data.md</h3><p class="role-md">请在仓库根目录放置 <code>role_data.md</code> 并由流水线传入 <code>--role-data-file</code>。</p></div></div></div>
+  </div>
+
+  <div class="dp-gate"></div>
+
+  <div class="dp-section">
+    <div class="dp-section-title">接口权限审计总览</div>
+    <div class="empty">暂无可解析路径的「权限与访问控制」条目；请检查 path_pattern 与 HTTP 清单。</div>
+  </div>
+
+  
+
+  <div class="dp-section">
+    <div class="dp-section-title">端点详情</div>
+    <div class="dp-folds"></div>
+  </div>
+
+  
+
+  
+
+  <div class="dp-footer"><p>本报告由 AI Code Review 生成（data_permission 模式）。权限类 finding 涉及文件：<strong>（无）</strong></p><p style="margin-top:4px;">生成时间：2026-09-30 17:46:37 · 项目：pos-web</p></div>
+
+</div>
+</div>
+    </div>
+  </div>
+  <script>
+    function escHtml(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function formatSummaryInner(rawBlock) {
+      var lines = rawBlock.split(/\r?\n/);
+      var html = '';
+      var listType = null;
+
+      function closeList() {
+        if (listType) { html += '</' + listType + '>'; listType = null; }
+      }
+
+      function renderInline(text) {
+        var st = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        st = st.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        st = st.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+        return st;
+      }
+
+      lines.forEach(function(line) {
+        var trimmed = line.trim();
+        if (!trimmed) { closeList(); return; }
+
+        if (/^#{1,3}\s+/.test(trimmed)) {
+          closeList();
+          var title = trimmed.replace(/^#{1,3}\s+/, '');
+          html += '<p class="summary-section-title">' + renderInline(title) + '</p>';
+          return;
+        }
+
+        if (/^\*\*[^*]+\*\*[：:。]?$/.test(trimmed)) {
+          closeList();
+          var title2 = trimmed.replace(/^\*\*|\*\*[：:。]?$/g, '');
+          html += '<p class="summary-section-title">' + renderInline(title2) + '</p>';
+          return;
+        }
+
+        if (/^[【「『].*[】」』]$/.test(trimmed) ||
+            (trimmed.length <= 30 && /[：:]$/.test(trimmed) && !/^\d/.test(trimmed))) {
+          closeList();
+          var title3 = trimmed.replace(/^[【「『]|[】」』]$/g, '').replace(/[：:]$/, '');
+          html += '<p class="summary-section-title">' + renderInline(title3) + '</p>';
+          return;
+        }
+
+        if (/^[-*]\s+/.test(trimmed)) {
+          if (listType !== 'ul') { closeList(); html += '<ul>'; listType = 'ul'; }
+          var content = trimmed.replace(/^[-*]\s+/, '');
+          html += '<li>' + renderInline(content) + '</li>';
+          return;
+        }
+
+        if (/^[\(（]?\d+[\)）.\、]\s*/.test(trimmed)) {
+          if (listType !== 'ol') { closeList(); html += '<ol>'; listType = 'ol'; }
+          var content2 = trimmed.replace(/^[\(（]?\d+[\)）.\、]\s*/, '');
+          html += '<li>' + renderInline(content2) + '</li>';
+          return;
+        }
+
+        closeList();
+        if (trimmed.length > 280 && /[。！？][\s\u3000]/.test(trimmed)) {
+          var chunks = trimmed.split(/(?<=[。！？])[\s\u3000]+/).filter(function (c) { return c.trim(); });
+          if (chunks.length > 1) {
+            chunks.forEach(function (c) {
+              html += '<p>' + renderInline(c.trim()) + '</p>';
+            });
+            return;
+          }
+        }
+        html += '<p>' + renderInline(trimmed) + '</p>';
+      });
+
+      closeList();
+      return html;
+    }
+
+    function formatSummary() {
+      var el = document.getElementById('summary-text');
+      if (!el) return;
+      if (el.classList.contains('summary-preformatted')) return;
+      var raw = el.textContent || '';
+      raw = raw.replace(/\s+(?=本分片)/g, '\n---SHARD---\n');
+      var shards = raw.split(/\n---SHARD---\n/).map(function(s) { return s.trim(); }).filter(Boolean);
+      if (!shards.length) shards = [raw.trim()].filter(Boolean);
+
+      if (shards.length <= 1) {
+        var inner = formatSummaryInner(shards[0] || '');
+        if (inner) el.innerHTML = inner;
+        return;
+      }
+
+      var htmlShards = [];
+      for (var i = 0; i < shards.length; i++) {
+        var blockHtml = formatSummaryInner(shards[i]);
+        if (blockHtml) htmlShards.push('<div class="summary-shard">' + blockHtml + '</div>');
+      }
+      var head = htmlShards.slice(0, 3).join('');
+      var tail = htmlShards.slice(3).join('');
+      var moreBtn = '';
+      if (tail) {
+        moreBtn = '<button type="button" class="summary-toggle" id="summary-toggle-btn" aria-expanded="false">展开全部分片结论 (' + (htmlShards.length - 3) + ')</button>';
+      }
+      el.innerHTML = '<div class="summary-shards-wrap">' + head +
+        (tail ? '<div class="summary-more" id="summary-more-block" hidden>' + tail + '</div>' : '') +
+        moreBtn + '</div>';
+
+      var btn = document.getElementById('summary-toggle-btn');
+      var more = document.getElementById('summary-more-block');
+      if (btn && more) {
+        btn.addEventListener('click', function() {
+          var ex = btn.getAttribute('aria-expanded') === 'true';
+          more.hidden = ex;
+          btn.setAttribute('aria-expanded', ex ? 'false' : 'true');
+          btn.textContent = ex
+            ? ('展开全部分片结论 (' + (htmlShards.length - 3) + ')')
+            : '收起分片结论';
+        });
+      }
+    }
+
+    function switchReportTab(which) {
+      var panels = ['panel-general', 'panel-dp'];
+      var tabs = ['tab-general', 'tab-dp'];
+      var activePanel = which === 'dp' ? 'panel-dp' : 'panel-general';
+      var activeTab = which === 'dp' ? 'tab-dp' : 'tab-general';
+      panels.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) { el.classList.toggle('is-active', id === activePanel); }
+      });
+      tabs.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) { el.setAttribute('aria-selected', id === activeTab ? 'true' : 'false'); }
+      });
+    }
+
+    var activeFilter = null;
+
+    function getSearchQuery() {
+      var inp = document.getElementById('findings-search');
+      return inp ? String(inp.value || '').trim().toLowerCase() : '';
+    }
+
+    function applyFindingsFilter() {
+      var hint = document.getElementById('filter-hint');
+      var hintLabel = document.getElementById('filter-hint-label');
+
+      if (activeFilter) {
+        hintLabel.textContent = activeFilter.toUpperCase();
+        hint.style.display = 'block';
+      } else {
+        hint.style.display = 'none';
+      }
+
+      var q = getSearchQuery();
+
+      document.querySelectorAll('.findings-file-group').forEach(function(group) {
+        var visible = 0;
+        group.querySelectorAll('.finding-card').forEach(function(card) {
+          var sev = card.getAttribute('data-severity') || 'info';
+          var sevOk = !activeFilter || sev === activeFilter;
+          var textOk = !q || card.textContent.toLowerCase().indexOf(q) !== -1;
+          var show = sevOk && textOk;
+          card.style.display = show ? '' : 'none';
+          if (show) visible++;
+        });
+        group.style.display = visible === 0 ? 'none' : '';
+        // 任务115续作：finding 现在可能嵌套在 <details class="action-group"> 里，
+        // 该祖先关闭时子元素无论 style.display 如何都不会渲染，命中过滤结果时须一并展开。
+        if (visible > 0) {
+          var actionGroup = group.closest('.action-group');
+          if (actionGroup) actionGroup.open = true;
+        }
+      });
+
+      document.querySelectorAll('.file-block').forEach(function(block) {
+        if (block.classList.contains('findings-file-group')) return;
+        var rows = block.querySelectorAll('tbody tr');
+        if (!rows.length) return;
+        var vis = 0;
+        rows.forEach(function(row) {
+          if (!activeFilter || row.querySelector('.chip.' + activeFilter)) {
+            row.style.display = '';
+            vis++;
+          } else {
+            row.style.display = 'none';
+          }
+        });
+        block.style.display = vis === 0 ? 'none' : '';
+      });
+
+      // 顶部 Critical/Major 计数把「牵连影响」的 RISK/NEEDS_HUMAN 也并了进去
+      // （用户拍板口径），但这些卡片不是 .finding-card，之前点 Critical 只会
+      // 过滤上面两段、对牵连影响毫无反应，数字和实际看到的东西对不上
+      // （build TEST_pus-exchange-api/222 反馈）。按同一套口径把牵连影响的卡
+      // 也纳入过滤：RISK 对应 critical，NEEDS_HUMAN 对应 major；筛 minor/info
+      // 时牵连影响没有对应桶，全部隐藏是符合口径的。
+      var impactLevelMap = { critical: 'RISK', major: 'NEEDS_HUMAN' };
+      document.querySelectorAll('.impact-card[data-impact-level]').forEach(function(card) {
+        var level = card.getAttribute('data-impact-level');
+        var show = !activeFilter || impactLevelMap[activeFilter] === level;
+        card.style.display = show ? '' : 'none';
+        if (show && activeFilter) {
+          var d = card.closest('details');
+          if (d) d.open = true;
+        }
+      });
+    }
+
+    function filterBySeverity(chip) {
+      var filter = chip.dataset.filter;
+      if (activeFilter === filter) {
+        clearFilter();
+        return;
+      }
+      activeFilter = filter;
+      document.querySelectorAll('.filter-chip').forEach(function(c) {
+        if (c.dataset.filter === filter) {
+          c.classList.add('active');
+          c.classList.remove('dimmed');
+        } else {
+          c.classList.remove('active');
+          c.classList.add('dimmed');
+        }
+      });
+      applyFindingsFilter();
+    }
+
+    function clearFilter() {
+      activeFilter = null;
+      document.querySelectorAll('.filter-chip').forEach(function(c) {
+        c.classList.remove('active', 'dimmed');
+      });
+      applyFindingsFilter();
+    }
+
+    function initFindingsToolbar() {
+      var tb = document.getElementById('findings-toolbar');
+      if (!tb) return;
+      var groups = document.querySelectorAll('#panel-general .findings-file-group');
+      tb.style.display = groups.length ? '' : 'none';
+    }
+
+    (function () {
+      var chips = document.querySelectorAll('table .chip');
+      for (var i = 0; i < chips.length; i++) {
+        chips[i].textContent = chips[i].textContent.toUpperCase();
+      }
+
+      formatSummary();
+
+      initFindingsToolbar();
+
+      var ex = document.getElementById('expand-all-files');
+      var cl = document.getElementById('collapse-all-files');
+      if (ex) ex.addEventListener('click', function() {
+        document.querySelectorAll('.findings-file-group').forEach(function(d) { d.open = true; });
+        document.querySelectorAll('.action-group').forEach(function(d) { d.open = true; });
+      });
+      if (cl) cl.addEventListener('click', function() {
+        document.querySelectorAll('.findings-file-group').forEach(function(d) { d.open = false; });
+        document.querySelectorAll('.action-group').forEach(function(d) { d.open = false; });
+      });
+
+      var search = document.getElementById('findings-search');
+      if (search) {
+        search.addEventListener('input', function() { applyFindingsFilter(); });
+      }
+    })();
+
+    // Chart.js initialization
+    function renderCategoryChart(categoryData) {
+      var ctx = document.getElementById('categoryChart');
+      if (!ctx) return;
+      ctx = ctx.getContext('2d');
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: Object.keys(categoryData),
+          datasets: [{
+            label: '问题数量',
+            data: Object.values(categoryData),
+            // 跟报告主色（teal 系）协调的低饱和度调色板，替换 Chart.js 默认的
+            // 高饱和度七彩配色（用户反馈报告"不好看"，实测截图确认默认色彩
+            // 花哨刺眼、跟品牌色不搭）；18 色覆盖 VALID_CATEGORIES 全量枚举，
+            // 保证再多分类同时出现也不会因为数组不够长而退化成无色
+            backgroundColor: [
+              '#0f766e', '#b5651d', '#4a6fa5', '#8e6c96',
+              '#6b8f71', '#b58a3d', '#b56576', '#5c7a89',
+              '#3d8a8a', '#a3703f', '#5f7a9d', '#7a6b9d',
+              '#7fa17f', '#c29b5c', '#9d6b7a', '#6b8a9d',
+              '#8a9d6b', '#9d7a5f'
+            ]
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: true } }
+        }
+      });
+    }
+
+    // 这个短列表只是一句话摘要，不值得把 markdown 代码块渲染进一个 <li> 里——
+    // 直接去掉标记符本身，露出裸文本即可（跟 _render_markdown_lite 的完整
+    // 渲染不同，这里要的是"别露出字面 ** 和 ``` "，不是"渲染出富文本"）
+    function stripMdLite(text) {
+      return (text || '')
+        .replace(/```[a-zA-Z]*\n?/g, '')
+        .replace(/```/g, '')
+        .replace(/\*\*([^*]+)\*\*/g, '$1')
+        .replace(/`([^`]+)`/g, '$1');
+    }
+
+    function renderTopCriticals(topCriticals) {
+      var list = document.getElementById('top-criticals-list');
+      var box = document.getElementById('top-criticals');
+      if (!list) return;
+      // 一条都没有时整块收起，不留「标题 + 暂无 Critical 问题」空框占首屏
+      if (!topCriticals || !topCriticals.length) {
+        if (box) box.hidden = true;
+        list.innerHTML = '';
+        return;
+      }
+      if (box) box.hidden = false;
+      list.innerHTML = topCriticals.map(function(c) {
+        var desc = stripMdLite(c.description || '');
+        if (desc.length > 120) desc = desc.substring(0, 120) + '…';
+        // source 只有牵连影响条目才带：不标来源的话，读者会把"改动波及到的
+        // 其他调用点"当成"这段代码本身写错了"，两者要采取的动作不一样
+        var tag = c.source
+          ? '<span class="tc-source">' + escHtml(c.source) + '</span>'
+          : '';
+        return '<li>' + tag + '<strong>' + escHtml(c.file + (c.line ? ':' + c.line : '')) +
+               '</strong><span class="tc-desc">' + escHtml(desc) + '</span></li>';
+      }).join('');
+    }
+
+    // Export stubs (implemented in Task 5)
+    function exportJira() { alert('导出为 Jira 功能待实现'); }
+    function exportExcel() { alert('导出为 Excel 功能待实现'); }
+    function exportCsv() { alert('导出为 CSV 功能待实现'); }
+
+    // Inject summary data (Task 5)
+    if (typeof renderCategoryChart === 'function') renderCategoryChart({"\u5b89\u5168\u98ce\u9669": 4, "\u9700\u6c42\u5916\u52a8\u4f5c": 3, "\u8fb9\u754c\u6761\u4ef6": 3, "\u72b6\u6001\u7ba1\u7406": 2, "\u5f02\u5e38\u5904\u7406": 1, "\u65e5\u5fd7\u89c4\u8303": 1});
+if (typeof renderTopCriticals === 'function') renderTopCriticals([{"file": "config/proxy.ts", "line": "106-109", "severity": "critical", "category": "安全风险", "description": "**原因：** `test` 环境下同样新增了 `/cdn-pod/` 动态代理，并继续把 `req.path` 首段未经校验地拼进 `https://${host}/`。这不是单点疏漏，而是在另一个环境配置中重复引入同一条不受控出站代理链路。\n\n**影响：** 测试环境通常比开发环境更接近真实网络边界，若该代理对测试人员、自动化脚本或预发页面开放，攻击者可利用它访问测试网段内的内部服务，形成横向探测或敏感接口访问风险；由于问题在 `test` 配置中重复存在，单独修一个环境仍会留下可利用入口。", "suggestion": "同步收敛 `test` 环境的 `/cdn-pod/` 代理策略，复用同一套受控 `host` 校验逻辑，不要在两个环境各自维护一份可绕过的动态 `router`。建议抽出共享校验函数，并在非法 `host` 时直接拒绝代理。", "test_scenario": "在 `test` 环境分别请求 `/cdn-pod/169.254.169.254/latest/meta-data/` 和 `/cdn-pod/localhost:3000/`，确认当前配置会把请求路由到非 POD 目标；修复后这些请求应失败，而 `/cdn-pod/\u003c白名单POD域名>/\u003c合法路径>` 仍可正常取图。", "http_method": "", "path_pattern": "", "permission_tags": [], "java_entry_method": "", "expected_permission": "", "actual_behavior": "", "evidence_refs": [], "risk_label_zh": "", "evidence_quote": "return `https://${host}/`;", "requirement_ref": "", "unimplemented_feature": "", "deviation_rationale_check": "", "_line_corrected": true}, {"file": "config/proxy.ts", "line": "95-98", "severity": "critical", "category": "安全风险", "description": "**原因：** 新增的 `/cdn-pod/` 代理把 `req.path` 中用户可控的首段直接当作 `router` 的目标主机，`return `https://${host}/`;` 没有任何白名单、格式校验或内网地址拦截。这样前端只要请求 `/cdn-pod/\u003c任意host>/\u003cpath>`，开发/测试环境代理就会代表浏览器向该 `\u003c任意host>` 发起服务端请求。\n\n**影响：** 这会把本地开发机或测试环境变成开放式 SSRF 跳板。攻击者可借助页面中可控图片地址或手工构造 URL，探测并访问内网地址、云元数据地址或仅代理机可达的管理端点；同时 `changeOrigin: true` 还会伪造目标 Host 头，放大对内网 HTTP 服务的访问能力。", "suggestion": "把 `router` 改成只允许明确白名单中的 POD 域名，禁止直接信任路径里的 `host`。至少同时做三层限制：校验 `host` 仅匹配预期域名后缀、拒绝 IP 字面量/localhost/私网网段、对非法值直接返回固定 `target` 或拒绝请求。例如：\n```ts\nconst ALLOWED_POD_HOSTS = new Set(['pod-cdn.speedx.io', 'pod-img.speedx.io']);\nrouter: (req: { path: string }) => {\n  const host = req.path.replace(/^\\/cdn-pod\\//, '').split('/')[0];\n  if (!ALLOWED_POD_HOSTS.has(host)) {\n    throw new Error(`invalid cdn-pod host: ${host}`);\n  }\n  return `https://${host}/`;\n}\n```\n如果业务必须支持多 host，也应改为后端下发受控映射，而不是把完整主机名暴露为路径参数。", "test_scenario": "在开发或测试环境访问 `/cdn-pod/169.254.169.254/latest/meta-data/`、`/cdn-pod/127.0.0.1:8080/actuator`、`/cdn-pod/internal.service.cluster.local/health`，验证代理当前会尝试把请求转发到这些非预期目标；修复后应全部被拒绝，仅允许预设 POD 域名。", "http_method": "", "path_pattern": "", "permission_tags": [], "java_entry_method": "", "expected_permission": "", "actual_behavior": "", "evidence_refs": [], "risk_label_zh": "", "evidence_quote": "return `https://${host}/`;", "requirement_ref": "", "unimplemented_feature": "", "deviation_rationale_check": ""}, {"file": "src/pages/manager/automation/device/index.tsx", "line": "39-45", "severity": "critical", "category": "安全风险", "description": "**原因：** `handleResetSecret` 在调用 `resetSorterEquipmentSecret(record.id)` 后，直接把后端返回的 `SorterEquipmentSecret` 放进组件状态 `secret`，而同一分片的类型定义明确包含明文 `appSecret`。这意味着页面会在前端内存中持有可直接使用的设备凭据，且该凭据随后会被 `ModalSecret` 展示。\n\n**影响：** 一旦该页面存在浏览器扩展、前端埋点、错误上报、第三方脚本或同源页面调试读取 React 状态的场景，明文 `appSecret` 会被前端侧直接窃取，造成分拣设备身份被冒用，属于新增的敏感密钥暴露面。", "suggestion": "将 `resetSorterEquipmentSecret` 的返回改为一次性下载文件或后端生成短时效展示令牌，避免把 `appSecret` 作为普通 JSON 字段进入 React 状态；至少应改为后端返回一次性受控查看地址，并在 `ModalSecret` 关闭后立即使该查看凭证失效。", "test_scenario": "以有权操作设备凭据重置的账号打开页面，触发一次 `onResetSecret`；在 `ModalSecret` 打开期间通过 React DevTools 或前端错误采集钩子读取组件状态，确认是否能直接拿到 `secret.appSecret` 明文。", "http_method": "", "path_pattern": "", "permission_tags": [], "java_entry_method": "", "expected_permission": "", "actual_behavior": "", "evidence_refs": [], "risk_label_zh": "", "evidence_quote": "setSecret(result);", "requirement_ref": "", "unimplemented_feature": "", "deviation_rationale_check": "", "_line_corrected": true}]);
+
+    // Export dropdown toggle
+    (function() {
+      var btn = document.getElementById('export-btn');
+      var menu = document.getElementById('export-menu');
+      if (!btn || !menu) return;
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var shown = menu.style.display === 'block';
+        menu.style.display = shown ? 'none' : 'block';
+      });
+      document.addEventListener('click', function() {
+        menu.style.display = 'none';
+      });
+    })();
+  </script>
+</body>
+</html>
