@@ -1,0 +1,2604 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Code Review Report</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      /* 重新设计（用户反馈"前端样式不好看"）：底色/正文/次要文字/边框/标题
+         此前全部带一层绿色调（跟 --accent 撞在一起，显得到处都是同一种绿），
+         改成中性板岩灰基调 + 一个teal 强调色，层次更清楚，也更耐看。 */
+      --bg: #f3f4f7;
+      --card: #ffffff;
+      --text: #1c2333;
+      --muted: #667085;
+      --border: #e3e6ec;
+      --heading: #0f1420;
+      --accent: #0f766e;
+      --accent-dark: #0b5850;
+      --accent-soft: #e6f4f2;
+
+      --critical-bg: #fdeceb;
+      --critical-text: #b3261e;
+      --critical-border: #f3b7b2;
+      --critical-strong: #d1291f;
+
+      --major-bg: #fdf1e3;
+      --major-text: #a85311;
+      --major-border: #f4d19d;
+      --major-strong: #d5720f;
+
+      --minor-bg: #fdf7e0;
+      --minor-text: #8a6208;
+      --minor-border: #f1e096;
+      --minor-strong: #a37d0a;
+
+      --info-bg: #eaf1fd;
+      --info-text: #23509c;
+      --info-border: #c0d6f6;
+      --info-strong: #2f66c9;
+
+      --safe-bg: #e8f6ee;
+      --safe-text: #1a7a4c;
+      --safe-border: #aee3c4;
+
+      --chip-bg: #eef0f5;
+      --code-bg: #10182b;
+      --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+      --shadow: 0 8px 24px rgba(16, 24, 40, 0.08);
+      --shadow-lg: 0 20px 44px rgba(16, 24, 40, 0.14);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans SC", Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .page {
+      max-width: 1180px;
+      margin: 28px auto 48px;
+      padding: 0 20px;
+    }
+
+    /* 重新设计：原来是一大片高饱和绿色渐变斜切块，视觉上很"闹"；
+       改成深板岩底色 + 顶部一条细 teal 强调线，克制一些，也更像专业
+       研发工具的报告头，而不是营销落地页banner。 */
+    .hero {
+      position: relative;
+      background: linear-gradient(165deg, #0b1220 0%, #121a2c 55%, #0e2422 100%);
+      color: #f4f7fb;
+      border-radius: 18px;
+      padding: 26px 28px 24px;
+      box-shadow: var(--shadow-lg);
+      margin-bottom: 18px;
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 3px;
+      background: linear-gradient(90deg, #14b8a6, #22d3ee 45%, #14b8a6 100%);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -60px;
+      top: -60px;
+      width: 220px;
+      height: 220px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(20, 184, 166, 0.22), transparent 70%);
+      pointer-events: none;
+    }
+
+    .hero h1 {
+      margin: 0 0 10px;
+      font-size: 24px;
+      font-weight: 700;
+      line-height: 1.25;
+      letter-spacing: 0.1px;
+    }
+
+    .hero-meta {
+      margin: 0;
+      font-size: 13.5px;
+      color: #aab4c8;
+      letter-spacing: 0.01em;
+    }
+
+    .summary {
+      background: var(--card);
+      padding: 16px 18px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      margin-bottom: 20px;
+    }
+
+    .summary h2,
+    .section-title {
+      margin: 0 0 12px;
+      font-size: 18px;
+      color: var(--heading);
+    }
+
+    .subsection-title {
+      margin-top: 28px;
+    }
+
+    .api-permission-block code {
+      font-size: 12px;
+      word-break: break-all;
+    }
+
+    .api-surface-sub {
+      margin: 18px 0 8px;
+      font-size: 16px;
+      color: var(--heading);
+    }
+
+    .inferred-hint {
+      margin: 0 0 12px;
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    /* 总体结论正文区 */
+    .summary-body {
+      margin: 0 0 16px;
+      font-size: 14px;
+      color: var(--text);
+      line-height: 1.75;
+    }
+
+    .summary-body p {
+      margin: 0 0 10px;
+    }
+
+    .summary-body p:last-child {
+      margin-bottom: 0;
+    }
+
+    .summary-body ol,
+    .summary-body ul {
+      margin: 4px 0 12px;
+      padding-left: 22px;
+    }
+
+    .summary-body ol li,
+    .summary-body ul li {
+      margin-bottom: 6px;
+      line-height: 1.65;
+    }
+
+    .summary-body .summary-section-title {
+      font-weight: 700;
+      color: var(--heading);
+      margin: 16px 0 6px;
+      font-size: 13px;
+      letter-spacing: 0.3px;
+      padding-left: 8px;
+      border-left: 3px solid var(--accent);
+    }
+
+    .summary-body .summary-section-title:first-child {
+      margin-top: 0;
+    }
+
+    .summary-body strong {
+      color: var(--heading);
+      font-weight: 700;
+    }
+
+    /* 严重级别筛选区 */
+    .filter-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-top: 6px;
+    }
+
+    .filter-label {
+      font-size: 12px;
+      color: var(--muted);
+      margin-right: 2px;
+    }
+
+    .chips-impact-note {
+      width: 100%;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 5px 13px;
+      border-radius: 9px;
+      font-size: 12.5px;
+      font-weight: 700;
+      background: var(--chip-bg);
+      color: var(--heading);
+      border: 1px solid transparent;
+    }
+
+    .filter-chip {
+      cursor: pointer;
+      transition: transform 0.12s, box-shadow 0.12s, opacity 0.12s;
+      user-select: none;
+    }
+
+    .filter-chip:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 3px 8px rgba(0,0,0,0.12);
+    }
+
+    .filter-chip.active {
+      box-shadow: 0 0 0 2.5px currentColor;
+      transform: translateY(-1px);
+    }
+
+    .filter-chip.dimmed {
+      opacity: 0.4;
+    }
+
+    .critical { background: var(--critical-bg); color: var(--critical-text); border-color: var(--critical-border); }
+    .major { background: var(--major-bg); color: var(--major-text); border-color: var(--major-border); }
+    .minor { background: var(--minor-bg); color: var(--minor-text); border-color: var(--minor-border); }
+    .info { background: var(--info-bg); color: var(--info-text); border-color: var(--info-border); }
+
+    /* 筛选状态提示条 */
+    #filter-hint {
+      display: none;
+      margin: -10px 0 14px;
+      padding: 8px 14px;
+      background: var(--accent-soft);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    #filter-hint .clear-filter {
+      margin-left: 8px;
+      color: var(--accent);
+      cursor: pointer;
+      font-weight: 600;
+      text-decoration: underline;
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    /* 工具栏：搜索 + 展开折叠 */
+    .findings-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+      padding: 12px 14px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+    }
+
+    .findings-search {
+      flex: 1 1 220px;
+      min-width: 0;
+      padding: 10px 14px;
+      font: inherit;
+      font-size: 14px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+      color: var(--text);
+    }
+
+    .findings-search:focus {
+      outline: none;
+      box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.35);
+      border-color: var(--accent);
+    }
+
+    .findings-toolbar-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .toolbar-btn {
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--chip-bg);
+      color: var(--heading);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .toolbar-btn:hover {
+      background: #e3e6ec;
+    }
+
+    /* 文件 TOC */
+    .findings-toc {
+      margin-bottom: 16px;
+      padding: 10px 12px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+    }
+
+    .toc-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 8px;
+      letter-spacing: 0.04em;
+    }
+
+    .toc-pill-wrap {
+      display: flex;
+      flex-wrap: nowrap;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .toc-pill {
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      text-decoration: none;
+      color: var(--heading);
+      background: var(--chip-bg);
+      border: 1px solid var(--border);
+      transition: transform 0.12s, box-shadow 0.12s;
+    }
+
+    .toc-pill:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+
+    .toc-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .toc-dot.sev-critical { background: var(--critical-text); }
+    .toc-dot.sev-major { background: var(--major-text); }
+    .toc-dot.sev-minor { background: var(--minor-text); }
+    .toc-dot.sev-info { background: var(--info-text); }
+
+    /* 总体结论：多分片 */
+    .summary-shards-wrap {
+      margin-bottom: 4px;
+    }
+
+    .summary-shard {
+      margin-bottom: 14px;
+      padding: 12px 14px;
+      background: #fafbfd;
+      border-radius: 10px;
+      border-left: 4px solid var(--accent);
+    }
+
+    .summary-shard:last-of-type {
+      margin-bottom: 10px;
+    }
+
+    .summary-more[hidden] {
+      display: none !important;
+    }
+
+    .summary-toggle {
+      display: inline-block;
+      margin-top: 4px;
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 16px;
+      border-radius: 8px;
+      border: 1px solid var(--accent);
+      background: #fff;
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .summary-toggle:hover {
+      background: #eef8f5;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details {
+      margin-top: 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0 12px 10px;
+      background: #fafbfc;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details summary {
+      cursor: pointer;
+      padding: 10px 0;
+      font-weight: 600;
+      color: var(--accent);
+      list-style: none;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .summary-raw-pre {
+      margin: 0;
+      max-height: 420px;
+      overflow: auto;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* 按文件 findings：可折叠组 + 卡片 */
+    .findings-list-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    details.file-group.findings-file-group {
+      margin: 0;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .file-group-summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 14px;
+      padding: 14px 16px;
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .file-group-summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .file-group-title {
+      display: inline-flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 14px;
+      color: var(--heading);
+      flex: 1 1 200px;
+      min-width: 0;
+    }
+
+    .file-path-text {
+      word-break: break-all;
+      line-height: 1.45;
+    }
+
+    .sev-indicator {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      margin-top: 4px;
+    }
+
+    .sev-indicator.sev-critical { background: var(--critical-text); box-shadow: 0 0 0 2px var(--critical-bg); }
+    .sev-indicator.sev-major { background: var(--major-text); box-shadow: 0 0 0 2px var(--major-bg); }
+    .sev-indicator.sev-minor { background: var(--minor-text); box-shadow: 0 0 0 2px var(--minor-bg); }
+    .sev-indicator.sev-info { background: var(--info-text); box-shadow: 0 0 0 2px var(--info-bg); }
+
+    .file-group-stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .stat-chip {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 999px;
+    }
+
+    .stat-chip.stat-critical { background: var(--critical-bg); color: var(--critical-text); }
+    .stat-chip.stat-major { background: var(--major-bg); color: var(--major-text); }
+    .stat-chip.stat-minor { background: var(--minor-bg); color: var(--minor-text); }
+    .stat-chip.stat-info { background: var(--info-bg); color: var(--info-text); }
+
+    .file-group-count {
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .file-group-body {
+      padding: 12px 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .finding-card {
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: #fff;
+      padding: 15px 17px;
+      border-left-width: 4px;
+      border-left-style: solid;
+      box-shadow: var(--shadow-sm);
+      transition: box-shadow 0.15s;
+    }
+
+    .finding-card:hover { box-shadow: var(--shadow); }
+
+    .finding-card.severity-critical { border-left-color: var(--critical-strong); background: linear-gradient(90deg, var(--critical-bg) 0%, #fff 14px); }
+    .finding-card.severity-major { border-left-color: var(--major-strong); background: linear-gradient(90deg, var(--major-bg) 0%, #fff 14px); }
+    .finding-card.severity-minor { border-left-color: var(--minor-strong); background: linear-gradient(90deg, var(--minor-bg) 0%, #fff 14px); }
+    .finding-card.severity-info { border-left-color: var(--info-strong); background: linear-gradient(90deg, var(--info-bg) 0%, #fff 14px); }
+
+    .finding-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .sev-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 4px 12px;
+      border-radius: 7px;
+      font-size: 11.5px;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .sev-badge.critical { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .sev-badge.major { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .sev-badge.minor { background: var(--minor-bg); color: var(--minor-text); border: 1px solid var(--minor-border); }
+    .sev-badge.info { background: var(--info-bg); color: var(--info-text); border: 1px solid var(--info-border); }
+
+    .finding-line {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      background: var(--chip-bg);
+      padding: 4px 8px;
+      border-radius: 6px;
+    }
+
+    .finding-cat {
+      font-size: 12.5px;
+      font-weight: 700;
+      color: var(--accent-dark);
+      background: var(--accent-soft);
+      padding: 3px 9px;
+      border-radius: 6px;
+    }
+
+    /* 需求对账三类（需求未实现/需求矛盾/需求外动作）用色块徽章而非纯文字，
+       跟严重级别徽章一样醒目——用户反馈普通文字分类容易在列表里被漏看，
+       尤其"需求未实现"现在总是 Critical。*/
+    .finding-cat-requirement {
+      background: var(--critical-bg);
+      color: var(--critical-text);
+      border: 1px solid var(--critical-border);
+      border-radius: 6px;
+      padding: 3px 10px;
+    }
+
+    /* ── 接口审查覆盖清单 ── */
+    .endpoint-coverage {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px 18px;
+      box-shadow: var(--shadow);
+      margin-bottom: 20px;
+    }
+
+    .ec-note {
+      margin: 0 0 10px;
+      font-size: 13px;
+      line-height: 1.7;
+      color: var(--muted);
+    }
+
+    .ec-note-warn {
+      padding: 9px 12px;
+      border-radius: 8px;
+      background: var(--major-bg);
+      border-left: 4px solid var(--major-strong);
+      color: var(--major-text);
+    }
+
+    .ec-note-warn strong { color: var(--major-strong); }
+
+    .ec-table-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid var(--border); }
+
+    .ec-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .ec-table th {
+      text-align: left;
+      padding: 9px 12px;
+      background: #fafbfd;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .ec-table td {
+      padding: 10px 12px;
+      border-top: 1px solid var(--border);
+      vertical-align: top;
+      line-height: 1.65;
+    }
+
+    .ec-table tbody tr:first-child td { border-top: none; }
+
+    .ec-table .ec-method,
+    .ec-table .ec-verdict { white-space: nowrap; }
+
+    .ec-table .ec-path code {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+      word-break: break-all;
+    }
+
+    .ec-table .ec-reason { color: var(--muted); }
+
+    .ec-badge {
+      display: inline-block;
+      padding: 2px 9px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .ec-badge.ec-risk { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .ec-badge.ec-pending { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .ec-badge.ec-safe { background: var(--safe-bg); color: var(--safe-text); border: 1px solid var(--safe-border); }
+
+    tr.ec-risk td { background: #fffbfa; }
+    tr.ec-pending td { background: #fffdf9; }
+
+    /* 分片没审成时的披露条：必须比正文更抢眼，否则读者会把
+       「报告里没写」误当成「这里没问题」 */
+    .shard-health-alert {
+      margin: 0 0 12px;
+      padding: 12px 15px;
+      border-radius: 10px;
+      background: var(--critical-bg);
+      border: 1px solid var(--critical-border);
+      border-left: 4px solid var(--critical-strong);
+      color: var(--critical-text);
+      font-size: 13.5px;
+      line-height: 1.7;
+    }
+
+    .shard-health-alert strong { color: var(--critical-strong); }
+
+    .finding-desc {
+      font-size: 14px;
+      line-height: 1.65;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* finding 卡片正文的四行结构（问题 / 后果 / 怎么改 / 怎么验）。
+       用户反馈（build 532）"文案挤在一团，难以阅读"：此前正文是一整段
+       `原因：…影响：…` 靠 white-space:pre-wrap 原样糊上去，修复建议和测试
+       场景又被折叠藏起来。改成左标签 + 右正文的两列网格，每行一个语义单元，
+       段落之间有明确留白，长句由 Python 侧按句末标点拆成多个 <p>。 */
+    .finding-body {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      font-size: 14px;
+      line-height: 1.7;
+      color: var(--text);
+    }
+
+    .fb-row {
+      display: grid;
+      grid-template-columns: 68px minmax(0, 1fr);
+      gap: 2px 14px;
+      padding: 10px 0;
+      border-top: 1px dashed var(--border);
+    }
+
+    .fb-row:first-child {
+      border-top: none;
+      padding-top: 2px;
+    }
+
+    /* 重新设计：标签从"一段带颜色的纯文字"改成小色块标签（跟 sev-badge/
+       finding-cat 同一套视觉语言），扫一眼列表就能靠色块分辨这行是"问题"
+       还是"怎么改"，比单靠文字颜色更容易一眼分辨。 */
+    .fb-label {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1.6;
+      letter-spacing: 0.03em;
+      white-space: nowrap;
+      padding: 2px 8px;
+      border-radius: 6px;
+      margin-top: 1px;
+    }
+
+    .fb-problem .fb-label { color: var(--major-text); background: var(--major-bg); }
+    .fb-impact .fb-label { color: var(--critical-text); background: var(--critical-bg); }
+    .fb-fix .fb-label { color: var(--accent-dark); background: var(--accent-soft); }
+    .fb-test .fb-label { color: var(--info-text); background: var(--info-bg); }
+
+    .fb-text {
+      min-width: 0;
+      word-break: break-word;
+    }
+
+    .fb-text > p {
+      margin: 0 0 7px;
+    }
+
+    .fb-text > p:last-child {
+      margin-bottom: 0;
+    }
+
+    .fb-text .rt-list {
+      margin: 2px 0 6px;
+      padding-left: 20px;
+    }
+
+    .fb-text .rt-list li {
+      margin-bottom: 4px;
+    }
+
+    .fb-text .code-block {
+      margin: 8px 0 4px;
+      font-size: 12.5px;
+    }
+
+    .fb-text code {
+      background: var(--chip-bg);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+    }
+
+    /* 窄屏（Jenkins 里报告常挤在窗格里看）时标签落到正文上方，不再抢走
+       62px 宽度，避免正文被压成一列细条 */
+    @media (max-width: 720px) {
+      .fb-row {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 2px;
+      }
+    }
+
+    /* 证据代码块从固定 div 改成可折叠 details（默认展开）——一份报告里
+       十几张卡片各带 8-10 行代码，读者需要能收起来快速扫结论 */
+    details.finding-evidence > summary {
+      cursor: pointer;
+      list-style: none;
+    }
+
+    details.finding-evidence > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    details.finding-evidence > summary::before {
+      content: "▾ ";
+      color: var(--muted);
+    }
+
+    details.finding-evidence:not([open]) > summary::before {
+      content: "▸ ";
+    }
+
+    /* 证据代码块（2026-07-19 补）：evidence_quote 的稳定展示位置，不再依赖
+       模型是否顺手把代码写进 description 里；纯 CSS + Python 正则高亮，
+       不引外部 JS 库，内网报告零外部依赖风险。 */
+    .finding-evidence {
+      margin-top: 10px;
+    }
+
+    .finding-evidence .detail-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .code-block {
+      margin: 0;
+      padding: 12px 15px;
+      background: var(--code-bg);
+      color: #e6edf3;
+      border-radius: 9px;
+      overflow-x: auto;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+      line-height: 1.6;
+    }
+
+    .code-block code {
+      white-space: pre;
+      /* 2026-09-02 用户反馈：安全/权限折叠卡里"怎么改"给的整段修复示意代码
+         （``` 代码围栏渲染出来也是 <pre class="code-block"><code>）看不清——
+         根因是 .fb-text code（第 833 行，给"问题/后果/怎么改/怎么验"正文里
+         `existsActive` 这类行内代码片段配的浅灰底色）跟这里选择器优先级/
+         特异性相同，同一个 <code> 标签只要落在 .fb-text 范围内就会被套上
+         浅灰底，而 .code-annotation/.code-keyword 这套语法高亮配色是给
+         .code-block 本来的深色底（--code-bg）设计的，叠在浅灰底上对比度
+         塌陷，几乎看不见字。显式声明透明背景覆盖掉那条通用规则，让
+         .code-block 自己的深色底透出来。 */
+      background: transparent;
+    }
+
+    .code-comment { color: #8b949e; font-style: italic; }
+    .code-string { color: #a5d6ff; }
+    .code-annotation { color: #d2a8ff; }
+    .code-keyword { color: #ff7b72; font-weight: 600; }
+    .code-number { color: #79c0ff; }
+
+    /* 带上下文的证据代码块（逐行渲染，问题行整行高亮）*/
+    .code-row {
+      display: block;
+      padding: 0 6px;
+      border-left: 3px solid transparent;
+    }
+
+    .code-row-target {
+      background: rgba(255, 123, 114, 0.16);
+      border-left-color: #ff7b72;
+    }
+
+    .code-ln {
+      display: inline-block;
+      min-width: 2.5em;
+      margin-right: 12px;
+      color: #6e7681;
+      text-align: right;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    .finding-details {
+      margin-top: 12px;
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+      padding: 0;
+      background: #fafbfd;
+    }
+
+    .finding-details > summary {
+      cursor: pointer;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--heading);
+      list-style: none;
+    }
+
+    .finding-details > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .finding-details-body {
+      padding: 0 14px 14px;
+      border-top: 1px solid var(--border);
+    }
+
+    .detail-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin: 12px 0 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .finding-suggestion p,
+    .finding-test p {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.65;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .file-block {
+      margin: 14px 0 18px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: var(--shadow);
+    }
+
+    .file-block h3 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      color: var(--heading);
+      word-break: break-all;
+    }
+
+    table {
+      border-collapse: separate;
+      border-spacing: 0;
+      width: 100%;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+    }
+
+    th, td {
+      border-bottom: 1px solid var(--border);
+      padding: 10px;
+      vertical-align: top;
+      text-align: left;
+      font-size: 13px;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      background: #fafbfd;
+      color: var(--heading);
+      font-weight: 700;
+      z-index: 1;
+    }
+
+    tbody tr:nth-child(even) { background: #fafbfd; }
+    tbody tr:last-child td { border-bottom: none; }
+
+    .empty {
+      padding: 18px;
+      border: 1px dashed var(--border);
+      border-radius: 14px;
+      color: var(--muted);
+      background: #fafbfd;
+    }
+
+    @media (max-width: 900px) {
+      .hero h1 { font-size: 22px; }
+      .summary,
+      .file-block { padding: 12px; }
+      th, td { padding: 8px; font-size: 12px; }
+      .charts-row { flex-direction: column; }
+    }
+
+    /* ── 报告标签页 ──
+       重新设计：从"按钮选中变绿色渐变块"改成分段控件（segmented control）
+       的样式——浅灰底槽 + 选中项浮成白色药丸，更接近成熟工具（如 GitHub/
+       Linear）里的页签观感，也跟下面卡片的白底形成呼应。 */
+    .report-tabs {
+      display: inline-flex;
+      gap: 2px;
+      padding: 4px;
+      margin-bottom: 18px;
+      background: #e9ebf0;
+      border-radius: 12px;
+      flex-wrap: wrap;
+    }
+    .report-tabs button {
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 18px;
+      border-radius: 9px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 13.5px;
+      transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+    }
+    .report-tabs button:hover {
+      color: var(--heading);
+    }
+    .report-tabs button[aria-selected="true"] {
+      background: #ffffff;
+      color: var(--heading);
+      box-shadow: var(--shadow-sm);
+    }
+    .report-panel { display: none; }
+    .report-panel.is-active { display: block; }
+
+    /* ── 数据权限页（嵌入，与综合页隔离） ── */
+    .dp-shell {
+      font-family: "Avenir Next", "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif;
+      color: #1a2b22;
+      line-height: 1.6;
+    }
+
+    /* 重置全局 table 样式污染 */
+    .dp-shell table {
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+    }
+    .dp-shell th, .dp-shell td {
+      border: none !important;
+      border-bottom: 1px solid #edf2f7 !important;
+      background: transparent !important;
+    }
+
+    .dp-shell .dp-header {
+      position: relative;
+      background: linear-gradient(165deg, #0b1220 0%, #121a2c 55%, #0e2422 100%);
+      color: #f4f7fb;
+      padding: 26px 28px 24px;
+      border-radius: 18px;
+      margin-bottom: 24px;
+      box-shadow: var(--shadow-lg);
+      overflow: hidden;
+    }
+    .dp-shell .dp-header::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 3px;
+      background: linear-gradient(90deg, #14b8a6, #22d3ee 45%, #14b8a6 100%);
+    }
+    .dp-shell .dp-header h1 { font-size: 1.4rem; font-weight: 700; letter-spacing: .01em; margin: 0 0 6px; }
+    .dp-shell .dp-header .subtitle { margin: 0; color: #aab4c8; font-size: .9rem; }
+    .dp-shell .dp-header .meta-row { margin-top: 16px; display: flex; gap: 24px; flex-wrap: wrap; }
+    .dp-shell .dp-header .meta-item { font-size: .8rem; color: #8b95ab; }
+    .dp-shell .dp-header .meta-item strong { color: #8ce8d4; font-weight: 600; }
+
+    .dp-shell .dp-body { padding: 0 0 32px; }
+
+    /* ── dp-shell 内部组件（与 Python 生成的类名严格对齐） ── */
+
+    /* 统计卡片区（Python 生成 .summary-grid / .summary-card） */
+    .dp-shell .dp-stats { margin-bottom: 4px; }
+    .dp-shell .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+    .dp-shell .summary-card {
+      background: #fff;
+      border-radius: 14px;
+      padding: 18px 20px;
+      box-shadow: var(--shadow-sm);
+      border: 1px solid var(--border);
+      border-top: 3px solid transparent;
+    }
+    .dp-shell .summary-card.critical { border-top-color: var(--critical-strong); }
+    .dp-shell .summary-card.high     { border-top-color: var(--major-strong); }
+    .dp-shell .summary-card.medium   { border-top-color: var(--minor-strong); }
+    .dp-shell .summary-card.info     { border-top-color: var(--info-strong); }
+    .dp-shell .summary-card .count   { font-size: 2.1rem; font-weight: 800; line-height: 1; }
+    .dp-shell .summary-card.critical .count { color: var(--critical-text); }
+    .dp-shell .summary-card.high     .count { color: var(--major-text); }
+    .dp-shell .summary-card.medium   .count { color: var(--minor-text); }
+    .dp-shell .summary-card.info     .count { color: var(--info-text); }
+    .dp-shell .summary-card .label   { margin-top: 8px; font-size: .72rem; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .07em; }
+
+    /* 区块标题 */
+    .dp-shell .dp-section { margin-bottom: 24px; }
+    .dp-shell .dp-section-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--heading);
+      margin: 0 0 14px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* 角色定义盒（Python 生成 .role-box / .role-icon / .role-info） */
+    .dp-shell .dp-roles { display: flex; flex-direction: column; gap: 10px; }
+    .dp-shell .role-box {
+      background: #fff;
+      border-radius: 12px;
+      padding: 16px 20px;
+      box-shadow: 0 2px 10px rgba(17,51,38,.07);
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+    }
+    .dp-shell .role-box.muted {
+      background: #f8f9fb;
+      border: 1px solid var(--border);
+      box-shadow: none;
+    }
+    .dp-shell .role-icon { font-size: 1.8rem; line-height: 1; flex-shrink: 0; }
+    .dp-shell .role-info { flex: 1; min-width: 0; }
+    .dp-shell .role-info h3 { font-size: 1rem; font-weight: 700; color: var(--heading); margin: 0 0 4px; }
+    .dp-shell .role-info .role-md { font-size: .88rem; color: #4a5568; margin-top: 8px; line-height: 1.65; word-break: break-word; }
+    .dp-shell .role-info code { background: #edf2f7; padding: 1px 6px; border-radius: 4px; font-size: .85em; }
+
+    /* gate banner */
+    .dp-shell .dp-gate { margin-bottom: 20px; }
+
+    /* 审计表格包装（Python 生成 .table-wrap > table.dp-audit）
+       表头从深绿底改成跟报告其它表格（.ec-table）同一套浅底大写小标签，
+       整份报告的表格风格统一，不再是"深色表头 vs 浅色表头"两套语言。 */
+    .dp-shell .table-wrap {
+      overflow-x: auto;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow-sm);
+    }
+    .dp-shell table.dp-audit {
+      width: 100% !important;
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+      font-size: .84rem;
+    }
+    .dp-shell .dp-audit th {
+      background: #fafbfd !important;
+      color: var(--muted) !important;
+      padding: 11px 14px !important;
+      text-align: left !important;
+      font-size: .68rem !important;
+      font-weight: 700 !important;
+      text-transform: uppercase !important;
+      letter-spacing: .07em !important;
+      white-space: nowrap !important;
+      border-bottom: 1px solid var(--border) !important;
+      position: sticky;
+      top: 0;
+    }
+    .dp-shell .dp-audit td {
+      padding: 11px 14px !important;
+      border-bottom: 1px solid var(--border) !important;
+      vertical-align: top !important;
+      color: var(--text) !important;
+      background: transparent !important;
+    }
+    .dp-shell .dp-audit tr:last-child td { border-bottom: none !important; }
+    .dp-shell .dp-audit tr:hover td { background: #f8f9fb !important; }
+    .dp-shell .dp-audit tr.row-critical td { background: var(--critical-bg) !important; }
+    .dp-shell .dp-audit tr.row-critical:hover td { background: #fbdcda !important; }
+    .dp-shell .dp-audit tr.row-major td { background: var(--major-bg) !important; }
+    .dp-shell .dp-audit tr.row-major:hover td { background: #fbe4c4 !important; }
+
+    /* HTTP 方法 & 严重性徽标（Python 生成 .badge .badge-*） */
+    .dp-shell .badge {
+      display: inline-block; padding: 2px 9px; border-radius: 6px;
+      font-size: .72rem; font-weight: 700; letter-spacing: .04em; white-space: nowrap;
+    }
+    .dp-shell .badge-get    { background: var(--info-bg); color: var(--info-text); }
+    .dp-shell .badge-post   { background: var(--safe-bg); color: var(--safe-text); }
+    .dp-shell .badge-put    { background: var(--minor-bg); color: var(--minor-text); }
+    .dp-shell .badge-delete { background: var(--critical-bg); color: var(--critical-text); }
+    .dp-shell .badge-patch  { background: #f4f0fd; color: #6b46c1; }
+    .dp-shell .badge-critical { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .dp-shell .badge-high     { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .dp-shell .badge-medium   { background: var(--minor-bg); color: var(--minor-text); border: 1px solid var(--minor-border); }
+    .dp-shell .badge-info     { background: var(--info-bg); color: var(--info-text); border: 1px solid var(--info-border); }
+
+    /* 风险文字 */
+    .dp-shell .risk-zh { font-size: .82rem; color: var(--text); font-weight: 600; line-height: 1.4; }
+
+    /* Issue 列表（Python 生成 .issue-list） */
+    .dp-shell .issue-list { list-style: none !important; margin: 6px 0 0; padding: 0; }
+    .dp-shell .issue-list li { position: relative; padding: 3px 0 3px 18px; font-size: .84rem; color: #4a5568; line-height: 1.55; }
+    .dp-shell .issue-list li::before { content: "▸"; position: absolute; left: 2px; color: #e53e3e; }
+    .dp-shell .issue-list li strong { color: var(--heading); }
+    .dp-shell .issue-list code { background: #edf2f7; padding: 1px 5px; border-radius: 3px; font-size: .85em; }
+
+    /* 修复建议卡片（Python 生成 .fix-card） */
+    .dp-shell .fix-card {
+      background: #f0faf5;
+      border-left: 4px solid var(--accent);
+      border-radius: 0 10px 10px 0;
+      padding: 13px 16px;
+      margin-top: 10px;
+    }
+    .dp-shell .fix-card h4 { font-size: .84rem; font-weight: 700; color: var(--heading); margin: 0 0 6px; }
+    .dp-shell .fix-card p, .dp-shell .fix-card li { font-size: .83rem; color: #2d4a3d; line-height: 1.6; margin: 0; }
+    .dp-shell .fix-card ul, .dp-shell .fix-card ol { padding-left: 18px; margin: 6px 0; }
+    .dp-shell .fix-card code { background: #d4efe4; padding: 1px 5px; border-radius: 4px; font-size: .85em; }
+
+    /* 代码块（Python 生成 .code-block） */
+    .dp-shell .code-block {
+      background: var(--code-bg); color: #e2e8f0; border-radius: 9px;
+      padding: 12px 16px; margin-top: 8px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: .78rem; line-height: 1.55; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+    }
+
+    /* 端点详情折叠（Python 生成 details.issue-fold） */
+    .dp-shell details.issue-fold {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: var(--shadow-sm);
+      margin-bottom: 12px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .dp-shell details.issue-fold > summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 13px 16px;
+      font-weight: 600;
+      font-size: .9rem;
+      color: var(--heading);
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid transparent;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transition: background .15s;
+    }
+    .dp-shell details.issue-fold > summary::-webkit-details-marker { display: none; }
+    .dp-shell details.issue-fold > summary::before { content: "▸"; font-size: 11px; color: var(--accent); transition: transform .15s; }
+    .dp-shell details.issue-fold[open] > summary::before { transform: rotate(90deg); }
+    .dp-shell details.issue-fold[open] > summary { border-bottom-color: var(--border); background: var(--accent-soft); }
+    .dp-shell .issue-fold-body { padding: 16px 20px; font-size: .85rem; color: #4a5568; }
+    .dp-shell .issue-fold-body p { margin: 6px 0; line-height: 1.65; }
+    .dp-shell .issue-fold-body strong { color: var(--heading); }
+
+    /* dp-fold（端点详情另一种渲染，Python 生成 details.dp-fold） */
+    .dp-shell .dp-folds { display: flex; flex-direction: column; gap: 10px; }
+    .dp-shell .dp-fold {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
+    }
+    .dp-shell .dp-fold > summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 13px 16px;
+      font-weight: 600;
+      font-size: .9rem;
+      color: var(--heading);
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .dp-shell .dp-fold > summary::-webkit-details-marker { display: none; }
+    .dp-shell .dp-fold > summary::before { content: "▸"; font-size: 11px; color: var(--accent); transition: transform .15s; }
+    .dp-shell .dp-fold[open] > summary::before { transform: rotate(90deg); }
+    .dp-shell .dp-fold-body { padding: 16px; font-size: .85rem; color: #4a5568; }
+
+    /* issue list（dp-fold 内部用） */
+    .dp-shell .dp-issue-list { list-style: none; margin: 8px 0 0; padding: 0; }
+    .dp-shell .dp-issue-list li { position: relative; padding: 3px 0 3px 18px; font-size: .84rem; color: #4a5568; }
+    .dp-shell .dp-issue-list li::before { content: "▸"; position: absolute; left: 2px; color: #e53e3e; }
+
+    /* dp-fix（dp-fold 内部修复建议） */
+    .dp-shell .dp-fix {
+      background: #f0faf5;
+      border-left: 4px solid var(--accent);
+      border-radius: 0 10px 10px 0;
+      padding: 12px 16px;
+      margin-top: 10px;
+    }
+    .dp-shell .dp-fix h4 { font-size: .84rem; font-weight: 700; color: var(--heading); margin: 0 0 6px; }
+    .dp-shell .dp-fix p, .dp-shell .dp-fix li { font-size: .83rem; color: #2d4a3d; line-height: 1.6; margin: 0; }
+    .dp-shell .dp-fix code { background: #d4efe4; padding: 1px 5px; border-radius: 4px; font-size: .85em; }
+
+    /* dp-code（dp-fold 内部代码块） */
+    .dp-shell .dp-code {
+      background: var(--code-bg); color: #e2e8f0; border-radius: 9px;
+      padding: 12px 16px; margin-top: 8px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: .78rem; line-height: 1.55; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+    }
+
+    /* 存量越权风险区块（dp-shell 内，全文扫描）*/
+    .dp-shell .legacy-privilege-block {
+      background: var(--minor-bg);
+      border: 1px solid var(--minor-border);
+      border-left: 4px solid var(--minor-strong);
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin-bottom: 16px;
+    }
+    .dp-shell .legacy-privilege-block .lp-title { font-size: 14px; font-weight: 700; color: var(--minor-strong); margin: 0 0 4px; }
+    .dp-shell .legacy-privilege-block .lp-subtitle { font-size: 12px; color: var(--minor-text); margin: 0 0 14px; }
+
+    .dp-shell .dp-footer {
+      text-align: center; font-size: .78rem; color: #a0aec0;
+      margin-top: 36px; padding-top: 20px; border-top: 1px solid var(--border);
+    }
+
+    /* ── 综合审查 Tab 权限接口表（privilege_endpoints 模式，在 dp-shell 外） ── */
+    .perm-table-wrap {
+      overflow-x: auto;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow-sm);
+    }
+    .perm-table {
+      width: 100%;
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+      font-size: .84rem;
+    }
+    .perm-table th {
+      background: #fafbfd !important;
+      color: var(--muted) !important;
+      padding: 10px 14px !important;
+      text-align: left !important;
+      font-size: .68rem !important;
+      font-weight: 700 !important;
+      text-transform: uppercase !important;
+      letter-spacing: .07em !important;
+      white-space: nowrap !important;
+      border-bottom: 1px solid var(--border) !important;
+    }
+    .perm-table td {
+      padding: 10px 14px !important;
+      border-bottom: 1px solid var(--border) !important;
+      vertical-align: top !important;
+      color: var(--text) !important;
+      background: transparent !important;
+    }
+    .perm-table tr:last-child td { border-bottom: none !important; }
+    .perm-table tr:hover td { background: #f8f9fb !important; }
+    .api-permission-block { overflow-x: auto; }
+
+    /* 存量越权风险区块（综合审查 Tab，全文扫描） */
+    .legacy-privilege-block {
+      background: var(--minor-bg);
+      border: 1px solid var(--minor-border);
+      border-left: 4px solid var(--minor-strong);
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin-bottom: 16px;
+    }
+    .legacy-privilege-block .lp-title { font-size: 14px; font-weight: 700; color: var(--minor-strong); margin: 0 0 4px; }
+    .legacy-privilege-block .lp-subtitle { font-size: 12px; color: var(--minor-text); margin: 0 0 14px; }
+    /* 根因聚合卡片 */
+    .cluster-card { border-left: 4px solid #6366f1; }
+    .cluster-badge {
+      background: #6366f1; color: #fff;
+      font-size: 11px; padding: 2px 8px;
+      border-radius: 10px; margin-left: 8px;
+      font-weight: 600; letter-spacing: .02em;
+    }
+    .cluster-locations { margin: 8px 0 4px; }
+    .cluster-locations > summary {
+      cursor: pointer; color: #6366f1;
+      font-size: 13px; font-weight: 500;
+    }
+    .cluster-locations > summary:hover { text-decoration: underline; }
+    .loc-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+    .loc-table th, .loc-table td {
+      padding: 4px 8px; border: 1px solid #e5e7eb; text-align: left;
+    }
+    .loc-table th { background: #f9fafb; font-weight: 600; }
+    .loc-file { font-family: monospace; color: #374151; }
+    .loc-line { text-align: center; color: #6b7280; white-space: nowrap; }
+    .loc-snippet { color: #4b5563; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* ── Charts Row (并列布局) ── */
+    .charts-row {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    /* ── Chart Section ── */
+    .chart-section {
+      flex: 1 1 0;
+      min-width: 0;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .chart-container {
+      position: relative;
+      height: 260px;
+    }
+
+    /* ── Top 3 Criticals in Hero ── */
+    .top-criticals {
+      position: relative;
+      margin-top: 18px;
+      padding-top: 16px;
+      border-top: 1px solid rgba(255,255,255,0.12);
+    }
+
+    .top-criticals h3 {
+      margin: 0 0 10px;
+      font-size: 13px;
+      font-weight: 700;
+      color: #ff9d94;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .top-criticals ul {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .top-criticals li {
+      font-size: 13px;
+      color: #d6dcea;
+      line-height: 1.5;
+      padding: 9px 12px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.09);
+      border-left: 3px solid #f2645a;
+      border-radius: 0 8px 8px 0;
+    }
+
+    .top-criticals li strong {
+      color: #ffe1dc;
+      font-weight: 700;
+      display: block;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12px;
+    }
+
+    .top-criticals[hidden] { display: none !important; }
+
+    .top-criticals .tc-desc {
+      display: block;
+      margin-top: 3px;
+    }
+
+    .top-criticals .tc-source {
+      display: inline-block;
+      margin-bottom: 4px;
+      padding: 1px 7px;
+      border-radius: 5px;
+      background: rgba(255,255,255,0.14);
+      color: #f4f7fb;
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    /* ── Export Dropdown ── */
+    .export-dropdown {
+      position: relative;
+    }
+
+    .export-menu {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 4px);
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+      min-width: 160px;
+      z-index: 100;
+      overflow: hidden;
+    }
+
+    .export-menu a {
+      display: block;
+      padding: 10px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--heading);
+      text-decoration: none;
+      transition: background 0.12s;
+    }
+
+    .export-menu a:hover {
+      background: #eef5f1;
+    }
+
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <h1>AI Code Review 报告</h1>
+      <p class="hero-meta">服务: logistics-backend | 生成时间: 2026-10-09 11:16:32</p>
+      <div class="top-criticals" id="top-criticals" hidden>
+        <h3>最需要先看的问题（Critical）</h3>
+        <ul id="top-criticals-list"></ul>
+      </div>
+    </header>
+
+    <div class="report-tabs" role="tablist" aria-label="报告视图">
+      <button type="button" role="tab" id="tab-general" aria-controls="panel-general" aria-selected="true" onclick="switchReportTab('general')">综合审查</button>
+      <button type="button" role="tab" id="tab-dp" aria-controls="panel-dp" aria-selected="false" onclick="switchReportTab('dp')">权限与业务规则</button>
+    </div>
+
+    <div id="panel-general" class="report-panel is-active" role="tabpanel" aria-labelledby="tab-general">
+    <section class="summary">
+      <h2>总体结论</h2>
+      <div id="summary-text" class="summary-body summary-preformatted"><div class="shard-health-alert">⚠ 这份报告不完整：本次把改动切成 23 段分别审查，其中 1 段代码没审成（第 2 段）。这些内容不会出现在下面任何一处，<strong>不能把「报告里没写」当成「这里没问题」</strong>——请重跑本次审查，或对这部分人工过一遍。</div><div class="summary-condensed"><p>合并 <strong>23</strong> 个分片审查，共 <strong>15</strong> 条发现 （Critical 7 · Major 6 · Minor 2 · Info 0）。</p><p>其中 Critical 3 条、Major 1 条来自「牵连影响」（改动波及到的其他调用点），在下方「牵连影响」一节展开。</p><p>逐条明细见下方「按文件的审查发现」；接口与数据权限维度见顶部「权限与业务规则」页签。</p><details class="summary-raw-details"><summary>展开各分片原文结论</summary><pre class="summary-raw-pre"><strong>分片 1</strong>
+
+本分片发现 2 个问题：1 个敏感数据日志泄露，1 个新增空指针导致的接口级失败风险。
+
+<strong>已审查无风险接口</strong>
+- POST /address/update — 本次 diff 仅在 <code>UpdateAddressService.update()</code> 内新增 <code>OmsService</code> 查询与 DropX 推送逻辑，未看到新增匿名放行、权限注解删除或数据范围过滤削弱；实现入口权限代码未在本分片 diff 内，无法从本次变更断言既有鉴权细节，但未见新增权限风险。
+- POST /address/update — 同上，针对 <code>pos-exchange-api</code> 的同路径入口，本次变更未新增放行或跨仓数据读取逻辑，未见新增权限风险。
+- GET /external/address/one — 本次分片未改动该入口实现；从提供的调用片段可见存在 <code>INNER_API_KEY</code> 校验，未见新增权限风险，但完整实现未在本分片 diff 内，需沿既有代码人工确认返回数据范围。
+- POST /external/address/update — 本次分片未改动控制器鉴权方式，新增逻辑发生在 <code>UpdateAddressService.update()</code> 内，未见新增匿名访问或资源归属校验削弱；完整入口实现未在本分片 diff 内，无法断言既有权限是否充分。
+- POST /list — <code>WebPtcScanReportController.list(...)</code> 新增/保留了 <code>@RequiresPermissions(value = {&quot;inbound:ptc:list&quot;})</code>，且查询条件强制追加 <code>h.facility_code = :facilityCode</code>，与仓级数据范围控制一致，未见新增权限风险。
+- POST /pickup/beansAccount — <code>PusApiController.getBeansAccount(...)</code> 本次仅透传 <code>facilityCode</code> 和 <code>pickupType</code> 到 <code>routeAccountService.getBeansAccount(...)</code>，本分片未提供该控制器类级鉴权信息，无法完整断言权限；但新增代码本身未出现匿名放行或敏感数据直接返回扩面，需人工确认控制器既有鉴权。
+- POST /web/sorter/profile/delete — 本分片未展示该入口改动实现，无法从 diff 断言权限；未见新增权限风险。
+- GET /web/sorter/profile/active — 本分片未展示该入口改动实现，无法从 diff 断言权限；未见新增权限风险。
+- GET /web/sorter/profile/inUsed/{id} — 本分片未展示该入口改动实现，无法从 diff 断言权限；未见新增权限风险。
+- GET /web/sorter/profile/existsActive — 本分片未展示该入口改动实现，无法从 diff 断言权限；未见新增权限风险。
+
+接口覆盖率：清单共 10 个接口，已审查 10 个，0 个存在权限风险，10 个无风险，0 个待确认
+
+<strong>HTTP 入口清单（方法 + 路径）</strong>
+- POST /address/update — 本次 diff 未削弱鉴权与数据范围，新增风险不在权限面，属于 <code>UpdateAddressService</code> 内部空指针与敏感日志问题。
+- POST /address/update — 同上，另一控制器入口未见新增权限风险。
+- GET /external/address/one — 实现未在本分片/diff 内，无法断言完整权限；从已给片段看仍有 <code>INNER_API_KEY</code> 校验，未见本次变更新增放行。
+- POST /external/address/update — 实现未在本分片/diff 内，无法断言完整权限；本次变更未新增放行。
+- POST /list — 与 <code>@RequiresPermissions(value = {&quot;inbound:ptc:list&quot;})</code> 及 <code>facilityCode</code> 过滤一致，无新增权限风险。
+- POST /pickup/beansAccount — 实现未在本分片/diff 内完整展开，无法断言控制器既有鉴权；本次变更未新增放行或越权读取代码。
+- POST /web/sorter/profile/delete — 实现未在本分片/diff 内，无法断言权限；未见本次变更新增权限风险。
+- GET /web/sorter/profile/active — 实现未在本分片/diff 内，无法断言权限；未见本次变更新增权限风险。
+- GET /web/sorter/profile/inUsed/{id} — 实现未在本分片/diff 内，无法断言权限；未见本次变更新增权限风险。
+- GET /web/sorter/profile/existsActive — 实现未在本分片/diff 内，无法断言权限；未见本次变更新增权限风险。
+
+<strong>分片 2</strong>
+
+Combined review failed, skipped.
+
+<strong>分片 3</strong>
+
+本分片实际可见 diff 仅在 <code>backend-common/src/main/java/com/miq/backendcommon/bo/excel/EventAndWebhookBo.java</code> 新增了 <code>facilityCode</code> Excel 导出字段，未看到 SQL、鉴权、外部调用、缓存、并发或异常处理等安全敏感逻辑变更；基于当前 diff，未发现可直接落到新增/修改行上的安全问题。
+
+HTTP 入口清单（方法 + 路径）：本分片可见 diff 中未出现 <code>@GetMapping</code>、<code>@PostMapping</code>、<code>@PutMapping</code>、<code>@DeleteMapping</code>、<code>@PatchMapping</code> 或带路径的 <code>@RequestMapping</code> 新增/修改，因此无需要在本分片内逐条判定的新增 HTTP 入口。
+
+<strong>分片 4</strong>
+
+本分片发现 2 个问题：1 个高风险权限问题、1 个空指针边界问题。重点风险是新增 <code>POST /pickup/beansAccount</code> 在无可见鉴权证据的情况下直接返回 Beans 凭证相关数据。
+
+<strong>已审查无风险接口</strong>
+- POST /list（WebPtcScanReportController.list）：新增改动行未削弱既有 <code>@RequiresPermissions(value = {&quot;inbound:ptc:list&quot;})</code>，且查询条件新增 <code>facility_code = :facilityCode</code>，本次 diff 未引入新的越权读取风险。
+
+接口覆盖率：清单共 2 个接口，已审查 2 个，1 个存在权限风险，1 个无风险，0 个待确认
+
+<strong>HTTP 入口清单（方法 + 路径）</strong>
+- POST /pickup/beansAccount：存在新增权限风险；新增入口未见权限注解、内部鉴权或 <code>facilityCode</code> 数据范围校验，且返回 Beans 账号敏感信息。
+- POST /list：无新增权限风险；本次变更未放宽 <code>@RequiresPermissions(value = {&quot;inbound:ptc:list&quot;})</code>，并且 SQL 条件显式限制 <code>facility_code = :facilityCode</code>。
+
+<strong>分片 5</strong>
+
+本分片 diff 仅包含 <code>pos-api/src/main/java/com/miq/posapi/job/BackfillChuteMappingDestinationJob.java</code> 的删除内容，没有任何新增/修改行（<code>+</code>）可供审查；按要求仅分析新增/修改行，因此本分片未发现可归因到本次变更的安全问题。另，本分片未出现任何 HTTP 映射新增或修改，故无需要补充的 HTTP 入口清单。
+
+<strong>分片 6</strong>
+
+本分片新增代码发现 2 个安全相关问题：<code>UpdateAddressService</code> 存在空指针导致的更新链路中断风险，以及向日志输出完整 Dropx 地址消息导致的敏感信息泄露风险。
+
+<strong>已审查无风险接口</strong>
+- POST /pickup/beansAccount：本次 diff 仅新增 <code>@Valid GetBeansAccountReq req</code> 入参校验，未看到匿名放行、权限注解删除或数据范围放宽；实现未在本分片 diff 内展示鉴权定义，无法据此认定新增权限风险。
+- POST /list：<code>WebPtcScanReportController.list(@RequestBody @Valid PtcScanReportSearchDto searchDto)</code> 保留了 <code>@RequiresPermissions(value = {&quot;inbound:ptc:list&quot;})</code>，且查询仍使用 <code>LoginUserUtil.getCurFacilityCode()</code> 作为仓维度过滤，本次变更仅新增参数校验，无新增权限风险。
+
+接口覆盖率：清单共 2 个接口，已审查 2 个，0 个存在权限风险，2 个无风险，0 个待确认
+
+<strong>HTTP 入口清单（方法 + 路径）</strong>
+- POST /pickup/beansAccount：本次变更只涉及 <code>PusApiController.getBeansAccount(@RequestBody @Valid GetBeansAccountReq req)</code> 的参数校验；diff 未显示放行注解或鉴权削弱，实现未在本分片/diff 内完整展开，无法断言全量权限体系，但无新增权限风险。
+- POST /list：<code>WebPtcScanReportController.list(@RequestBody @Valid PtcScanReportSearchDto searchDto)</code> 保留 <code>inbound:ptc:list</code> 权限要求，并继续按 <code>facilityCode</code> 过滤数据范围，与现有权限模型一致，无新增权限风险。
+
+<strong>分片 7</strong>
+
+本分片提供的实际 diff 只有 <code>pos-exchange-api/src/main/resources/excel/chute_template.xlsx</code> 的二进制文件索引变更，未包含任何可审查的新增/修改代码行，因此无法基于 diff 证实安全问题；按“只分析 diff、且只报告 + 行问题”的约束，本次无可落地 finding。
+
+HTTP 入口清单（方法 + 路径）
+- 本分片实际 diff 未出现 <code>@GetMapping</code>、<code>@PostMapping</code>、<code>@PutMapping</code>、<code>@DeleteMapping</code>、<code>@PatchMapping</code> 或带路径的 <code>@RequestMapping</code> 新增/修改行，因此无可从 diff 识别并审查的 HTTP 入口。
+- 虽然上下文列出了多个全局端点，但其实现代码未出现在本分片 diff 内，无法断言权限与访问控制是否被本次变更削弱。
+
+<strong>分片 8</strong>
+
+本分片提供的 diff 仅涉及 <code>pos-service/src/main/java/com/miq/posservice/bo/sorter/ProfilerTemplateBo.java</code> 中 <code>destination</code> 字段的声明顺序与 <code>@ExcelProperty</code> 文案调整，未引入可从新增/修改行直接确认的 SQL 注入、越权、敏感信息泄露、异常吞没、并发安全或 API 鉴权削弱问题。由于本分片 diff 中未出现任何 <code>@GetMapping</code>、<code>@PostMapping</code>、<code>@RequestMapping</code> 等 HTTP 映射新增/修改行，因此无需要在本次报告中列出的新增 HTTP 入口；全局端点清单里与 <code>WebSorterService.getProfilerTemplateBoList()</code> 相关的下载入口实现未在本分片 diff 内，无法仅凭本次字段顺序调整断言权限行为变化。
+
+<strong>分片 9</strong>
+
+本分片仅看到新增的 <code>DropxConfig</code>，未发现新增 HTTP 入口、鉴权放行或数据范围过滤变更；权限面无新增可见风险。发现 1 个主要问题：<code>exchange.dropx.channelKey</code> 缺少空值与格式校验，错误配置会直接导致加密链路运行时异常。
+
+<strong>分片 10</strong>
+
+本分片未发现新增鉴权放行、匿名暴露或数据范围过滤削弱的问题；涉及的变更主要集中在 <code>PosContainerParcelScanHistoryCustomDaoImpl</code> 查询实现与 <code>SorterProfileDao</code> 方法删除，未见可直接落到 HTTP 入口的新增权限风险。发现 1 处主要问题：DAO 层新增 <code>RRException</code> 失败路径但未见配套的上层契约收敛，存在被异常入参稳定触发的服务错误风险。
+
+<strong>分片 11</strong>
+
+本分片 diff 仅涉及 DTO 字段与注释调整，未出现新增 HTTP 映射、鉴权放行、SQL 拼接、异常吞没、并发共享状态修改或敏感日志等安全问题；新增的 <code>@NotBlank</code> 反而收紧了 <code>ParcelSearchDto.containerNum</code> 的输入约束，未见新增权限风险或 API 安全面削弱。
+
+<strong>分片 12</strong>
+
+本分片发现 2 个安全相关问题：1 个空指针导致的可触发失败，1 个日志泄露敏感地址/位置数据。其余本分片可见新增 SQL 条件已包含 <code>facility_code</code> 过滤，未见新增 SQL 注入或明显越权拼接。
+
+<strong>已审查无风险接口</strong>
+- POST /pickup/beansAccount：本分片仅新增转发到 <code>routeAccountService.getBeansAccount(req.getFacilityCode(), req.getPickupType())</code> 的入口代码，diff 中未出现匿名放行、permitAll 或删除鉴权逻辑；但控制器类级鉴权未在本分片展示，当前仅能判断“无新增权限风险”。
+- POST /list：<code>WebPtcScanReportController.list(...)</code> 新增/保留了 <code>@RequiresPermissions(value = {&quot;inbound:ptc:list&quot;})</code>，且查询条件在 DAO 新增了 <code>h.facility_code = :facilityCode</code>，与 <code>LoginUserUtil.getCurFacilityCode()</code> 形成仓级数据范围约束，未见新增越权风险。
+- POST /address/update：本分片对 <code>UpdateAddressService.update(...)</code> 的改动集中在事务外远程校验和 <code>pushDropx</code> 判定，未新增放宽身份校验或移除资源归属校验的代码；由于 Controller 鉴权实现未在本分片 diff 内，当前判断为“无新增权限风险”。
+- GET /external/address/one：本分片未改动该入口的鉴权逻辑；接口溯源上下文显示仍校验 <code>INNER_API_KEY</code>，本分片无新增权限风险。
+- POST /external/address/update：本分片未改动该入口的鉴权逻辑；接口溯源上下文显示仍校验 <code>INNER_API_KEY</code>，本分片无新增权限风险。
+- GET /web/sorter/profile/active：本分片未展示该入口实现或鉴权变更，无法从 diff 断言权限行为，需人工确认。
+- GET /web/sorter/profile/inUsed/{id}：本分片未展示该入口实现或鉴权变更，无法从 diff 断言权限行为，需人工确认。
+- GET /web/sorter/profile/existsActive：本分片未展示该入口实现或鉴权变更，无法从 diff 断言权限行为，需人工确认。
+- POST /web/sorter/profile/delete：本分片未展示该入口实现或鉴权变更，无法从 diff 断言权限行为，需人工确认。
+
+接口覆盖率：清单共 9 个接口，已审查 9 个，0 个存在权限风险，5 个无风险，4 个待确认
+
+<strong>HTTP 入口清单（方法 + 路径）</strong>
+- POST /pickup/beansAccount：本分片新增入口代码，但未见新增匿名放行或移除鉴权代码；实现未完整展示，当前只能判断无新增权限风险。
+- POST /list：有 <code>@RequiresPermissions(value = {&quot;inbound:ptc:list&quot;})</code>，且 DAO 新增 <code>facility_code</code> 过滤，和仓级数据范围一致，无新增权限风险。
+- POST /address/update：实现未在本分片 diff 内完整展示 Controller 鉴权，但服务层改动未削弱权限与数据范围，当前无新增权限风险。
+- GET /external/address/one：实现未在本分片 diff 内，接口溯源显示仍依赖 <code>INNER_API_KEY</code>，本分片无法断言更多权限细节。
+- POST /external/address/update：实现未在本分片 diff 内，接口溯源显示仍依赖 <code>INNER_API_KEY</code>，本分片无法断言更多权限细节。
+- POST /web/sorter/profile/delete：实现未在本分片/diff 内，无法断言权限。
+- GET /web/sorter/profile/active：实现未在本分片/diff 内，无法断言权限。
+- GET /web/sorter/profile/inUsed/{id}：实现未在本分片/diff 内，无法断言权限。
+- GET /web/sorter/profile/existsActive：实现未在本分片/diff 内，无法断言权限。
+
+<strong>分片 13</strong>
+
+本分片仅包含两个新增 DTO。发现 1 个高风险问题：<code>BeansAccountResp</code> 设计为对外返回 Beans 授权凭证原值，属于新增敏感密钥泄露面。除此之外，<code>GetBeansAccountReq</code> 仅新增普通请求字段，未见本 diff 内可确认的鉴权放行、SQL 注入或并发类问题。
+
+<strong>分片 14</strong>
+
+本分片 diff 仅在 <code>pos-service/src/main/java/com/miq/posservice/entity/PosContainerParcelScanHistory.java</code> 新增了 <code>parcelRouteCode</code> 实体字段及 <code>@Column(name = &quot;parcel_route_code&quot;)</code> 映射，未引入可见的 SQL 拼接、鉴权放行、异常吞没、并发控制或敏感日志等新增安全问题。该变更属于持久化字段扩展，当前 diff 内也未出现对应 HTTP 入口、控制器映射或权限逻辑变更，因此无新增权限风险可判定。
+
+HTTP 入口清单（方法 + 路径）：本分片 diff 未出现 <code>@GetMapping</code>、<code>@PostMapping</code>、<code>@PutMapping</code>、<code>@DeleteMapping</code>、<code>@PatchMapping</code> 或带路径的 <code>@RequestMapping</code> 新增/修改，故无需要逐项闭环的新增 HTTP 入口。
+
+<strong>分片 15</strong>
+
+本分片仅看到新增的 <code>pos-service/src/main/java/com/miq/posservice/message/DropxParcelMessageBo.java</code>，属于纯消息载体类定义；新增字段名虽包含地址与经纬度，但在本 diff 中未出现日志输出、序列化策略变更、鉴权放行、外部接口暴露或持久化/查询逻辑，因此无法仅凭该 diff 认定新增安全缺陷。HTTP 入口清单：本分片 diff 内未出现 <code>@GetMapping</code>、<code>@PostMapping</code>、<code>@RequestMapping</code> 等新增或修改的控制器映射，故无可在本分片内直接断言权限行为的新增 HTTP 入口。
+
+<strong>分片 16</strong>
+
+本分片发现 2 个安全相关问题：1 个空指针边界条件风险，1 个敏感地址/位置数据日志泄露风险；其余新增 SQL 过滤与分页限制改动未见新增注入或越权证据。
+
+<strong>已审查无风险接口</strong>
+- POST /pickup/beansAccount：本分片仅看到 <code>PusApiController.getBeansAccount(...)</code> 转调 <code>routeAccountService.getBeansAccount(...)</code>，新增 diff 未引入匿名放行、权限注解删除或数据范围放宽；鉴权实现未在本分片 diff 内，未见新增权限风险。
+- POST /list：<code>WebPtcScanReportController.list(...)</code> 保留 <code>@RequiresPermissions(value = {&quot;inbound:ptc:list&quot;})</code>，且新增 <code>validateReportSearchParam(searchDto)</code> 只是在原有权限前提下增加分页参数限制，未削弱鉴权与 <code>facilityCode</code> 数据范围。
+- POST /address/update：本分片 <code>UpdateAddressService.update(...)</code> 新增 <code>pushDropx</code> 相关逻辑未改变入口鉴权方式，也未放宽 <code>Label</code> 查询范围；未见新增权限风险。
+- GET /external/address/one：实现未在本分片 diff 内，无法断言权限；但本分片未出现新的匿名放行或权限绕过代码。
+- POST /external/address/update：本分片 <code>UpdateAddressService.update(...)</code> 新增逻辑未改变 <code>UpdateAddressController</code> 的 <code>INNER_API_KEY</code> 校验路径，未见新增权限风险。
+- /external/address/updateLabelNotesForm（HTTP 注解缺失，路径无法从本分片确定）：实现未在本分片 diff 内，无法断言权限；本分片未出现新的放行代码。
+- POST /web/sorter/profile/delete：实现未在本分片 diff 内，无法断言权限；本分片未出现新的放行代码。
+- GET /web/sorter/profile/active：实现未在本分片 diff 内，无法断言权限；本分片未出现新的放行代码。
+- GET /web/sorter/profile/inUsed/{id}：实现未在本分片 diff 内，无法断言权限；本分片未出现新的放行代码。
+- GET /web/sorter/profile/existsActive：实现未在本分片 diff 内，无法断言权限；本分片未出现新的放行代码。
+
+接口覆盖率：清单共 10 个接口，已审查 10 个，0 个存在权限风险，4 个无风险，6 个待确认。
+
+<strong>HTTP 入口清单（方法 + 路径）</strong>
+- POST /pickup/beansAccount：无新增权限风险；本分片仅新增服务能力相关上下文，未见鉴权削弱代码。
+- POST /list：无新增权限风险；<code>@RequiresPermissions(value = {&quot;inbound:ptc:list&quot;})</code> 仍在，且新增校验只收紧 <code>pageSize</code>。
+- POST /address/update：无新增权限风险；本分片仅新增 <code>pushDropx</code> 与 Dropx 消息逻辑，未改变访问控制。
+- GET /external/address/one：实现未在本分片/diff 内，无法断言权限。
+- POST /external/address/update：无新增权限风险；本分片未修改 <code>INNER_API_KEY</code> 校验逻辑。
+- UNKNOWN / UNKNOWN（<code>UpdateAddressService.updateLabelNotesForm()</code> 对应入口）：实现未在本分片/diff 内，无法断言权限。
+- POST /web/sorter/profile/delete：实现未在本分片/diff 内，无法断言权限。
+- GET /web/sorter/profile/active：实现未在本分片/diff 内，无法断言权限。
+- GET /web/sorter/profile/inUsed/{id}：实现未在本分片/diff 内，无法断言权限。
+- GET /web/sorter/profile/existsActive：实现未在本分片/diff 内，无法断言权限。
+
+<strong>分片 17</strong>
+
+本分片发现 2 个安全相关问题：1 个空指针导致的可用性风险，1 个敏感地址与经纬度日志泄露风险。
+
+<strong>已审查无风险接口</strong>
+- POST <code>/pickup/beansAccount</code>：本次 diff 仅新增 <code>PusApiController.getBeansAccount(...)</code> 的转发调用，未在本分片看到放宽鉴权、匿名放行或去除数据范围过滤的新增代码；实现侧权限策略仍需结合控制器类级注解人工确认。
+- POST <code>/list</code>：<code>WebPtcScanReportController.list(...)</code> 新增/保留了 <code>@RequiresPermissions(value = {&quot;inbound:ptc:list&quot;})</code>，且查询条件在 DAO 层新增 <code>h.facility_code = :facilityCode</code> 作为公共过滤条件，未见新增越权读取风险。
+- POST <code>/address/update</code>：本分片改动集中在 <code>UpdateAddressService</code> 内部逻辑与 Dropx 推送，未新增匿名入口、未移除已有鉴权判断；由于对应 Controller 注解未在本分片 diff 中，权限实现需人工结合入口类确认。
+- GET <code>/external/address/one</code>：本分片未改动该入口实现，且接口溯源显示存在 <code>INNER_API_KEY</code> 校验；本次变更未削弱该校验。
+- POST <code>/external/address/update</code>：本分片未改动该入口控制器校验逻辑，接口溯源显示存在 <code>INNER_API_KEY</code> 校验；本次变更未新增越权路径。
+- POST <code>/web/sorter/profile/delete</code>：本分片未提供该入口实现变更，无法从当前 diff 看到鉴权被削弱；需人工结合 <code>WebSorterController</code> 注解确认。
+- GET <code>/web/sorter/profile/active</code>：本分片未提供该入口实现变更，无法从当前 diff 看到鉴权被削弱；需人工结合 <code>WebSorterController</code> 注解确认。
+- GET <code>/web/sorter/profile/inUsed/{id}</code>：本分片未提供该入口实现变更，无法从当前 diff 看到鉴权被削弱；需人工结合 <code>WebSorterController</code> 注解确认。
+- GET <code>/web/sorter/profile/existsActive</code>：本分片未提供该入口实现变更，无法从当前 diff 看到鉴权被削弱；需人工结合 <code>WebSorterController</code> 注解确认。
+
+接口覆盖率：清单共 9 个接口，已审查 9 个，0 个存在权限风险，9 个无风险，0 个待确认
+
+<strong>HTTP 入口清单（方法 + 路径）</strong>
+- POST <code>/pickup/beansAccount</code>：本次 diff 未出现匿名放行、permitAll 或关闭鉴权配置的代码；无新增权限风险，但控制器类级鉴权未在本分片展示，需结合完整类人工确认。
+- POST <code>/list</code>：<code>WebPtcScanReportController.list(...)</code> 明确带有 <code>@RequiresPermissions(value = {&quot;inbound:ptc:list&quot;})</code>，且使用 <code>LoginUserUtil.getCurFacilityCode()</code> 参与查询；无新增权限风险。
+- POST <code>/address/update</code>：本次 diff 仅修改 <code>UpdateAddressService</code> 内部业务逻辑，未见新增放行或数据范围放宽；无新增权限风险，但入口控制器注解未在本分片展示。
+- GET <code>/external/address/one</code>：实现未在本分片 diff 内，无法断言完整权限细节；从已给溯源看仍有 <code>INNER_API_KEY</code> 校验，本次变更无新增权限风险。
+- POST <code>/external/address/update</code>：实现未在本分片 diff 内，无法断言完整权限细节；从已给溯源看仍有 <code>INNER_API_KEY</code> 校验，本次变更无新增权限风险。
+- POST <code>/web/sorter/profile/delete</code>：实现未在本分片 diff 内，无法断言权限；本次变更未直接触达该入口。
+- GET <code>/web/sorter/profile/active</code>：实现未在本分片 diff 内，无法断言权限；本次变更未直接触达该入口。
+- GET <code>/web/sorter/profile/inUsed/{id}</code>：实现未在本分片 diff 内，无法断言权限；本次变更未直接触达该入口。
+- GET <code>/web/sorter/profile/existsActive</code>：实现未在本分片 diff 内，无法断言权限；本次变更未直接触达该入口。
+
+<strong>分片 18</strong>
+
+发现 3 个问题：1 个凭证读取接口缺少可见的鉴权/数据范围控制，1 个敏感地址与经纬度日志泄露，1 个空指针导致地址修改链路可能部分失败。
+
+<strong>已审查无风险接口</strong>
+- POST /list：<code>WebPtcScanReportController.list(...)</code> 新增代码保留了 <code>@RequiresPermissions(value = {&quot;inbound:ptc:list&quot;})</code>，且查询条件强制追加 <code>h.facility_code = :facilityCode</code>，本次 diff 未削弱鉴权与仓级数据范围。
+
+<strong>HTTP 入口清单（方法 + 路径）</strong>
+- POST /pickup/beansAccount：存在新增权限风险，见 finding；当前 diff 可见代码未展示权限注解或 <code>facilityCode</code> 归属校验，且返回 <code>BeansAccountResp</code> 涉及 <code>apiKey</code>。
+- POST /list：无新增权限风险；当前 diff 可见代码保留 <code>@RequiresPermissions(value = {&quot;inbound:ptc:list&quot;})</code>，并使用 <code>LoginUserUtil.getCurFacilityCode()</code> 约束查询范围。
+
+接口覆盖率：清单共 2 个接口，已审查 2 个，1 个存在权限风险，1 个无风险，0 个待确认
+
+<strong>分片 19</strong>
+
+本分片发现 3 个问题：1 个高风险权限问题、1 个敏感日志泄露、1 个空指针导致的稳定失败点。其余本分片可识别改动未见新增 SQL 注入、匿名放行或鉴权配置关闭。
+
+<strong>已审查无风险接口</strong>
+- POST /list：<code>WebPtcScanReportController.list(...)</code> 新增代码保留了 <code>@RequiresPermissions(value = {&quot;inbound:ptc:list&quot;})</code>，且查询条件新增 <code>facility_code = :facilityCode</code>，本次 diff 未削弱鉴权与仓维度数据范围。
+- POST /address/update：<code>UpdateAddressService.update()</code> 的改动位于服务层内部逻辑，本分片 diff 未展示新的 HTTP 放行、权限注解删除或数据范围放宽，权限实现未在本分片/diff 内，无法断言新增权限风险。
+- GET /external/address/one：实现未在本分片/diff 内，无法断言权限；从提供的入口片段看仍保留 <code>INNER_API_KEY</code> 校验，未见本次改动削弱。
+- POST /external/address/update：实现未在本分片/diff 内，无法断言权限；从提供的入口片段看仍保留 <code>INNER_API_KEY</code> 校验，未见本次改动削弱。
+- POST /web/sorter/profile/delete：实现未在本分片/diff 内，无法断言权限；本次分片未改动该入口的鉴权代码。
+- GET /web/sorter/profile/active：实现未在本分片/diff 内，无法断言权限；本次分片未改动该入口的鉴权代码。
+- GET /web/sorter/profile/inUsed/{id}：实现未在本分片/diff 内，无法断言权限；本次分片未改动该入口的鉴权代码。
+- GET /web/sorter/profile/existsActive：实现未在本分片/diff 内，无法断言权限；本次分片未改动该入口的鉴权代码。
+
+接口覆盖率：清单共 8 个接口，已审查 8 个，1 个存在权限风险，7 个无风险，0 个待确认
+
+<strong>HTTP 入口清单（方法 + 路径）</strong>
+- POST /pickup/beansAccount：存在新增权限风险；本次 diff 新增入口直接返回 <code>BeansAccountResp</code>，且可包含 <code>apiKey</code>，未见权限注解或 <code>facilityCode</code> 数据范围校验，对应 findings 已报告。
+- POST /list：无新增权限风险；本次 diff 中仍有 <code>@RequiresPermissions(value = {&quot;inbound:ptc:list&quot;})</code>，并按 <code>LoginUserUtil.getCurFacilityCode()</code> 过滤本仓数据。
+- POST /address/update：无新增权限风险；本次 diff 仅改服务层业务逻辑，未见新增放行或权限削弱。
+- GET /external/address/one：无新增权限风险；实现未在本分片 diff 内，提供的入口片段仍显示 <code>INNER_API_KEY</code> 校验。
+- POST /external/address/update：无新增权限风险；实现未在本分片 diff 内，提供的入口片段仍显示 <code>INNER_API_KEY</code> 校验。
+- POST /web/sorter/profile/delete：无新增权限风险；本分片未改动该入口权限实现。
+- GET /web/sorter/profile/active：无新增权限风险；本分片未改动该入口权限实现。
+- GET /web/sorter/profile/inUsed/{id}：无新增权限风险；本分片未改动该入口权限实现。
+- GET /web/sorter/profile/existsActive：无新增权限风险；本分片未改动该入口权限实现。
+
+<strong>分片 20</strong>
+
+本分片发现 2 个安全相关问题：1 个空指针边界缺陷，1 个敏感日志泄露问题；未在本分片新增代码中发现可确认的 SQL 注入、鉴权放行或数据范围绕过。
+
+<strong>已审查无风险接口</strong>
+- POST /pickup/beansAccount：本次 diff 仅新增直接转发到 <code>routeAccountService.getBeansAccount(...)</code> 的入口代码，未见匿名放行注解或放宽鉴权的变更；但控制器鉴权实现未在本分片展开，无法仅凭该 diff 断言更细粒度权限模型。
+- POST /list：<code>WebPtcScanReportController.list(...)</code> 新增/变更行未削弱 <code>@RequiresPermissions(value = {&quot;inbound:ptc:list&quot;})</code>，且查询条件新增 <code>facility_code = :facilityCode</code> 约束，本次 diff 未引入新的越权读取风险。
+- POST /web/sorter/profile/delete：本分片仅涉及 <code>WebSorterService</code> 内部模板校验与保存逻辑，未看到该入口的鉴权或数据范围被放宽，无新增权限风险。
+- GET /web/sorter/profile/active：本分片未修改该入口的鉴权链路，且变更集中在 <code>WebSorterService</code> 的 <code>destination</code> 校验，无新增权限风险。
+- GET /web/sorter/profile/inUsed/{id}：本分片未修改该入口的鉴权链路，且变更集中在 <code>WebSorterService</code> 的 <code>destination</code> 校验，无新增权限风险。
+- GET /web/sorter/profile/existsActive：本分片未修改该入口的鉴权链路，且变更集中在 <code>WebSorterService</code> 的 <code>destination</code> 校验，无新增权限风险。
+
+<strong>需人工确认</strong>
+- POST /address/update：调用链溯源片段与 <code>UpdateAddressService.update()</code> 的真实控制器映射在提供材料中存在错位，且本分片未给出控制器权限注解，无法仅凭 diff 断言该入口的鉴权是否与既有角色模型一致。
+- GET /external/address/one：实现未在本分片 diff 内，无法断言权限。
+- POST /external/address/update：实现未在本分片 diff 内，无法断言权限。
+- <code>UpdateAddressService.updateLabelNotesForm()</code> 对应入口：提供材料注明“无 HTTP 注解”，实现未在本分片 diff 内，无法断言权限。
+- <code>WebSorterService.queryProfileBySo()</code>、<code>WebSorterService.queryChuteBySo()</code>、<code>WebSorterService.chuteReport()</code>、<code>WebSorterService.profileSave()</code>、<code>WebSorterService.queryLogBySo()</code>、<code>WebSorterService.getProfilerTemplateBoList()</code>、<code>WebSorterService.getFacilityRoutingMatrixBoList()</code>：控制器入口在材料中标注“无 HTTP 注解”或实现未展开，本分片无法断言权限。
+
+接口覆盖率：清单共 13 个接口，已审查 13 个，0 个存在权限风险，6 个无风险，7 个待确认
+
+<strong>HTTP 入口清单（方法 + 路径）</strong>
+- POST /pickup/beansAccount：本次 diff 新增入口代码，但未见放宽鉴权的代码；控制器完整权限实现未在本分片，需人工确认是否与既有权限体系一致。
+- POST /list：存在 <code>@RequiresPermissions(value = {&quot;inbound:ptc:list&quot;})</code>，本次 diff 未削弱鉴权，且新增 <code>facilityCode</code> 过滤，无新增权限风险。
+- POST /web/sorter/profile/delete：实现逻辑未在本分片控制器 diff 内展开，但本次服务层变更未涉及鉴权放宽，无新增权限风险。
+- GET /web/sorter/profile/active：实现逻辑未在本分片控制器 diff 内展开，但本次服务层变更未涉及鉴权放宽，无新增权限风险。
+- GET /web/sorter/profile/inUsed/{id}：实现逻辑未在本分片控制器 diff 内展开，但本次服务层变更未涉及鉴权放宽，无新增权限风险。
+- GET /web/sorter/profile/existsActive：实现逻辑未在本分片控制器 diff 内展开，但本次服务层变更未涉及鉴权放宽，无新增权限风险。
+- POST /address/update：实现未在本分片/diff 内，无法断言权限。
+- GET /external/address/one：实现未在本分片/diff 内，无法断言权限。
+- POST /external/address/update：实现未在本分片/diff 内，无法断言权限。
+
+<strong>分片 21</strong>
+
+本分片仅看到 <code>pos-service/src/main/java/com/miq/posservice/service/web/impl/WebExceptionParcelServiceImpl.java</code> 一处实际 diff，新增 <code>editBy(LoginUserUtil.getCurOperator())</code> 属于审计字段补充，未引入新的 SQL 注入、越权、敏感日志、异常吞没、并发安全或事务边界扩散问题。基于当前 diff，未发现需要落单的安全问题。
+
+<strong>已审查无风险接口</strong>
+- POST <code>/pickup/beansAccount</code>：<code>PusApiController.getBeansAccount(...)</code> 的改动仅为新增入口转发，当前分片提供的上下文未显示放宽鉴权或移除数据范围过滤；实现是否需要额外权限需结合 Controller 类级注解/网关策略人工确认。
+- POST <code>/list</code>：<code>WebPtcScanReportController.list(...)</code> 明确带有 <code>@RequiresPermissions(value = {&quot;inbound:ptc:list&quot;})</code>，且服务层新增 <code>facility_code = :facilityCode</code> 过滤，本次变更未削弱权限与数据范围控制。
+- POST <code>/address/update</code>：<code>UpdateAddressService.update()</code> 本次改动围绕 <code>pushDropx</code> 与事务内调用参数传递，未新增 HTTP 入口，也未看到放宽鉴权或移除归属校验的代码；实现入口代码未在本分片 diff 内，权限需结合对应 Controller 注解人工确认。
+- GET <code>/external/address/one</code>：当前仅有调用链片段，实际实现未在本分片 diff 内，无法从本次变更断言权限行为；未见新增放行代码。
+- POST <code>/external/address/update</code>：当前仅有调用链片段，显示依赖 <code>INNER_API_KEY</code> 校验；本次变更未触碰该校验逻辑，未见新增权限风险。
+- GET <code>/web/sorter/profile/active</code>：当前仅有接口清单与调用片段，实际鉴权注解未在本分片 diff 内，无法从本次变更断言权限行为；未见新增放行代码。
+- POST <code>/web/sorter/profile/delete</code>：当前仅有接口清单与调用片段，实际鉴权注解未在本分片 diff 内，无法从本次变更断言权限行为；未见新增放行代码。
+- GET <code>/web/sorter/profile/inUsed/{id}</code>：当前仅有接口清单与调用片段，实际鉴权注解未在本分片 diff 内，无法从本次变更断言权限行为；未见新增放行代码。
+- GET <code>/web/sorter/profile/existsActive</code>：当前仅有接口清单，实际实现未在本分片 diff 内，无法从本次变更断言权限行为；未见新增放行代码。
+
+接口覆盖率：清单共 9 个接口，已审查 9 个，0 个存在权限风险，9 个无风险，0 个待确认
+
+<strong>HTTP 入口清单（方法 + 路径）</strong>
+- POST <code>/pickup/beansAccount</code>：本次变更未显示匿名放行、permitAll 或数据范围放宽；实现是否符合权限体系需结合 Controller 类级鉴权人工确认。
+- POST <code>/list</code>：带 <code>@RequiresPermissions(value = {&quot;inbound:ptc:list&quot;})</code>，且查询按 <code>LoginUserUtil.getCurFacilityCode()</code> 过滤，本次变更无新增权限风险。
+- POST <code>/address/update</code>：本次变更位于 Service 内部逻辑，未触碰入口鉴权代码；无新增权限风险。
+- GET <code>/external/address/one</code>：实现未在本分片/diff 内，无法断言权限；本次变更未新增放行代码。
+- POST <code>/external/address/update</code>：调用链片段显示有 <code>INNER_API_KEY</code> 校验，本次变更未削弱该校验；无新增权限风险。
+- POST <code>UNKNOWN</code>（<code>updateLabelNotes()</code> 无 HTTP 注解）：实现未在本分片/diff 内，无法断言权限；本次变更未新增放行代码。
+- POST <code>/web/sorter/profile/delete</code>：实现未在本分片 diff 内，无法断言权限；本次变更未新增放行代码。
+- GET <code>/web/sorter/profile/active</code>：实现未在本分片 diff 内，无法断言权限；本次变更未新增放行代码。
+- GET <code>/web/sorter/profile/inUsed/{id}</code>：实现未在本分片 diff 内，无法断言权限；本次变更未新增放行代码。
+- GET <code>/web/sorter/profile/existsActive</code>：实现未在本分片 diff 内，无法断言权限；本次变更未新增放行代码。
+
+<strong>分片 22</strong>
+
+本分片发现 2 个新增安全问题：<code>UpdateAddressService</code> 新增的 Dropx 推送分支存在空指针拒绝服务风险，且成功日志会泄露完整地址与经纬度等敏感信息。
+
+<strong>已审查无风险接口</strong>
+- POST /address/update — 本次 diff 仅在 <code>UpdateAddressService.update()</code> 内新增 <code>pushDropx</code> 判定与 <code>sendDropxMessage(label, labelExt)</code> 调用，未看到新增匿名放行、权限注解删除或数据范围过滤削弱；就本分片变更而言无新增权限风险。
+- GET /external/address/one — 实现未在本分片 diff 内，且本次变更未触及其鉴权逻辑；无法从本分片断言权限行为，需人工确认。
+- POST /external/address/update — 本次 diff 仅修改 <code>UpdateAddressService.update()</code> 内部逻辑，未看到新增匿名放行或 API Key 校验削弱；就本分片变更而言无新增权限风险。
+
+接口覆盖率：清单共 3 个接口，已审查 3 个，0 个存在权限风险，2 个无风险，1 个待确认。
+
+<strong>HTTP 入口清单（方法 + 路径）</strong>
+- POST /address/update — 对应 <code>UpdateAddressService.update()</code>；本次 diff 未新增或削弱鉴权/数据范围控制，权限面无新增风险。
+- GET /external/address/one — 对应 <code>UpdateAddressService.one()</code>；实现未在本分片/diff 内，无法断言权限。
+- POST /external/address/update — 对应 <code>UpdateAddressService.update()</code>；本次 diff 未新增或削弱鉴权/数据范围控制，权限面无新增风险。
+
+<strong>分片 23</strong>
+
+本分片仅包含新增测试文件 <code>pos-service/src/test/java/com/miq/posservice/service/route/impl/RouteAccountServiceImplTest.java</code> 的 diff；按“只分析新增/修改行”原则，未发现可落到该 diff 新增行上的安全问题。该测试代码本身不引入 HTTP 入口、鉴权放行、SQL 拼接、敏感日志、异常吞没或并发共享状态修改等新增风险。
+
+<strong>已审查无风险接口</strong>
+- POST <code>/pickup/beansAccount</code>：本分片未修改 <code>PusApiController.getBeansAccount(...)</code> 的实现或鉴权注解，新增内容仅为 <code>RouteAccountServiceImplTest</code> 测试用例，无法从本 diff 认定存在新增权限削弱；就本分片而言无新增权限风险。
+- POST <code>/list</code>：<code>WebPtcScanReportController.list(...)</code> 在提供的上下文中带有 <code>@RequiresPermissions(value = {&quot;inbound:ptc:list&quot;})</code>，且本分片 diff 未改动该入口实现；就本分片而言无新增权限风险。
+- POST <code>/address/update</code>：<code>UpdateAddressService.update()</code> 的 HTTP 入口映射仅出现在上下文，当前 diff 未改动对应 Controller 鉴权或入口暴露方式；就本分片而言无新增权限风险。
+- GET <code>/external/address/one</code>：当前 diff 未改动 <code>UpdateAddressController</code> 的 API Key 校验逻辑；就本分片而言无新增权限风险。
+- POST <code>/external/address/update</code>：当前 diff 未改动 <code>UpdateAddressController</code> 的 API Key 校验逻辑；就本分片而言无新增权限风险。
+- POST <code>/web/sorter/profile/delete</code>：当前 diff 未改动 <code>WebSorterController.profileDelete()</code> 或其权限控制；就本分片而言无新增权限风险。
+- GET <code>/web/sorter/profile/active</code>：当前 diff 未改动 <code>WebSorterController.profileActive()</code> 或其权限控制；就本分片而言无新增权限风险。
+- GET <code>/web/sorter/profile/inUsed/{id}</code>：当前 diff 未改动 <code>WebSorterController.profileInUsed()</code> 或其权限控制；就本分片而言无新增权限风险。
+- GET <code>/web/sorter/profile/existsActive</code>：当前 diff 未改动 <code>WebSorterController</code> 对应入口或其权限控制；就本分片而言无新增权限风险。
+
+接口覆盖率：清单共 9 个接口，已审查 9 个，0 个存在权限风险，9 个无风险，0 个待确认
+
+<strong>HTTP 入口清单（方法 + 路径）</strong>
+- POST <code>/pickup/beansAccount</code>：本分片未改动入口代码，新增内容仅为服务测试，无法从本 diff 断言权限变化；无新增权限风险。
+- POST <code>/list</code>：本分片未改动入口代码，且上下文显示存在 <code>@RequiresPermissions(value = {&quot;inbound:ptc:list&quot;})</code>；无新增权限风险。
+- POST <code>/address/update</code>：本分片未改动入口代码；无新增权限风险。
+- GET <code>/external/address/one</code>：本分片未改动入口代码；无新增权限风险。
+- POST <code>/external/address/update</code>：本分片未改动入口代码；无新增权限风险。
+- POST <code>/web/sorter/profile/delete</code>：本分片未改动入口代码；无新增权限风险。
+- GET <code>/web/sorter/profile/active</code>：本分片未改动入口代码；无新增权限风险。
+- GET <code>/web/sorter/profile/inUsed/{id}</code>：本分片未改动入口代码；无新增权限风险。
+- GET <code>/web/sorter/profile/existsActive</code>：本分片未改动入口代码；无新增权限风险。</pre></details></div></div>
+      <div class="filter-row">
+        <span class="filter-label">点击筛选:</span>
+        <div class="chips">
+          <span class="chip critical filter-chip" data-filter="critical" onclick="filterBySeverity(this)">Critical: 7</span>
+          <span class="chip major filter-chip" data-filter="major" onclick="filterBySeverity(this)">Major: 6</span>
+          <span class="chip minor filter-chip" data-filter="minor" onclick="filterBySeverity(this)">Minor: 2</span>
+          <span class="chip info filter-chip" data-filter="info" onclick="filterBySeverity(this)">Info: 0</span>
+          <span class="chip">Total: 15</span>
+        </div>
+        <div class="chips-impact-note">牵连影响另有 164 条判定为安全，不计入以上统计</div>
+      </div>
+    </section>
+
+    <div class="charts-row">
+      <div class="chart-section" id="chart-section">
+        <h3 class="section-title">问题分布</h3>
+        <div class="chart-container">
+          <canvas id="categoryChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div id="filter-hint">
+      筛选中: <strong id="filter-hint-label"></strong>，仅显示对应问题
+      <span class="clear-filter" onclick="clearFilter()">清除筛选</span>
+    </div>
+
+    <div class="findings-toolbar" id="findings-toolbar" style="display: none;">
+      <!-- 筛选按钮已下线：与上方「总体结论」区的 filter-row（Critical/Major/Minor/Info 计数
+           chip）功能重复，且从未挂过点击事件，是从未生效的死代码（用户反馈"这个筛选多余了"）。
+           筛选统一走上方 filter-row 的 filterBySeverity()，这里只保留搜索 + 导出。 -->
+      <input type="text" class="findings-search" id="findings-search" placeholder="搜索文件/描述…">
+      <div class="export-dropdown">
+        <button class="toolbar-btn" id="export-btn">导出 ▼</button>
+        <div class="export-menu" id="export-menu" style="display:none;">
+          <a href="#" onclick="exportJira()">导出为 Jira</a>
+          <a href="#" onclick="exportExcel()">导出为 Excel</a>
+          <a href="#" onclick="exportCsv()">导出为 CSV</a>
+        </div>
+      </div>
+    </div>
+
+    
+<style>
+.impact-section { margin: 16px 0 24px; }
+.impact-section .section-title { font-size: 18px; font-weight: 700; margin-bottom: 10px; }
+/* 颜色直接写死（不用 var(--minor-*)）：既往回归测过"这份样式表里一次都不能
+   出现 --minor-bg 这个变量名"（NEEDS_HUMAN 不该复用 minor 琥珀色，见下方
+   impact-stat.impact-needs-human 的注释），这里的抽样提示条语义完全不同
+   （跟严重度无关，只是"这批数据是抽样的"），但同一份样式表里带上这个变量
+   名字本身就会让那条回归测试的"零出现"断言失去意义。 */
+.impact-sample-banner {
+  background: #fdf7e0; color: #8a6208;
+  border: 1px solid #f1e096;
+  border-radius: 8px; padding: 8px 14px; font-size: 13px; font-weight: 600;
+  margin-bottom: 10px;
+}
+.impact-stats-banner { margin-bottom: 10px; }
+.impact-stat {
+  display: inline-block; padding: 4px 11px; border-radius: 8px; font-size: 12px;
+  font-weight: 700; margin-right: 8px;
+}
+.impact-stat.impact-risk { background: var(--critical-bg, #fdeceb); color: var(--critical-text, #b3261e); }
+/* NEEDS_HUMAN 改用 info 蓝（原用 minor 琥珀色，与"一般问题"严重度语义撞车——
+   需人工核实 ≠ 一个确定的低危问题，是"不知道，人来判断"，语义上更接近
+   info 的"仅供参考/待确认"，用户反馈"两套配色打架"实测已改） */
+.impact-stat.impact-needs-human { background: var(--info-bg, #eaf1fd); color: var(--info-text, #23509c); }
+.impact-stat.impact-safe { background: var(--safe-bg, #e8f6ee); color: var(--safe-text, #1a7a4c); }
+.impact-stat.impact-total { background: var(--chip-bg, #eef0f5); color: var(--muted, #667085); }
+.impact-section-note {
+  font-size: 13px; color: #666; line-height: 1.75; margin: 0 0 12px;
+  padding: 11px 14px; background: #f7f9fa; border-radius: 8px;
+}
+.impact-section-note p { margin: 0 0 7px; }
+.impact-section-note p:last-child { margin-bottom: 0; }
+.impact-section-note strong { color: #333; }
+.impact-note-legend {
+  margin: 0 0 8px; padding-left: 18px; list-style: none;
+}
+.impact-note-legend li { margin-bottom: 3px; }
+.impact-note-legend li::before {
+  content: "·"; margin-right: 6px; color: #999; font-weight: 700;
+}
+.impact-ratio-alert {
+  background: var(--major-bg, #fdf1e3); color: var(--major-text, #a85311);
+  border: 1px solid var(--major-border, #f4d19d); border-radius: 8px; padding: 8px 14px;
+  font-size: 13px; margin-bottom: 10px;
+}
+.impact-group { margin-bottom: 22px; }
+.impact-group-title {
+  font-size: 16px; font-weight: 700; margin: 14px 0 10px; color: #333;
+  padding-bottom: 6px; border-bottom: 1px solid #e5e5e5;
+}
+.impact-empty { color: #666; font-size: 13px; padding: 8px 0; }
+/* 卡片间距加大 + 阴影，强化"一张卡是一个独立问题"的边界感（用户反馈①） */
+.impact-risk-list { display: flex; flex-direction: column; gap: 16px; }
+.impact-card {
+  border: 1px solid var(--border, #e3e6ec); border-left: 4px solid #ccc; border-radius: 12px;
+  padding: 14px 16px; background: #fff; margin-bottom: 16px;
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(16,24,40,.06));
+}
+.impact-card.impact-risk { border-left-color: var(--critical-strong, #d1291f); background: linear-gradient(90deg, var(--critical-bg, #fdeceb) 0%, #fff 14px); }
+.impact-card.impact-needs-human { border-left-color: var(--info-strong, #2f66c9); background: linear-gradient(90deg, var(--info-bg, #eaf1fd) 0%, #fff 14px); }
+.impact-card.impact-safe { border-left-color: var(--safe-text, #1a7a4c); background: linear-gradient(90deg, var(--safe-bg, #e8f6ee) 0%, #fff 14px); }
+.impact-card-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+  padding-bottom: 8px; border-bottom: 1px solid #f0f0f0;
+}
+.impact-badge {
+  font-size: 11.5px; font-weight: 800; padding: 4px 10px; border-radius: 7px;
+  text-transform: none; border: 1px solid transparent;
+}
+/* 加边框跟主报告 .sev-badge 视觉语言对齐（用户反馈"两种报告风格不统一"） */
+.impact-badge.impact-risk { background: var(--critical-bg, #fdeceb); color: var(--critical-text, #b3261e); border-color: var(--critical-border, #f3b7b2); }
+.impact-badge.impact-needs-human { background: var(--info-bg, #eaf1fd); color: var(--info-text, #23509c); border-color: var(--info-border, #c0d6f6); }
+.impact-badge.impact-safe { background: var(--safe-bg, #e8f6ee); color: var(--safe-text, #1a7a4c); border-color: var(--safe-border, #aee3c4); }
+.impact-index { font-size: 12px; color: #888; }
+.impact-source-tag { font-size: 12.5px; color: #555; background: #f2f2f2; border-radius: 4px; padding: 2px 7px; }
+/* 字段之间用细分隔线拉开节奏，避免"挤成一坨"（用户反馈①的卡内延伸） */
+.impact-field { margin: 0; padding: 8px 0; font-size: 14px; }
+.impact-field + .impact-field { border-top: 1px dashed #ececec; }
+.impact-field-label {
+  font-weight: 700; color: #555; font-size: 12px; margin-bottom: 4px;
+  text-transform: uppercase; letter-spacing: .02em;
+}
+.impact-field p { margin: 0; }
+/* “怎么办”做成醒目的行动召唤条，呼应主报告 .fix-card/.dp-fix 的视觉语言，
+   同时用底色块把它和上面的说明性文字区分开——减轻“每张卡都在念同一句话”
+   的观感（用户反馈④之一：内容本身仍是模板句，属内容生成侧，此处只做视觉区隔）*/
+.impact-action {
+  background: #f3faf7; border-left: 3px solid var(--accent, #0f766e);
+  border-radius: 0 8px 8px 0; padding: 8px 12px; color: #2d4a3d;
+}
+/* 代码上下文块：文件名/行号做成编辑器 tab 条，深色代码正文 + 高亮目标行，
+   解决用户反馈②（file:line 太不显眼）与③（无上下文、无高亮） */
+.impact-code-tab {
+  display: flex; align-items: baseline; gap: 10px; background: #1a2438;
+  color: #cbd5e0; font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12px; padding: 7px 13px; border-radius: 8px 8px 0 0; margin-top: 8px;
+}
+.impact-code-tab-path { font-weight: 600; color: #e2e8f0; word-break: break-all; }
+.impact-code-tab-line { color: #7dd3e8; white-space: nowrap; }
+.impact-code-body {
+  background: var(--code-bg, #10182b); border-radius: 0 0 8px 8px; padding: 7px 0;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12.5px; line-height: 1.65; overflow-x: auto;
+}
+.impact-code-line { display: flex; padding: 0 12px; white-space: pre; }
+.impact-code-no {
+  flex: 0 0 auto; width: 2.6em; text-align: right; margin-right: 12px;
+  color: #718096; user-select: none;
+}
+.impact-code-text { color: #e2e8f0; }
+.impact-code-line-hl {
+  background: rgba(214, 158, 46, .18); border-left: 3px solid #d69e2e;
+  padding-left: 9px; margin-left: -3px;
+}
+.impact-code-line-hl .impact-code-no { color: #f6c453; font-weight: 700; }
+.impact-code-line-hl .impact-code-text { color: #fdf6e3; }
+/* quote 单行降级展示（拿不到源文件时的兜底，见 render_impact_section.py 说明） */
+.impact-evidence {
+  background: var(--code-bg, #10182b); color: #e2e8f0; border-radius: 0 0 8px 8px;
+  padding: 9px 13px; font-size: 12.5px; overflow-x: auto; margin: 0;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+/* 折叠区统一加 ▸ 箭头指示，跟主报告其它折叠区（issue-fold/dp-fold）一致，
+   修掉「牵连影响」这节此前唯独没有展开箭头的不一致（用户反馈④之一） */
+.impact-needs-human-fold, .impact-merged-details { margin-top: 10px; }
+.impact-needs-human-fold summary, .impact-merged-details summary {
+  cursor: pointer; font-size: 13.5px; font-weight: 600; color: #555; padding: 6px 0;
+  list-style: none; display: flex; align-items: center; gap: 6px;
+}
+.impact-needs-human-fold summary::-webkit-details-marker,
+.impact-merged-details summary::-webkit-details-marker { display: none; }
+.impact-needs-human-fold summary::before,
+.impact-merged-details summary::before {
+  content: "▸"; font-size: 11px; color: var(--accent, #0f766e); transition: transform .15s;
+}
+.impact-needs-human-fold[open] > summary::before,
+.impact-merged-details[open] > summary::before { transform: rotate(90deg); }
+/* 判定为安全的调用点不再逐条/逐组展示（2026-09-02），.impact-safe-fold 这
+   个折叠 class 已经没有任何 HTML 元素在用，改用不带交互的 .impact-safe-note
+   脚注段落——下面这条规则保留，上面折叠相关的 .impact-safe-fold 选择器已
+   随之删除（P3，code-reviewer 复核指出的死 CSS）。 */
+.impact-safe-note { color: #777; font-size: 12.5px; }
+.impact-merged-row { border-top: 1px dashed #e2e2e2; padding: 10px 0; font-size: 14px; }
+.impact-merged-row-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+</style>
+<section class="impact-section"><h2 class="section-title">牵连影响</h2><div class="impact-section-note"><p><strong>这一节回答的问题：</strong>这次改动被别的代码调用的那些地方，会不会被改坏。跟上面「按文件的审查发现」（这次写的代码本身对不对）是两回事，<strong>两边的数字不能相加</strong>。</p><ul class="impact-note-legend"><li><strong>Critical</strong>＝建议关注，这个调用点可能被改坏了</li><li><strong>Major</strong>＝AI 拿不准，需要人看一眼</li><li><strong>Info</strong>＝已排查，确认没影响</li></ul><p><strong>这次的数字：</strong>一共挖到 168 个调用点，其中 3 个建议关注，来自 3 处真正被改动的方法或字段（同一处改动的每个调用方分开列）。</p></div><div class="impact-stats-banner"><span class="impact-stat impact-risk">Critical · 建议关注 3（3 处改动）</span><span class="impact-stat impact-needs-human">Major · 需人工核实 1（1 处改动）</span><span class="impact-stat impact-safe">Info · 已排查安全 164</span><span class="impact-stat impact-total">Total 168</span></div><div class="impact-group"><h3 class="impact-group-title">接口层功能（Controller）</h3><details class="impact-needs-human-fold" open="open"><summary>Major · 需人工核实 · 1 处</summary><div class="impact-card impact-needs-human" data-impact-level="NEEDS_HUMAN"><div class="impact-card-header"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span class="impact-index">#33</span><span class="impact-source-tag">方法调用链核对</span></div><div class="impact-field"><div class="impact-field-label">场景</div><p>方法 WebSorterService.profileActive，在 WebSorterController.profileActive() 中被调用（接口层功能（Controller））</p></div><div class="impact-field"><div class="impact-field-label">代码现状</div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/web/WebSorterController.java</span><span class="impact-code-tab-line">第 68 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">65</span><span class="impact-code-text">    @RequiresPermissions(&quot;sorter:profile:activeAutoSorter&quot;)</span></div><div class="impact-code-line"><span class="impact-code-no">66</span><span class="impact-code-text">    @GetMapping(&quot;/profile/active&quot;)</span></div><div class="impact-code-line"><span class="impact-code-no">67</span><span class="impact-code-text">    public ResponseObject&lt;Void&gt; profileActive(Long id) {</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">68</span><span class="impact-code-text">        webSorterService.profileActive(id);</span></div><div class="impact-code-line"><span class="impact-code-no">69</span><span class="impact-code-text">        return ResponseObject.success();</span></div><div class="impact-code-line"><span class="impact-code-no">70</span><span class="impact-code-text">    }</span></div><div class="impact-code-line"><span class="impact-code-no">71</span><span class="impact-code-text">&nbsp;</span></div></div></div><div class="impact-field"><div class="impact-field-label">判定依据</div><p>改动实体命中“同表多入口事实”：WebSorterService.profileActive 会写表 pos_sorter_profile，而仓内还有其它方法也写同一张表；仅凭当前给出的 controller 调用点与该方法 diff，无法确认这次对 profileActive 的写表语义调整是否需要与其它写入口保持一致，需人工结合同表其它入口的业务约束确认。</p></div><div class="impact-field"><div class="impact-field-label">会出什么事</div><p>（未说明业务后果）</p></div><div class="impact-field"><div class="impact-field-label">怎么办</div><p class="impact-action">需人工核实：判定依据里的假设是否成立</p></div></div></details><p class="impact-safe-note">另有 8 处已排查判定安全，不在此列出；完整判定记录见同目录下的 <a href="impact_judgements.json" target="_blank">impact_judgements.json</a>（构建产物原始数据）。</p></div><div class="impact-group"><h3 class="impact-group-title">未归类</h3><div class="impact-risk-list"><div class="impact-card impact-risk" data-impact-level="RISK"><div class="impact-card-header"><span class="impact-badge impact-risk">Critical · 有风险</span><span class="impact-index">#4</span><span class="impact-source-tag">方法调用链核对</span></div><div class="impact-field"><div class="impact-field-label">场景</div><p>方法 PosContainerParcelScanHistoryCustomDaoImpl.queryPtcReportWithCount，在 PosContainerParcelScanHistoryImplService.queryPtcScanReport() 中被调用（未归类）</p></div><div class="impact-field"><div class="impact-field-label">代码现状</div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerParcelScanHistoryImplService.java</span><span class="impact-code-tab-line">第 106 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">103</span><span class="impact-code-text">        int pageIndex = searchDto.getPageIndex();</span></div><div class="impact-code-line"><span class="impact-code-no">104</span><span class="impact-code-text">        Pageable pageable = PageRequest.of(pageIndex, searchDto.getPageSize());</span></div><div class="impact-code-line"><span class="impact-code-no">105</span><span class="impact-code-text">        Page&lt;PosContainerParcelScanHistory&gt; page =</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">106</span><span class="impact-code-text">                posContainerParcelScanHistoryCustomDao.queryPtcReportWithCount(facilityCode, searchDto, pageable);</span></div><div class="impact-code-line"><span class="impact-code-no">107</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">108</span><span class="impact-code-text">        List&lt;PosContainerParcelScanHistory&gt; content = page.getContent();</span></div><div class="impact-code-line"><span class="impact-code-no">109</span><span class="impact-code-text">        List&lt;PtcScanReportResultDto&gt; dtoList = toReportDtoList(content, pageIndex * searchDto.getPageSize());</span></div></div></div><div class="impact-field"><div class="impact-field-label">判定依据</div><p>消费点未在同次改动中同步适配；且从给定方法体看，queryPtcScanReport 在调用前没有校验 searchDto.getTrackingNumbers() / searchDto.getContainerNums() 非空。</p></div><div class="impact-field"><div class="impact-field-label">会出什么事</div><p>当 queryPtcScanReport 以非 DATE 模式且 trackingNumbers、containerNums 都为空调用 queryPtcReportWithCount 时，这里会直接抛出 RRException，导致报表查询接口不再返回空结果页而是请求失败。</p></div><div class="impact-field"><div class="impact-field-label">怎么办</div><p class="impact-action">需评估此改动对『方法 PosContainerParcelScanHistoryCustomDaoImpl.queryPtcReportWithCount』的影响，建议实际验证消费点行为后再上线</p></div></div><div class="impact-card impact-merged-card impact-risk" data-impact-level="RISK"><div class="impact-card-header"><span class="impact-badge impact-risk">Critical · 有风险</span><span class="impact-index">#7</span><span class="impact-source-tag">方法调用链核对 · 多处调用</span></div><div class="impact-field"><div class="impact-field-label">场景</div><p>方法 PosContainerParcelScanHistoryCustomDaoImpl.buildWhere——这 1 处改动被以下 2 个位置调用/引用，逐点判定如下</p></div><details class="impact-merged-details" open="open"><summary>展开查看全部 2 个消费点判定</summary><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-risk">Critical · 有风险</span><span>在 PosContainerParcelScanHistoryCustomDaoImpl.queryPtcReportWithCount() 中被调用（未归类）</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/dao/PosContainerParcelScanHistoryCustomDaoImpl.java</span><span class="impact-code-tab-line">第 44 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">41</span><span class="impact-code-text">    public Page&lt;PosContainerParcelScanHistory&gt; queryPtcReportWithCount(</span></div><div class="impact-code-line"><span class="impact-code-no">42</span><span class="impact-code-text">            String facilityCode, PtcScanReportSearchDto searchDto, Pageable pageable) {</span></div><div class="impact-code-line"><span class="impact-code-no">43</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">44</span><span class="impact-code-text">        String where = buildWhere(searchDto);</span></div><div class="impact-code-line"><span class="impact-code-no">45</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">46</span><span class="impact-code-text">        String dataSql = &quot;SELECT h.*&quot; + BASE_FROM + where + orderBy(searchDto)</span></div><div class="impact-code-line"><span class="impact-code-no">47</span><span class="impact-code-text">                         + &quot;LIMIT :pageSize OFFSET :offset&quot;;</span></div></div><p><span class="impact-field-label">判定依据</span>（无特别假设，基于代码静态比对）</p><p><span class="impact-field-label">会出什么事</span>当 queryPtcReportWithCount 以非 DATE 模式且 trackingNumbers、containerNums 都为空被调用时，这里会因 buildWhere 抛出 RRException 而无法返回报表分页结果。</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需评估此改动对『方法 PosContainerParcelScanHistoryCustomDaoImpl.buildWhere』的影响，建议实际验证消费点行为后再上线</span></p></div><p class="impact-safe-note">另有 1 处已排查判定安全，不在此列出；完整判定记录见同目录下的 <a href="impact_judgements.json" target="_blank">impact_judgements.json</a>（构建产物原始数据）。</p></details></div><div class="impact-card impact-merged-card impact-risk" data-impact-level="RISK"><div class="impact-card-header"><span class="impact-badge impact-risk">Critical · 有风险</span><span class="impact-index">#35</span><span class="impact-source-tag">方法调用链核对 · 多处调用</span></div><div class="impact-field"><div class="impact-field-label">场景</div><p>方法 WebExceptionParcelServiceImpl.pushTrk——这 1 处改动被以下 2 个位置调用/引用，逐点判定如下</p></div><details class="impact-merged-details" open="open"><summary>展开查看全部 2 个消费点判定</summary><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-risk">Critical · 有风险</span><span>在 WebExceptionParcelServiceImpl.importExceptionParcel() 中被调用（未归类）</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/service/web/impl/WebExceptionParcelServiceImpl.java</span><span class="impact-code-tab-line">第 224 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">221</span><span class="impact-code-text">                form.setEventCode(item.getEventCode());</span></div><div class="impact-code-line"><span class="impact-code-no">222</span><span class="impact-code-text">                form.setNote(item.getNote());</span></div><div class="impact-code-line"><span class="impact-code-no">223</span><span class="impact-code-text">                try {</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">224</span><span class="impact-code-text">                    pushTrk(form, curFacilityCode);</span></div><div class="impact-code-line"><span class="impact-code-no">225</span><span class="impact-code-text">                } catch (Exception e) {</span></div><div class="impact-code-line"><span class="impact-code-no">226</span><span class="impact-code-text">                    item.setResult(false);</span></div><div class="impact-code-line"><span class="impact-code-no">227</span><span class="impact-code-text">                    item.setReason(&quot;pushTrk error:&quot; + e.getMessage());</span></div></div><p><span class="impact-field-label">判定依据</span>依据给定方法体注释可直接看出 parallelStream 的 ForkJoinPool worker 没有 Shiro Subject 绑定；本次改动新增 editBy(LoginUserUtil.getCurOperator()) 会在这些 worker 线程里额外读取登录人，而该消费点未同步适配为在请求线程预先捕获 operator。</p><p><span class="impact-field-label">会出什么事</span>在 Excel 导入异常件场景下，parallelStream 工作线程里调用 pushTrk 会执行新增的 LoginUserUtil.getCurOperator()，若该线程没有绑定登录上下文，导入会在 pushTrk 处报错并把该行标记为 pushTrk error，导致本来可导入的异常件记录导入失败。</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需评估此改动对『方法 WebExceptionParcelServiceImpl.pushTrk』的影响，建议实际验证消费点行为后再上线</span></p></div><p class="impact-safe-note">另有 1 处已排查判定安全，不在此列出；完整判定记录见同目录下的 <a href="impact_judgements.json" target="_blank">impact_judgements.json</a>（构建产物原始数据）。</p></details></div></div><p class="impact-safe-note">另有 42 处已排查判定安全，不在此列出；完整判定记录见同目录下的 <a href="impact_judgements.json" target="_blank">impact_judgements.json</a>（构建产物原始数据）。</p></div></section><section class="endpoint-coverage"><h2 class="section-title">接口审查覆盖清单</h2><p class="ec-note">本次改动涉及 10 个接口，其中 1 个有风险、0 个没敢下结论、9 个已确认没问题。这张表是把各段审查结论逐个接口对账后汇总的，原文见「总体结论」里的折叠框。</p><p class="ec-note">每个接口都至少有一段审查给出了明确结论，没有留下「说不清」的接口。</p><div class="ec-table-wrap"><table class="ec-table"><thead><tr><th>方法</th><th>接口</th><th>结论</th><th>依据</th></tr></thead><tbody><tr class="ec-risk"><td class="ec-method">POST</td><td class="ec-path"><code>/pickup/beansAccount</code></td><td class="ec-verdict"><span class="ec-badge ec-risk">有风险</span></td><td class="ec-reason">本段未修改 <code>PusApiController.getBeansAccount(...)</code> 的实现或鉴权注解，新增内容仅为 <code>RouteAccountServiceImplTest</code> 测试用例，无法从本 diff 认定存在新增权限削弱；就本段而言无新增权限风险。</td></tr><tr class="ec-safe"><td class="ec-method">POST</td><td class="ec-path"><code>/address/update</code></td><td class="ec-verdict"><span class="ec-badge ec-safe">已确认没问题</span></td><td class="ec-reason"><code>UpdateAddressService.update()</code> 的 HTTP 入口映射仅出现在上下文，当前 diff 未改动对应 Controller 鉴权或入口暴露方式；就本段而言无新增权限风险。</td></tr><tr class="ec-safe"><td class="ec-method">GET</td><td class="ec-path"><code>/external/address/one</code></td><td class="ec-verdict"><span class="ec-badge ec-safe">已确认没问题</span></td><td class="ec-reason">当前 diff 未改动 <code>UpdateAddressController</code> 的 API Key 校验逻辑；就本段而言无新增权限风险。</td></tr><tr class="ec-safe"><td class="ec-method">POST</td><td class="ec-path"><code>/external/address/update</code></td><td class="ec-verdict"><span class="ec-badge ec-safe">已确认没问题</span></td><td class="ec-reason">本段 <code>UpdateAddressService.update(...)</code> 新增逻辑未改变 <code>UpdateAddressController</code> 的 <code>INNER_API_KEY</code> 校验路径，未见新增权限风险。</td></tr><tr class="ec-safe"><td class="ec-method">POST</td><td class="ec-path"><code>/list</code></td><td class="ec-verdict"><span class="ec-badge ec-safe">已确认没问题</span></td><td class="ec-reason"><code>WebPtcScanReportController.list(@RequestBody @Valid PtcScanReportSearchDto searchDto)</code> 保留了 <code>@RequiresPermissions(value = {&quot;inbound:ptc:list&quot;})</code>，且查询仍使用 <code>LoginUserUtil.getCurFacilityCode()</code> 作为仓维度过滤，本次变更仅新增参数校验，无新增权限风险。</td></tr><tr class="ec-safe"><td class="ec-method">POST</td><td class="ec-path"><code>/list（WebPtcScanReportController.list）</code></td><td class="ec-verdict"><span class="ec-badge ec-safe">已确认没问题</span></td><td class="ec-reason">新增改动行未削弱既有 <code>@RequiresPermissions(value = {&quot;inbound:ptc:list&quot;})</code>，且查询条件新增 <code>facility_code = :facilityCode</code>，本次 diff 未引入新的越权读取风险。</td></tr><tr class="ec-safe"><td class="ec-method">GET</td><td class="ec-path"><code>/web/sorter/profile/active</code></td><td class="ec-verdict"><span class="ec-badge ec-safe">已确认没问题</span></td><td class="ec-reason">当前 diff 未改动 <code>WebSorterController.profileActive()</code> 或其权限控制；就本段而言无新增权限风险。</td></tr><tr class="ec-safe"><td class="ec-method">POST</td><td class="ec-path"><code>/web/sorter/profile/delete</code></td><td class="ec-verdict"><span class="ec-badge ec-safe">已确认没问题</span></td><td class="ec-reason">当前 diff 未改动 <code>WebSorterController.profileDelete()</code> 或其权限控制；就本段而言无新增权限风险。</td></tr><tr class="ec-safe"><td class="ec-method">GET</td><td class="ec-path"><code>/web/sorter/profile/existsActive</code></td><td class="ec-verdict"><span class="ec-badge ec-safe">已确认没问题</span></td><td class="ec-reason">本段未修改该入口的鉴权链路，且变更集中在 <code>WebSorterService</code> 的 <code>destination</code> 校验，无新增权限风险。</td></tr><tr class="ec-safe"><td class="ec-method">GET</td><td class="ec-path"><code>/web/sorter/profile/inUsed/{id}</code></td><td class="ec-verdict"><span class="ec-badge ec-safe">已确认没问题</span></td><td class="ec-reason">当前 diff 未改动 <code>WebSorterController.profileInUsed()</code> 或其权限控制；就本段而言无新增权限风险。</td></tr></tbody></table></div></section><h2 class="section-title subsection-title">按文件的审查发现</h2><details class="action-group action-group-fix_now" open="open" style="margin-bottom:14px;border:1px solid #c53030;border-radius:8px;"><summary style="cursor:pointer;font-weight:700;font-size:15px;color:#c53030;padding:8px 12px;list-style:none;">&#128308; 立即修代码 &middot; 9 个问题</summary><div style="padding:0 12px 8px;"><div class="findings-list-wrap"><details class="file-group findings-file-group" open="open" id="fg-da751c438cc1" data-file-path="pos-api/src/main/java/com/miq/posapi/controller/api/PusApiController.java" data-short-name="PusApiController.java" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">pos-api/src/main/java/com/miq/posapi/controller/api/PusApiController.java</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">1 Critical</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L188-190</span><span class="finding-cat">权限与访问控制</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>新增的 <strong>PusApiController.getBeansAccount(...)</strong> 直接通过 <code>@PostMapping(&quot;/pickup/beansAccount&quot;)</code> 暴露接口，并在方法体内无任何权限注解、无 <code>INNER_API_KEY</code> 校验、无 <code>facilityCode</code> 归属校验，直接返回 <code>routeAccountService.getBeansAccount(req.getFacilityCode(), req.getPickupType())</code> 的结果。</p><p>结合调用链可见，<code>RouteAccountServiceImpl.getBeansAccount(...)</code> 在 <code>available=true</code> 时会把 <code>fixRouteAccountAuthorization</code> 作为 <code>apiKey</code> 返回给调用方，这是敏感凭证读取接口。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>只要能够访问该 HTTP 入口的调用方，就可以枚举任意 <code>facilityCode</code> 和 <code>pickupType</code> 获取 Beans 账号凭证或探测配置状态（<code>NOT_CONFIGURED</code> / <code>INACTIVE</code>）。</p><p>这会导致跨仓配置越权读取和敏感密钥泄露，后续可被用于冒用 Beans 账号发起外部调用。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>给 <strong>PusApiController.getBeansAccount(...)</strong> 增加与现有内部接口一致的鉴权门槛，并在服务层补充 <code>facilityCode</code> 数据范围校验；</p><p>如果该接口仅供内部系统调用，至少应复用现有 <code>INNER_API_KEY</code> 或等价的内部鉴权机制，且禁止把 <code>fixRouteAccountAuthorization</code> 明文返回给无必要的调用方。</p><p>可改为仅返回是否可用和账号标识，真正需要凭证的调用放在服务端完成。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>未携带任何内部鉴权凭证直接调用 <code>POST /pickup/beansAccount</code>，请求体传入其他仓的 <code>facilityCode</code> 与有效 <code>pickupType</code>；</p><p>验证当前实现会返回 <code>available</code>、<code>reason</code>，在已配置场景下还会返回 <code>apiKey</code>。修复后应返回未授权，或仅允许调用方访问其被授权的 <code>facilityCode</code>。</p></div></div></div></div></div></details><details class="file-group findings-file-group" open="open" id="fg-d2956eb9d083" data-file-path="pos-api/src/main/java/com/miq/posapi/job/BackfillChuteMappingDestinationJob.java" data-short-name="BackfillChuteMappingDestinationJob.java" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">pos-api/src/main/java/com/miq/posapi/job/BackfillChuteMappingDestinationJob.java</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">1 Critical</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L1-44</span><span class="finding-cat finding-cat-requirement">需求未实现</span></div><div class="finding-feature-highlight" style="background:#fff3e0;border-left:4px solid #e65100;padding:12px 14px;margin:10px 0;border-radius:0 4px 4px 0;"><div class="detail-label" style="color:#e65100;font-weight:600;margin-bottom:4px;">未实现的功能</div><div style="font-size:15px;font-weight:600;">上线前对历史 sorter chute destination 数据做初始化回填或提供兼容读取，确保旧数据也能按新的 Container Destination 生效。</div></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>需求文档在「💡Solution」下明确写了“上线前, 需确保历史数据的初始化或者兼容取大包目的地”，并且影响面里单列了“创建大包对象的时候, 取大包的Destination, 来自于新增字段: Container Destination”。</p><p>本次 diff 反而删除了唯一显式承担历史数据回填职责的 <code>BackfillChuteMappingDestinationJob</code>，且从当前材料里看不到替代性的历史初始化实现或“兼容取大包目的地”的落地代码证据。</p><p>删除后，需求里“上线前确保历史数据初始化或者兼容”的验收点没有实现证据支撑。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>如果线上已有 <code>pos_sorter_chute_mapping.destination</code> 存量为空或旧值数据，切换到依赖 <code>Container Destination</code> 的新逻辑后，历史 profile 仍可能继续按旧目的地或空值运行，导致创建大包、打印包牌或下游传输使用错误目的地。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>恢复并保留 <code>BackfillChuteMappingDestinationJob</code>，或在本次改动中补充等价的历史数据初始化/兼容读取实现，并在代码或文档中明确上线前执行路径。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>准备两类历史 sorter profile 数据：第 1 类历史 <code>pos_sorter_chute_mapping.destination</code> 为空但业务上应有 <code>Container Destination</code>，第 2 类为已有旧目的地值。</p><p>上线前执行初始化/兼容逻辑后，分别验证创建大包对象、打印包牌、下游目的地读取是否都得到需求期望的目的地。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码</summary><pre class="code-block"><code><span class="code-keyword">public</span> <span class="code-keyword">class</span> BackfillChuteMappingDestinationJob {</code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-fe2f9828fea8" data-file-path="pos-service/src/main/java/com/miq/posservice/config/DropxConfig.java" data-short-name="DropxConfig.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/config/DropxConfig.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">2 Major</span></span><span class="file-group-count">2 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L23</span><span class="finding-cat">并发安全</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 CONC-001 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 CONC-001</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [CONC-001] 共享变量修改 命中了这行代码：<code>private volatile String engineKey;</code>。这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「共享变量修改」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">18</span>    <span class="code-comment">/** Base64 encoded 32-byte AES key, dedicated to the SpeedX -&gt; DropX channel. */</span></span><span class="code-row"><span class="code-ln">19</span>    <span class="code-annotation">@Getter</span></span><span class="code-row"><span class="code-ln">20</span>    <span class="code-annotation">@Setter</span></span><span class="code-row"><span class="code-ln">21</span>    <span class="code-keyword">private</span> String channelKey;</span><span class="code-row"><span class="code-ln">22</span></span><span class="code-row code-row-target"><span class="code-ln">23</span>    <span class="code-keyword">private</span> volatile String engineKey;</span><span class="code-row"><span class="code-ln">24</span>    <span class="code-keyword">private</span> volatile AesGcmEngine engine;</span><span class="code-row"><span class="code-ln">25</span></span><span class="code-row"><span class="code-ln">26</span>    <span class="code-keyword">public</span> boolean isChannelKeyReady() {</span><span class="code-row"><span class="code-ln">27</span>        <span class="code-keyword">return</span> StringUtils.isNotBlank(channelKey);</span><span class="code-row"><span class="code-ln">28</span>    }</span></code></pre></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L24</span><span class="finding-cat">并发安全</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 CONC-001 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 CONC-001</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [CONC-001] 共享变量修改 命中了这行代码：<code>private volatile AesGcmEngine engine;</code>。</p><p>这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「共享变量修改」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">19</span>    <span class="code-annotation">@Getter</span></span><span class="code-row"><span class="code-ln">20</span>    <span class="code-annotation">@Setter</span></span><span class="code-row"><span class="code-ln">21</span>    <span class="code-keyword">private</span> String channelKey;</span><span class="code-row"><span class="code-ln">22</span></span><span class="code-row"><span class="code-ln">23</span>    <span class="code-keyword">private</span> volatile String engineKey;</span><span class="code-row code-row-target"><span class="code-ln">24</span>    <span class="code-keyword">private</span> volatile AesGcmEngine engine;</span><span class="code-row"><span class="code-ln">25</span></span><span class="code-row"><span class="code-ln">26</span>    <span class="code-keyword">public</span> boolean isChannelKeyReady() {</span><span class="code-row"><span class="code-ln">27</span>        <span class="code-keyword">return</span> StringUtils.isNotBlank(channelKey);</span><span class="code-row"><span class="code-ln">28</span>    }</span><span class="code-row"><span class="code-ln">29</span></span></code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-0ce11e172f6e" data-file-path="pos-service/src/main/java/com/miq/posservice/dao/PosContainerParcelScanHistoryCustomDaoImpl.java" data-short-name="PosContainerParcelScanHistoryCustomDaoImpl.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/dao/PosContainerParcelScanHistoryCustomDaoImpl.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L79-81</span><span class="finding-cat">异常处理</span><span class="evidence-line-corrected-badge" style="color:#1565c0;border:1px solid #1565c0;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段与 evidence_quote 实际所在行不一致，已按 evidence_quote 自动纠正高亮位置">&#128260; 行号已纠正</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>buildWhere(PtcScanReportSearchDto dto)</code> 在 <code>PtcScanReportSearchDto.SearchMode</code> 不是 <code>DATE</code> 时，新增了直接抛出 <code>RRException(&quot;trackingNumbers or containerNums is required&quot;)</code> 的分支，但当前 diff 中 <code>queryPtcReportWithCount</code> 与 <code>queryPtcReportSlice</code> 都没有在 DAO 层做异常转换或在方法签名上体现这一契约变化。</p><p>DAO 从原来的纯查询行为变成了会因入参缺失直接抛业务异常，属于新增的失败路径。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>一旦上层调用方传入 <code>PtcScanReportSearchDto.SearchMode</code> 为非 <code>DATE</code> 且 <code>trackingNumbers</code>、<code>containerNums</code> 都为空，请求会在数据访问层直接失败；</p><p>如果上层原本依赖空结果或统一的参数校验逻辑，这个未显式声明的异常路径会导致接口返回 500/非预期错误码，形成可被外部请求稳定触发的拒绝服务点。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>把参数完整性校验前移到 <code>PosContainerParcelScanHistoryService</code> 或 Controller 入参校验层，并让 DAO 只负责查询；</p><p>至少要在上层统一捕获 <code>RRException</code> 并转换为明确的 4xx 参数错误响应，避免 DAO 直接把业务异常冒泡成服务异常。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>构造 <code>PtcScanReportSearchDto</code>：<code>searchMode</code> 为非 <code>DATE</code>，<code>trackingNumbers</code> 为空且 <code>containerNums</code> 为空，调用触发 <code>queryPtcReportSlice</code> 或 <code>queryPtcReportWithCount</code> 的接口，验证返回的是明确的参数错误响应而不是 500；</p><p>再验证相同场景下日志与错误码符合既有 API 契约。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">76</span></span><span class="code-row"><span class="code-ln">77</span>    <span class="code-keyword">private</span> String buildWhere(PtcScanReportSearchDto dto) {</span><span class="code-row"><span class="code-ln">78</span>        <span class="code-comment">// facility_code 是所有模式的公共过滤条件，保证报表只返回本仓数据</span></span><span class="code-row"><span class="code-ln">79</span>        List&lt;String&gt; conditions = <span class="code-keyword">new</span> ArrayList&lt;&gt;();</span><span class="code-row"><span class="code-ln">80</span>        conditions.add(<span class="code-string">"h.facility_code = :facilityCode"</span>);</span><span class="code-row code-row-target"><span class="code-ln">81</span>        <span class="code-keyword">if</span>(PtcScanReportSearchDto.SearchMode.DATE.equals(dto.getSearchMode())){</span><span class="code-row code-row-target"><span class="code-ln">82</span>            <span class="code-comment">// 左闭右开，勿改成闭区间：切片导出时上一片的 endTime 即下一片的 startTime</span></span><span class="code-row code-row-target"><span class="code-ln">83</span>            conditions.add(<span class="code-string">"h.operation_time &gt;= :startTime"</span>);</span><span class="code-row"><span class="code-ln">84</span>            conditions.add(<span class="code-string">"h.operation_time &lt; :endTime"</span>);</span><span class="code-row"><span class="code-ln">85</span>        }<span class="code-keyword">else</span>{</span><span class="code-row"><span class="code-ln">86</span>            <span class="code-comment">// 兜底：两个单号条件都为空时只剩 facility_code，会扫描该仓全部历史数据，必须快速失败</span></span><span class="code-row"><span class="code-ln">87</span>            <span class="code-keyword">if</span>(CollUtil.isEmpty(dto.getTrackingNumbers()) &amp;&amp; CollUtil.isEmpty(dto.getContainerNums())){</span><span class="code-row"><span class="code-ln">88</span>                <span class="code-keyword">throw</span> <span class="code-keyword">new</span> RRException(<span class="code-string">"trackingNumbers or containerNums is required"</span>);</span></code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-5e236f291d81" data-file-path="pos-service/src/main/java/com/miq/posservice/dto/pus/BeansAccountResp.java" data-short-name="BeansAccountResp.java" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/dto/pus/BeansAccountResp.java</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">1 Critical</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L25-26</span><span class="finding-cat">安全风险</span><span class="evidence-line-unverified-badge" style="color:#c62828;border:1px solid #c62828;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段附近 &#177;5 行内未找到 evidence_quote 摘抄的原文，行号未经核实，下方证据代码可能不是问题真正所在的位置，请人工核实">&#9888; 行号未验证</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>BeansAccountResp</code> 新增了 <code>apiKey</code> 字段，并且注释明确说明返回的是 <code>Beans Authorization</code> 原值且“含 Basic 前缀”。</p><p>这意味着该 DTO 被序列化返回时，会把可直接用于调用 Beans 的凭证明文暴露给上游调用方，而不是仅返回脱敏标识或服务端代调用结果。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>一旦对应接口被误调用、越权调用、被抓包或被日志/监控链路采集，攻击者可直接复用 <code>apiKey</code> 冒充系统访问 Beans，造成第三方账号凭证泄露和后续横向调用风险；由于这是完整授权头值，风险等级应按敏感密钥泄露处理。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>不要在 <code>BeansAccountResp</code> 中返回 <code>Beans Authorization</code> 原值。应删除 <code>apiKey</code> 对外字段，改为仅在服务端内部使用；</p><p>如果业务确需让调用方区分账号状态，只保留 <code>available</code>、<code>reason</code>、<code>accountName</code>（必要时也应评估是否脱敏）。</p><p>若必须传递凭证，至少改为返回一次性短期令牌或脱敏值，而不是 <code>account.getFixRouteAccountAuthorization()</code> 的原文。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>调用返回 <code>BeansAccountResp</code> 的接口，验证响应体中不再出现 <code>apiKey</code> 明文；同时抓取应用访问日志、网关日志和 APM 采样数据，确认不会记录 <code>Basic </code> 开头的 Beans 凭证。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">20</span>    <span class="code-keyword">private</span> String pickupType;</span><span class="code-row"><span class="code-ln">21</span></span><span class="code-row"><span class="code-ln">22</span>    <span class="code-annotation">@ApiModelProperty</span>(value = <span class="code-string">"是否取到可用账号"</span>, required = <span class="code-keyword">true</span>)</span><span class="code-row"><span class="code-ln">23</span>    <span class="code-keyword">private</span> Boolean available;</span><span class="code-row"><span class="code-ln">24</span></span><span class="code-row code-row-target"><span class="code-ln">25</span>    <span class="code-annotation">@ApiModelProperty</span>(<span class="code-string">"available=true 时返回；Beans Authorization 原值（含 Basic 前缀）"</span>)</span><span class="code-row code-row-target"><span class="code-ln">26</span>    <span class="code-keyword">private</span> String apiKey;</span><span class="code-row"><span class="code-ln">27</span></span><span class="code-row"><span class="code-ln">28</span>    <span class="code-annotation">@ApiModelProperty</span>(<span class="code-string">"可用时返回，仅日志/排查"</span>)</span><span class="code-row"><span class="code-ln">29</span>    <span class="code-keyword">private</span> String accountName;</span><span class="code-row"><span class="code-ln">30</span></span><span class="code-row"><span class="code-ln">31</span>    <span class="code-annotation">@ApiModelProperty</span>(<span class="code-string">"available=false 时：NOT_CONFIGURED | INACTIVE"</span>)</span></code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-31d6c3a4b686" data-file-path="pos-service/src/main/java/com/miq/posservice/service/UpdateAddressService.java" data-short-name="UpdateAddressService.java" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/service/UpdateAddressService.java</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">1 Critical</span> <span class="stat-chip stat-major">2 Major</span></span><span class="file-group-count">3 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L575</span><span class="finding-cat">日志规范</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>UpdateAddressService.sendDropxMessage(...)</code> 在成功日志里直接输出 <code>JSON.toJSONString(messageBo)</code>，而 <code>messageBo</code> 包含 <code>encryptedRecipientAddress1</code>、<code>recipientAddress2</code>、<code>recipientCity</code>、<code>recipientSuburb</code>、<code>recipientState</code>、<code>recipientZip5</code>、<code>lat</code>、<code>lng</code> 等完整收件地址与位置数据。</p><p>即使 <code>encryptedRecipientAddress1</code> 已加密，其余字段和坐标仍然足以还原收件人位置，属于敏感个人信息落日志。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>任何拥有应用日志读取权限的人都可以批量获取地址与经纬度信息；</p><p>一旦日志被转储到集中日志平台、告警系统或外包运维环境，会形成持久化的敏感数据泄露面，且泄露范围覆盖所有触发 <code>sendDropxMessage(...)</code> 的地址修改请求。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>删除 <code>messageBo</code> 的整对象日志，只保留最小必要字段，例如 <code>trackingNumber</code>、发送结果和 <code>messageId</code>；</p><p>如果确需排障，新增脱敏日志字段，禁止输出 <code>recipientAddress2</code>、<code>recipientCity</code>、<code>recipientSuburb</code>、<code>recipientState</code>、<code>recipientZip5</code>、<code>lat</code>、<code>lng</code> 的原值。</p><p>例如：</p><pre class="code-block"><code>log.info(<span class="code-string">"send parcel info to dropx message success. trackingNumber:{} messageId:{}"</span>,
+        label.getTrackingNumber(), messageBo.getMessageId());</code></pre></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>构造一次会进入 <code>sendDropxMessage(...)</code> 的地址修改，检查应用日志；</p><p>当前代码会打印包含 <code>recipientAddress2</code>、<code>recipientCity</code>、<code>recipientSuburb</code>、<code>recipientState</code>、<code>recipientZip5</code>、<code>lat</code>、<code>lng</code> 的完整 JSON，修复后日志中不应再出现这些字段原值。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">570</span>                .lng(labelExt.getLongitude())</span><span class="code-row"><span class="code-ln">571</span>                .addressType(label.getAddressType())</span><span class="code-row"><span class="code-ln">572</span>                .correctedZip(labelExt.getCorrectedZip())</span><span class="code-row"><span class="code-ln">573</span>                .build();</span><span class="code-row"><span class="code-ln">574</span>        kafkaProducerAgent.sendMessageAsync(DROPX_PARCEL_TOPIC, label.getTrackingNumber(), messageBo);</span><span class="code-row code-row-target"><span class="code-ln">575</span>        log.info(<span class="code-string">"send parcel info to dropx message success. trackingNumber:{} message:{}"</span>, label.getTrackingNumber(), JSON.toJSONString(messageBo));</span><span class="code-row"><span class="code-ln">576</span>    }</span><span class="code-row"><span class="code-ln">577</span></span><span class="code-row"><span class="code-ln">578</span>    <span class="code-keyword">private</span> boolean updateLabelSmsChatbot(UpdateAddressReq req, Label label, LabelExt labelExt, boolean sau) {</span><span class="code-row"><span class="code-ln">579</span>        boolean flag = <span class="code-keyword">false</span>;</span><span class="code-row"><span class="code-ln">580</span>        <span class="code-keyword">if</span> (sau) {</span></code></pre></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L193-201</span><span class="finding-cat finding-cat-requirement">需求外动作</span><span class="evidence-line-unverified-badge" style="color:#c62828;border:1px solid #c62828;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段附近 &#177;5 行内未找到 evidence_quote 摘抄的原文，行号未经核实，下方证据代码可能不是问题真正所在的位置，请人工核实">&#9888; 行号未验证</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>本次需求全文围绕“Container Destination / FF MIX Bag (Multi-Facility)”的模板、校验、导入、建包、打印和下游目的地传输展开，没有任何关于地址修改后向 DropX 推送消息、增加 <code>exchange.dropx</code> 配置、或新增 <code>spx_parcel_to_dropx</code> Kafka 消息的要求。</p><p>但 diff 在 <code>UpdateAddressService</code> 中新增了 <code>OmsService</code>、<code>DropxConfig</code>、<code>DROPX_PARCEL_TOPIC</code>，并根据客户配置触发 <code>sendDropxMessage</code>。</p><p>这是与本次需求无关的新增业务动作。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>该改动会把本次需求范围从“Container Destination”扩展到“地址更新对外推送”，引入新的配置依赖、加密逻辑和外部消息副作用；</p><p>若未同步评审和验收，可能在地址修改场景产生额外外部调用或数据同步行为，增加上线风险。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>将 DropX 相关改动拆分到独立需求或独立 MR；若必须同次提交，需补充正式需求依据并在 MR 中明确其验收范围与回滚方案。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>准备两类地址修改数据：第 1 类客户 <code>configMap.pushDropx=true</code>，第 2 类客户未开启该配置。</p><p>分别执行 <code>UpdateAddressService</code> 地址修改流程，确认当前 MR 是否会额外发送 <code>spx_parcel_to_dropx</code> 消息，并核对这一步是否属于本次 Container Destination 需求的正式验收范围。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">188</span>            <span class="code-keyword">throw</span> <span class="code-keyword">new</span> RRException(<span class="code-string">"Failed to modify the address, please contact technical support."</span>);</span><span class="code-row"><span class="code-ln">189</span>        }</span><span class="code-row"><span class="code-ln">190</span>        AddressRateCardResDto addressRateCardResDto = addressRateCardResDtoResponseObject.getPayload();</span><span class="code-row"><span class="code-ln">191</span>        <span class="code-keyword">if</span> (!addressRateCardResDto.getMatched()) {</span><span class="code-row"><span class="code-ln">192</span>            log.warn(<span class="code-string">"Failed to match rate card: {}"</span>, addressRateCardResDto.getMismatchReason());</span><span class="code-row code-row-target"><span class="code-ln">193</span>            <span class="code-keyword">throw</span>  <span class="code-keyword">new</span> RRException(<span class="code-string">"Address is outside the delivery coverage area."</span>);</span><span class="code-row code-row-target"><span class="code-ln">194</span>        }</span><span class="code-row code-row-target"><span class="code-ln">195</span></span><span class="code-row code-row-target"><span class="code-ln">196</span>        CustomerDto accountByOrgId = omsService.getAccountByOrgId(label.getOrgId());</span><span class="code-row code-row-target"><span class="code-ln">197</span>        boolean pushDropx = accountByOrgId != <span class="code-keyword">null</span> &amp;&amp; accountByOrgId.getConfigMap() != <span class="code-keyword">null</span></span><span class="code-row code-row-target"><span class="code-ln">198</span>                &amp;&amp; Boolean.TRUE.equals(accountByOrgId.getConfigMap().get(<span class="code-string">"pushDropx"</span>));</span><span class="code-row code-row-target"><span class="code-ln">199</span></span><span class="code-row code-row-target"><span class="code-ln">200</span>        Label finalLabel = label;</span><span class="code-row code-row-target"><span class="code-ln">201</span>        LabelExt finalLabelExt = labelExt;</span><span class="code-row"><span class="code-ln">202</span>        <span class="code-keyword">try</span> {</span><span class="code-row"><span class="code-ln">203</span>            <span class="code-keyword">return</span> transactionTemplate.execute(status -&gt; {</span><span class="code-row"><span class="code-ln">204</span>                <span class="code-keyword">try</span> {</span><span class="code-row"><span class="code-ln">205</span>                    <span class="code-keyword">return</span> doUpdateInTransaction(req, finalLabel, finalLabelExt, sau, source, pushDropx);</span><span class="code-row"><span class="code-ln">206</span>                } <span class="code-keyword">catch</span> (RuntimeException e) {</span></code></pre></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L300</span><span class="finding-cat">边界条件</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>UpdateAddressService.doUpdateInTransaction(...)</code> 在比较地址是否变化时直接对 <code>originalAddress1ByDropX</code> 和 <code>label.getRecipientAddress1()</code> 调用了 <code>trim()</code>，但这两个字段在新增代码里没有任何非空保护。</p><p><code>label.getRecipientAddress1()</code> 来自数据库当前值，<code>originalAddress1ByDropX</code> 也是更新前快照，只要历史数据里存在空地址1，执行到这里就会触发空指针。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>调用 <code>POST /address/update</code> 或 <code>POST /external/address/update</code> 修改地址时，即使本次请求本身合法，只要对应 <code>Label.recipientAddress1</code> 为空，就会在事务内抛出 <code>NullPointerException</code>，导致地址修改失败；</p><p>这会把一个可恢复的数据脏值放大成接口级拒绝服务。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>把 <code>trim()</code> 比较改成空安全写法，统一使用 <code>StringUtils.trimToEmpty(...)</code> 或先判空后比较，避免历史脏数据触发运行时异常。例如：</p><pre class="code-block"><code>boolean addressActuallyChanged = !StringUtils.equalsIgnoreCase(
+        StringUtils.trimToEmpty(originalAddress1ByDropX),
+        StringUtils.trimToEmpty(label.getRecipientAddress1()));</code></pre></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>准备一条 <code>Label</code> 数据，其中 <code>recipientAddress1</code> 为 <code>null</code>，并让该单满足 <code>pushDropx=true</code> 的路径；</p><p>调用 <code>UpdateAddressService.update(...)</code> 执行一次仅修改 notes 或其他字段的请求，验证当前代码会在 <code>addressActuallyChanged</code> 计算处抛出异常，修复后应正常返回。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">295</span>            String facilityCode = UpdateAddressSourceEnum.POS == source ? LoginUserUtil.getCurFacilityCode() : labelFacilityService.findFacilityCodeSingleton(label);</span><span class="code-row"><span class="code-ln">296</span>            sendTrkEvent(facilityCode, label.getTrackingNumber(), source.name());</span><span class="code-row"><span class="code-ln">297</span>        }</span><span class="code-row"><span class="code-ln">298</span></span><span class="code-row"><span class="code-ln">299</span>        <span class="code-comment">// 地址1真的发生变化（以最终落库结果为准，而非请求意图）且客户开启了pushDropx配置时，推送更新后的地址到DropX</span></span><span class="code-row code-row-target"><span class="code-ln">300</span>        boolean addressActuallyChanged = !StringUtils.equalsIgnoreCase(originalAddress1ByDropX.trim(), label.getRecipientAddress1().trim());</span><span class="code-row"><span class="code-ln">301</span>        <span class="code-keyword">if</span> (addressActuallyChanged &amp;&amp; pushDropx) {</span><span class="code-row"><span class="code-ln">302</span>            sendDropxMessage(label, labelExt);</span><span class="code-row"><span class="code-ln">303</span>        }</span><span class="code-row"><span class="code-ln">304</span></span><span class="code-row"><span class="code-ln">305</span>        <span class="code-comment">// notes 有变化时创建 57114 轨迹</span></span></code></pre></details></div></div></details></div></div></details><details class="action-group action-group-optional" style="margin-bottom:14px;border:1px solid #2f855a;border-radius:8px;"><summary style="cursor:pointer;font-weight:700;font-size:15px;color:#2f855a;padding:8px 12px;list-style:none;">&#128994; 可选优化 &middot; 2 个问题</summary><div style="padding:0 12px 8px;"><div class="findings-list-wrap"><details class="file-group findings-file-group" id="fg-da751c438cc1" data-file-path="pos-api/src/main/java/com/miq/posapi/controller/api/PusApiController.java" data-short-name="PusApiController.java" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">pos-api/src/main/java/com/miq/posapi/controller/api/PusApiController.java</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L180-190</span><span class="finding-cat finding-cat-requirement">需求外动作</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>本次需求原文只涉及 FF MIX Bag 的 <code>Container Destination</code> 规则、Excel 模板、建包、打印、TMS/DMS 目的地传输和历史数据兼容；</p><p>没有要求新增“按 SC + pickupType 查询揽收 Beans 账号”的 PUS 接口。</p><p>diff 在 <code>PusApiController</code> 新增 <code>/pickup/beansAccount</code> 接口，并引入 <code>BeansAccountResp</code>、<code>GetBeansAccountReq</code> 与 <code>RouteAccountService.getBeansAccount(...)</code> 实现，属于本次需求之外的新增能力。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>该接口会扩大本次发布的 API 变更面，增加额外联调与回归范围；若调用方开始依赖该接口，而它并未纳入本次 Container Destination 需求验收，可能造成需求范围失控和测试遗漏。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>将 <code>/pickup/beansAccount</code> 接口拆分到独立需求或独立提交；若确需保留，请补充正式需求来源并把接口契约纳入本次验收清单。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>准备两类请求数据：第 1 类已配置且启用 <code>facilityCode-PICKUP-pickupType</code> 账号，第 2 类未配置或未启用账号。</p><p>调用 <code>/pickup/beansAccount</code>，确认该接口行为虽可工作，但需单独核对其是否属于本次 FF MIX Bag (Multi-Facility) 需求的正式范围。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">175</span>        List&lt;BeansRouteInfoDto&gt; result = beanRefreshRouteService.getRouteInfoByAddress(</span><span class="code-row"><span class="code-ln">176</span>                req.getFacilityCode(), req.getPickupList(), req.getPickupType());</span><span class="code-row"><span class="code-ln">177</span>        <span class="code-keyword">return</span> ResponseObject.success(result);</span><span class="code-row"><span class="code-ln">178</span>    }</span><span class="code-row"><span class="code-ln">179</span></span><span class="code-row code-row-target"><span class="code-ln">180</span>    /**</span><span class="code-row code-row-target"><span class="code-ln">181</span>     * 按 SC + pickupType 查询揽收 Beans 账号。</span><span class="code-row code-row-target"><span class="code-ln">182</span>     * 查表键与 getBeansRouteInfoByAddress 一致：{<span class="code-annotation">@code</span> facilityCode-PICKUP-pickupType}。</span><span class="code-row code-row-target"><span class="code-ln">183</span>     * 凭证取 {<span class="code-annotation">@code</span> pos_route_account.fix_route_account_authorization}。</span><span class="code-row code-row-target"><span class="code-ln">184</span>     * 查不到 / 未启用 / 无凭证时 HTTP 仍成功，用 available=<span class="code-keyword">false</span> + reason 表达。</span><span class="code-row code-row-target"><span class="code-ln">185</span>     */</span><span class="code-row code-row-target"><span class="code-ln">186</span>    <span class="code-annotation">@ApiOperation</span>(value = <span class="code-string">"Get Beans pickup account by facilityCode + pickupType"</span>,</span><span class="code-row code-row-target"><span class="code-ln">187</span>            notes = <span class="code-string">"For internal use by PUS / DRS. Lookup key is {facilityCode}-PICKUP-{pickupType}."</span>)</span><span class="code-row code-row-target"><span class="code-ln">188</span>    <span class="code-annotation">@PostMapping</span>(<span class="code-string">"/pickup/beansAccount"</span>)</span><span class="code-row code-row-target"><span class="code-ln">189</span>    <span class="code-keyword">public</span> ResponseObject&lt;BeansAccountResp&gt; getBeansAccount(<span class="code-annotation">@RequestBody</span> <span class="code-annotation">@Valid</span> GetBeansAccountReq req) {</span><span class="code-row code-row-target"><span class="code-ln">190</span>        <span class="code-keyword">return</span> ResponseObject.success(routeAccountService.getBeansAccount(req.getFacilityCode(), req.getPickupType()));</span><span class="code-row"><span class="code-ln">191</span>    }</span><span class="code-row"><span class="code-ln">192</span></span><span class="code-row"><span class="code-ln">193</span>    <span class="code-annotation">@ApiOperation</span>(value = <span class="code-string">"Get partner locations by partnerId + locationCodes"</span>,</span><span class="code-row"><span class="code-ln">194</span>            notes = <span class="code-string">"Query pos_partner_location by partnerId and a list of partnerLocationCodes. For internal use by PUS."</span>)</span><span class="code-row"><span class="code-ln">195</span>    <span class="code-annotation">@PostMapping</span>(<span class="code-string">"/partnerLocation/query"</span>)</span></code></pre></details></div></div></details><details class="file-group findings-file-group" id="fg-fe2f9828fea8" data-file-path="pos-service/src/main/java/com/miq/posservice/config/DropxConfig.java" data-short-name="DropxConfig.java" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/config/DropxConfig.java</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L40-46</span><span class="finding-cat">边界条件</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>DropxConfig.resolveEngine()</code> 直接把 <code>channelKey</code> 赋给局部变量 <code>key</code>，随后在 <code>if (current != null &amp;&amp; key.equals(engineKey))</code> 和 <code>Base64.getDecoder().decode(key)</code> 中使用，但这个方法本身没有校验 <code>channelKey</code> 非空、非空白、且为合法 Base64。</p><p>只要调用方在未配置 <code>exchange.dropx.channelKey</code>、配置为空字符串，或配置成非法 Base64 时调用 <code>encrypt(String plainText)</code>，这里就会触发 <code>NullPointerException</code> 或 <code>IllegalArgumentException</code>。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p><code>DropxConfig</code> 是 <code>@ConfigurationProperties</code> + <code>@RefreshScope</code> 配置类，运行期配置缺失或热更新到非法值时，会把正常的加密调用变成运行时异常，导致依赖 DropX 加密链路的请求或消息处理失败，形成可被错误配置直接触发的服务不可用风险。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>在 <code>resolveEngine()</code> 入口显式校验 <code>channelKey</code> 的存在性和格式，并把配置错误转换成可诊断的受检业务异常或 <code>IllegalStateException</code>，避免出现 <code>NullPointerException</code>/底层解码异常直接外泄。</p><p>示例：</p><pre class="code-block"><code><span class="code-keyword">private</span> AesGcmEngine resolveEngine() {
+    String key = channelKey;
+    <span class="code-keyword">if</span> (StringUtils.isBlank(key)) {
+        <span class="code-keyword">throw</span> <span class="code-keyword">new</span> IllegalStateException(<span class="code-string">"exchange.dropx.channelKey is blank"</span>);
+    }
+    byte[] decoded;
+    <span class="code-keyword">try</span> {
+        decoded = Base64.getDecoder().decode(key);
+    } <span class="code-keyword">catch</span> (IllegalArgumentException e) {
+        <span class="code-keyword">throw</span> <span class="code-keyword">new</span> IllegalStateException(<span class="code-string">"exchange.dropx.channelKey is not valid Base64"</span>, e);
+    }
+    <span class="code-keyword">if</span> (decoded.length != <span class="code-number">32</span>) {
+        <span class="code-keyword">throw</span> <span class="code-keyword">new</span> IllegalStateException(<span class="code-string">"exchange.dropx.channelKey must decode to 32 bytes"</span>);
+    }
+    <span class="code-comment">// 再进入缓存复用逻辑</span>
+}</code></pre></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>新增配置异常测试：</p><ol class="rt-list"><li><code>channelKey=null</code> 时调用 <code>encrypt(&quot;abc&quot;)</code>，应抛出带有 <code>exchange.dropx.channelKey</code> 明确信息的异常</li><li><code>channelKey=&quot;   &quot;</code> 时调用 <code>encrypt(&quot;abc&quot;)</code>，应抛出相同类型异常</li><li><code>channelKey=&quot;not-base64&quot;</code> 时调用 <code>encrypt(&quot;abc&quot;)</code>，应抛出说明 Base64 非法的异常</li><li><code>channelKey</code> 解码后长度不是 32 字节时调用 <code>encrypt(&quot;abc&quot;)</code>，应抛出长度校验异常。</li></ol></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">35</span>    <span class="code-keyword">public</span> String encrypt(String plainText) {</span><span class="code-row"><span class="code-ln">36</span>        <span class="code-keyword">if</span> (StringUtils.isBlank(plainText)) {</span><span class="code-row"><span class="code-ln">37</span>            <span class="code-keyword">return</span> <span class="code-keyword">null</span>;</span><span class="code-row"><span class="code-ln">38</span>        }</span><span class="code-row"><span class="code-ln">39</span>        <span class="code-keyword">return</span> resolveEngine().encryptDeterministic(plainText);</span><span class="code-row code-row-target"><span class="code-ln">40</span>    }</span><span class="code-row code-row-target"><span class="code-ln">41</span></span><span class="code-row code-row-target"><span class="code-ln">42</span>    <span class="code-keyword">private</span> AesGcmEngine resolveEngine() {</span><span class="code-row code-row-target"><span class="code-ln">43</span>        String key = channelKey;</span><span class="code-row code-row-target"><span class="code-ln">44</span>        AesGcmEngine current = engine;</span><span class="code-row code-row-target"><span class="code-ln">45</span>        <span class="code-keyword">if</span> (current != <span class="code-keyword">null</span> &amp;&amp; key.equals(engineKey)) {</span><span class="code-row code-row-target"><span class="code-ln">46</span>            <span class="code-keyword">return</span> current;</span><span class="code-row"><span class="code-ln">47</span>        }</span><span class="code-row"><span class="code-ln">48</span>        synchronized (<span class="code-keyword">this</span>) {</span><span class="code-row"><span class="code-ln">49</span>            <span class="code-keyword">if</span> (engine == <span class="code-keyword">null</span> || !key.equals(engineKey)) {</span><span class="code-row"><span class="code-ln">50</span>                engine = <span class="code-keyword">new</span> AesGcmEngine(Base64.getDecoder().decode(key));</span><span class="code-row"><span class="code-ln">51</span>                engineKey = key;</span></code></pre></details></div></div></details></div></div></details>
+    </div>
+
+    <div id="panel-dp" class="report-panel" role="tabpanel" aria-labelledby="tab-dp">
+      <div class="dp-shell"><div class="dp-header">
+  <h1>数据权限分析报告</h1>
+  <p class="subtitle">AI Code Review · 接口级别数据权限审计</p>
+  <div class="meta-row"><div class="meta-item">项目 <strong>logistics-backend</strong></div><div class="meta-item">涉及接口路径（自动汇总） <strong>/pickup/beansAccount</strong></div><div class="meta-item">报告日期 <strong>2026-10-09 11:16:32</strong></div><div class="meta-item">涉及角色标签 <strong>见 role_data / findings</strong></div></div>
+</div>
+
+<div class="dp-body">
+
+  <div class="dp-stats">
+    
+  <div class="summary-grid">
+    <div class="summary-card critical"><div class="count">1</div><div class="label">Critical</div></div>
+    <div class="summary-card high"><div class="count">0</div><div class="label">Major</div></div>
+    <div class="summary-card medium"><div class="count">0</div><div class="label">Minor</div></div>
+    <div class="summary-card info"><div class="count">0</div><div class="label">Info</div></div>
+  </div>
+  <p style="margin:8px 0 0;font-size:.8rem;color:#718096;">Total 1 条权限类问题 · 涉及 1 个接口（已解析路径）</p>
+
+  </div>
+
+  <div class="dp-section">
+    <div class="dp-section-title">角色权限定义</div>
+    <div class="dp-roles"><div class="role-box"><div class="role-icon">&#128100;</div><div class="role-info"><h3>项目级环境事实（审查时须知）</h3><div class="role-md">- <strong>driver</strong>：司机；仅自身用户与当前路线/包裹相关数据。<br/>
+- <strong>driver-leader / fleet leader</strong>：车队队长；仅本 <code>fleetId</code> 范围内数据。<br/>
+- <strong>operator / dispatcher</strong>：运营/调度；按 <code>facilityCode</code>、DSP 等约定收敛列表与详情。<br/>
+- <strong>admin</strong>：管理员；可访问全量（若代码中另有细分需写明）。<br/>
+<br/>
+<br/>
+- 管理端接口通常需 <code>@PreAuthorize</code> 或项目统一 <code>AuthUtil</code> 校验。<br/>
+- 列表/导出须注入当前用户的数据范围（如 <code>fleetId</code>、<code>dspId</code>），禁止仅靠前端传参筛选。<br/>
+<br/>
+<br/>
+- 运行时配置以 Nacos 配置中心为准，本地 application.yml 的开关值不代表生产实际值。<br/>
+- 各服务大量使用自带池化的 starter（IBM MQ / Druid / Lettuce / Kafka）；自定义 @Primary 基础设施 Bean 会使 starter 自动装配让位，池化/缓存包装随之失效。<br/>
+- 海关链路（ACAS/AMS/ABI）存在 MAWB→数千小包的批量放大特征（一次 MAWB 级操作可触发 4000+ 次逐条发送），发送路径上任何 per-call 开销都会被放大三个数量级。</div></div></div></div>
+  </div>
+
+  <div class="dp-gate"></div>
+
+  <div class="dp-section">
+    <div class="dp-section-title">接口权限审计总览</div>
+    <div class="table-wrap"><table class="dp-audit"><thead><tr><th>方法</th><th>路径</th><th>Service 方法</th><th>权限校验</th><th>数据范围</th><th>风险</th><th>问题描述</th></tr></thead><tbody><tr class="row-critical"><td style='white-space:nowrap;vertical-align:middle;'><span class="badge badge-post">POST</span></td><td style='min-width:120px;'><code style="font-size:.82rem;word-break:break-all;">/pickup/beansAccount</code></td><td style='min-width:160px;'><code style="font-size:.82rem;">getBeansAccount(...)</code></td><td style='white-space:nowrap;'><span style="color:#dd6b20;">待复核</span></td><td style='min-width:140px;font-size:.85rem;'><span style="font-size:.85rem;">当前入口未见任何鉴权或数据范围限制，按请求中的 <code>facilityCode</code> 直接查询并返回 Beans 账号信息。</span></td><td style='white-space:nowrap;'><div class="risk-zh">高风险（敏感凭证越权读取）</div><div style="margin-top:6px;"><span class="badge badge-critical">CRITICAL</span></div></td><td style='min-width:220px;'><ul class="issue-list"><li><strong>原因：</strong> 新增的 <strong>PusApiController.getBeansAccount(...)</strong> 直接通过 <code>@PostMapping(&quot;/pickup/beansAccount&quot;)</code> 暴露接口，并在方法体内无任何权限注解、无 <code>INNER_API_KEY</code> 校验、无 <code>facilityCode</code> 归属校验，直接返回 <code>routeAccountService.getBeansAccount(req.getFacilityCode(), req.getPickupType())</code> 的结果</li><li>结合调用链可见，<code>RouteAccountServiceImpl.getBeansAccount(...)</code> 在 <code>available=true</code> 时会把 <code>fixRouteAccountAuthorization</code> 作为 <code>apiKey</code> 返回给调用方，这是敏感凭证读取接口</li><li><strong>影响：</strong> 只要能够访问该 HTTP 入口的调用方，就可以枚举任意 <code>facilityCode</code> 和 <code>pickupType</code> 获取 Beans 账号凭证或探测配置状态（<code>NOT_CONFIGURED</code> / <code>INACTIVE</code>）</li><li>这会导致跨仓配置越权读取和敏感密钥泄露，后续可被用于冒用 Beans 账号发起外部调用</li></ul></td></tr></tbody></table></div>
+  </div>
+
+  
+
+  <div class="dp-section">
+    <div class="dp-section-title">端点详情</div>
+    <div class="dp-folds"><details class="issue-fold"><summary>POST /pickup/beansAccount</summary><div class="issue-fold-body">
+  <div class="issue-card">
+    <div class="issue-header">
+      <span class="badge critical">Critical</span>
+      <span class="method-badge">POST</span>
+      <span class="endpoint">/pickup/beansAccount</span>
+    </div>
+    <div class="issue-body">
+      <div class="section-title">问题描述</div>
+      <p class="loc-hint">关联位置：<code>pos-api/src/main/java/com/miq/posapi/controller/api/PusApiController.java L188-190</code></p>
+      <p class="desc">1.
+新增的 <strong>PusApiController.getBeansAccount(...)</strong> 直接通过 <code>@PostMapping(&quot;/pickup/beansAccount&quot;)</code> 暴露接口，并在方法体内无任何权限注解、无 <code>INNER_API_KEY</code> 校验、无 <code>facilityCode</code> 归属校验，直接返回 <code>routeAccountService.getBeansAccount(req.getFacilityCode(), req.getPickupType())</code> 的结果。结合调用链可见，<code>RouteAccountServiceImpl.getBeansAccount(...)</code> 在 <code>available=true</code> 时会把 <code>fixRouteAccountAuthorization</code> 作为 <code>apiKey</code> 返回给调用方，这是敏感凭证读取接口。</p>
+      
+      <div class="two-col">
+        <div class="impact-box">
+          <h4>安全影响</h4>
+          <p>只要能够访问该 HTTP 入口的调用方，就可以枚举任意 <code>facilityCode</code> 和 <code>pickupType</code> 获取 Beans 账号凭证或探测配置状态（<code>NOT_CONFIGURED</code> / <code>INACTIVE</code>）。这会导致跨仓配置越权读取和敏感密钥泄露，后续可被用于冒用 Beans 账号发起外部调用。</p>
+        </div>
+        <div class="fix-box">
+          <h4>修复建议</h4>
+          <ul class="list"><li>给 <strong>PusApiController.getBeansAccount(...)</strong> 增加与现有内部接口一致的鉴权门槛，并在服务层补充 <code>facilityCode</code> 数据范围校验；如果该接口仅供内部系统调用，至少应复用现有 <code>INNER_API_KEY</code> 或等价的内部鉴权机制，且禁止把 <code>fixRouteAccountAuthorization</code> 明文返回给无必要的调用方。可改为仅返回是否可用和账号标识，真正需要凭证的调用放在服务端完成。</li></ul>
+        </div>
+      </div>
+      
+    </div>
+  </div>
+</div></details></div>
+  </div>
+
+  
+
+  
+
+  <div class="dp-footer"><p>本报告由 AI Code Review 生成（data_permission 模式）。权限类 finding 涉及文件：<strong>pos-api/src/main/java/com/miq/posapi/controller/api/PusApiController.java</strong></p><p style="margin-top:4px;">生成时间：2026-10-09 11:16:32 · 项目：logistics-backend</p></div>
+
+</div>
+</div>
+    </div>
+  </div>
+  <script>
+    function escHtml(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function formatSummaryInner(rawBlock) {
+      var lines = rawBlock.split(/\r?\n/);
+      var html = '';
+      var listType = null;
+
+      function closeList() {
+        if (listType) { html += '</' + listType + '>'; listType = null; }
+      }
+
+      function renderInline(text) {
+        var st = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        st = st.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        st = st.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+        return st;
+      }
+
+      lines.forEach(function(line) {
+        var trimmed = line.trim();
+        if (!trimmed) { closeList(); return; }
+
+        if (/^#{1,3}\s+/.test(trimmed)) {
+          closeList();
+          var title = trimmed.replace(/^#{1,3}\s+/, '');
+          html += '<p class="summary-section-title">' + renderInline(title) + '</p>';
+          return;
+        }
+
+        if (/^\*\*[^*]+\*\*[：:。]?$/.test(trimmed)) {
+          closeList();
+          var title2 = trimmed.replace(/^\*\*|\*\*[：:。]?$/g, '');
+          html += '<p class="summary-section-title">' + renderInline(title2) + '</p>';
+          return;
+        }
+
+        if (/^[【「『].*[】」』]$/.test(trimmed) ||
+            (trimmed.length <= 30 && /[：:]$/.test(trimmed) && !/^\d/.test(trimmed))) {
+          closeList();
+          var title3 = trimmed.replace(/^[【「『]|[】」』]$/g, '').replace(/[：:]$/, '');
+          html += '<p class="summary-section-title">' + renderInline(title3) + '</p>';
+          return;
+        }
+
+        if (/^[-*]\s+/.test(trimmed)) {
+          if (listType !== 'ul') { closeList(); html += '<ul>'; listType = 'ul'; }
+          var content = trimmed.replace(/^[-*]\s+/, '');
+          html += '<li>' + renderInline(content) + '</li>';
+          return;
+        }
+
+        if (/^[\(（]?\d+[\)）.\、]\s*/.test(trimmed)) {
+          if (listType !== 'ol') { closeList(); html += '<ol>'; listType = 'ol'; }
+          var content2 = trimmed.replace(/^[\(（]?\d+[\)）.\、]\s*/, '');
+          html += '<li>' + renderInline(content2) + '</li>';
+          return;
+        }
+
+        closeList();
+        if (trimmed.length > 280 && /[。！？][\s\u3000]/.test(trimmed)) {
+          var chunks = trimmed.split(/(?<=[。！？])[\s\u3000]+/).filter(function (c) { return c.trim(); });
+          if (chunks.length > 1) {
+            chunks.forEach(function (c) {
+              html += '<p>' + renderInline(c.trim()) + '</p>';
+            });
+            return;
+          }
+        }
+        html += '<p>' + renderInline(trimmed) + '</p>';
+      });
+
+      closeList();
+      return html;
+    }
+
+    function formatSummary() {
+      var el = document.getElementById('summary-text');
+      if (!el) return;
+      if (el.classList.contains('summary-preformatted')) return;
+      var raw = el.textContent || '';
+      raw = raw.replace(/\s+(?=本分片)/g, '\n---SHARD---\n');
+      var shards = raw.split(/\n---SHARD---\n/).map(function(s) { return s.trim(); }).filter(Boolean);
+      if (!shards.length) shards = [raw.trim()].filter(Boolean);
+
+      if (shards.length <= 1) {
+        var inner = formatSummaryInner(shards[0] || '');
+        if (inner) el.innerHTML = inner;
+        return;
+      }
+
+      var htmlShards = [];
+      for (var i = 0; i < shards.length; i++) {
+        var blockHtml = formatSummaryInner(shards[i]);
+        if (blockHtml) htmlShards.push('<div class="summary-shard">' + blockHtml + '</div>');
+      }
+      var head = htmlShards.slice(0, 3).join('');
+      var tail = htmlShards.slice(3).join('');
+      var moreBtn = '';
+      if (tail) {
+        moreBtn = '<button type="button" class="summary-toggle" id="summary-toggle-btn" aria-expanded="false">展开全部分片结论 (' + (htmlShards.length - 3) + ')</button>';
+      }
+      el.innerHTML = '<div class="summary-shards-wrap">' + head +
+        (tail ? '<div class="summary-more" id="summary-more-block" hidden>' + tail + '</div>' : '') +
+        moreBtn + '</div>';
+
+      var btn = document.getElementById('summary-toggle-btn');
+      var more = document.getElementById('summary-more-block');
+      if (btn && more) {
+        btn.addEventListener('click', function() {
+          var ex = btn.getAttribute('aria-expanded') === 'true';
+          more.hidden = ex;
+          btn.setAttribute('aria-expanded', ex ? 'false' : 'true');
+          btn.textContent = ex
+            ? ('展开全部分片结论 (' + (htmlShards.length - 3) + ')')
+            : '收起分片结论';
+        });
+      }
+    }
+
+    function switchReportTab(which) {
+      var panels = ['panel-general', 'panel-dp'];
+      var tabs = ['tab-general', 'tab-dp'];
+      var activePanel = which === 'dp' ? 'panel-dp' : 'panel-general';
+      var activeTab = which === 'dp' ? 'tab-dp' : 'tab-general';
+      panels.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) { el.classList.toggle('is-active', id === activePanel); }
+      });
+      tabs.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) { el.setAttribute('aria-selected', id === activeTab ? 'true' : 'false'); }
+      });
+    }
+
+    var activeFilter = null;
+
+    function getSearchQuery() {
+      var inp = document.getElementById('findings-search');
+      return inp ? String(inp.value || '').trim().toLowerCase() : '';
+    }
+
+    function applyFindingsFilter() {
+      var hint = document.getElementById('filter-hint');
+      var hintLabel = document.getElementById('filter-hint-label');
+
+      if (activeFilter) {
+        hintLabel.textContent = activeFilter.toUpperCase();
+        hint.style.display = 'block';
+      } else {
+        hint.style.display = 'none';
+      }
+
+      var q = getSearchQuery();
+
+      document.querySelectorAll('.findings-file-group').forEach(function(group) {
+        var visible = 0;
+        group.querySelectorAll('.finding-card').forEach(function(card) {
+          var sev = card.getAttribute('data-severity') || 'info';
+          var sevOk = !activeFilter || sev === activeFilter;
+          var textOk = !q || card.textContent.toLowerCase().indexOf(q) !== -1;
+          var show = sevOk && textOk;
+          card.style.display = show ? '' : 'none';
+          if (show) visible++;
+        });
+        group.style.display = visible === 0 ? 'none' : '';
+        // 任务115续作：finding 现在可能嵌套在 <details class="action-group"> 里，
+        // 该祖先关闭时子元素无论 style.display 如何都不会渲染，命中过滤结果时须一并展开。
+        if (visible > 0) {
+          var actionGroup = group.closest('.action-group');
+          if (actionGroup) actionGroup.open = true;
+        }
+      });
+
+      document.querySelectorAll('.file-block').forEach(function(block) {
+        if (block.classList.contains('findings-file-group')) return;
+        var rows = block.querySelectorAll('tbody tr');
+        if (!rows.length) return;
+        var vis = 0;
+        rows.forEach(function(row) {
+          if (!activeFilter || row.querySelector('.chip.' + activeFilter)) {
+            row.style.display = '';
+            vis++;
+          } else {
+            row.style.display = 'none';
+          }
+        });
+        block.style.display = vis === 0 ? 'none' : '';
+      });
+
+      // 顶部 Critical/Major 计数把「牵连影响」的 RISK/NEEDS_HUMAN 也并了进去
+      // （用户拍板口径），但这些卡片不是 .finding-card，之前点 Critical 只会
+      // 过滤上面两段、对牵连影响毫无反应，数字和实际看到的东西对不上
+      // （build TEST_pus-exchange-api/222 反馈）。按同一套口径把牵连影响的卡
+      // 也纳入过滤：RISK 对应 critical，NEEDS_HUMAN 对应 major；筛 minor/info
+      // 时牵连影响没有对应桶，全部隐藏是符合口径的。
+      var impactLevelMap = { critical: 'RISK', major: 'NEEDS_HUMAN' };
+      document.querySelectorAll('.impact-card[data-impact-level]').forEach(function(card) {
+        var level = card.getAttribute('data-impact-level');
+        var show = !activeFilter || impactLevelMap[activeFilter] === level;
+        card.style.display = show ? '' : 'none';
+        if (show && activeFilter) {
+          var d = card.closest('details');
+          if (d) d.open = true;
+        }
+      });
+    }
+
+    function filterBySeverity(chip) {
+      var filter = chip.dataset.filter;
+      if (activeFilter === filter) {
+        clearFilter();
+        return;
+      }
+      activeFilter = filter;
+      document.querySelectorAll('.filter-chip').forEach(function(c) {
+        if (c.dataset.filter === filter) {
+          c.classList.add('active');
+          c.classList.remove('dimmed');
+        } else {
+          c.classList.remove('active');
+          c.classList.add('dimmed');
+        }
+      });
+      applyFindingsFilter();
+    }
+
+    function clearFilter() {
+      activeFilter = null;
+      document.querySelectorAll('.filter-chip').forEach(function(c) {
+        c.classList.remove('active', 'dimmed');
+      });
+      applyFindingsFilter();
+    }
+
+    function initFindingsToolbar() {
+      var tb = document.getElementById('findings-toolbar');
+      if (!tb) return;
+      var groups = document.querySelectorAll('#panel-general .findings-file-group');
+      tb.style.display = groups.length ? '' : 'none';
+    }
+
+    (function () {
+      var chips = document.querySelectorAll('table .chip');
+      for (var i = 0; i < chips.length; i++) {
+        chips[i].textContent = chips[i].textContent.toUpperCase();
+      }
+
+      formatSummary();
+
+      initFindingsToolbar();
+
+      var ex = document.getElementById('expand-all-files');
+      var cl = document.getElementById('collapse-all-files');
+      if (ex) ex.addEventListener('click', function() {
+        document.querySelectorAll('.findings-file-group').forEach(function(d) { d.open = true; });
+        document.querySelectorAll('.action-group').forEach(function(d) { d.open = true; });
+      });
+      if (cl) cl.addEventListener('click', function() {
+        document.querySelectorAll('.findings-file-group').forEach(function(d) { d.open = false; });
+        document.querySelectorAll('.action-group').forEach(function(d) { d.open = false; });
+      });
+
+      var search = document.getElementById('findings-search');
+      if (search) {
+        search.addEventListener('input', function() { applyFindingsFilter(); });
+      }
+    })();
+
+    // Chart.js initialization
+    function renderCategoryChart(categoryData) {
+      var ctx = document.getElementById('categoryChart');
+      if (!ctx) return;
+      ctx = ctx.getContext('2d');
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: Object.keys(categoryData),
+          datasets: [{
+            label: '问题数量',
+            data: Object.values(categoryData),
+            // 跟报告主色（teal 系）协调的低饱和度调色板，替换 Chart.js 默认的
+            // 高饱和度七彩配色（用户反馈报告"不好看"，实测截图确认默认色彩
+            // 花哨刺眼、跟品牌色不搭）；18 色覆盖 VALID_CATEGORIES 全量枚举，
+            // 保证再多分类同时出现也不会因为数组不够长而退化成无色
+            backgroundColor: [
+              '#0f766e', '#b5651d', '#4a6fa5', '#8e6c96',
+              '#6b8f71', '#b58a3d', '#b56576', '#5c7a89',
+              '#3d8a8a', '#a3703f', '#5f7a9d', '#7a6b9d',
+              '#7fa17f', '#c29b5c', '#9d6b7a', '#6b8a9d',
+              '#8a9d6b', '#9d7a5f'
+            ]
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: true } }
+        }
+      });
+    }
+
+    // 这个短列表只是一句话摘要，不值得把 markdown 代码块渲染进一个 <li> 里——
+    // 直接去掉标记符本身，露出裸文本即可（跟 _render_markdown_lite 的完整
+    // 渲染不同，这里要的是"别露出字面 ** 和 ``` "，不是"渲染出富文本"）
+    function stripMdLite(text) {
+      return (text || '')
+        .replace(/```[a-zA-Z]*\n?/g, '')
+        .replace(/```/g, '')
+        .replace(/\*\*([^*]+)\*\*/g, '$1')
+        .replace(/`([^`]+)`/g, '$1');
+    }
+
+    function renderTopCriticals(topCriticals) {
+      var list = document.getElementById('top-criticals-list');
+      var box = document.getElementById('top-criticals');
+      if (!list) return;
+      // 一条都没有时整块收起，不留「标题 + 暂无 Critical 问题」空框占首屏
+      if (!topCriticals || !topCriticals.length) {
+        if (box) box.hidden = true;
+        list.innerHTML = '';
+        return;
+      }
+      if (box) box.hidden = false;
+      list.innerHTML = topCriticals.map(function(c) {
+        var desc = stripMdLite(c.description || '');
+        if (desc.length > 120) desc = desc.substring(0, 120) + '…';
+        // source 只有牵连影响条目才带：不标来源的话，读者会把"改动波及到的
+        // 其他调用点"当成"这段代码本身写错了"，两者要采取的动作不一样
+        var tag = c.source
+          ? '<span class="tc-source">' + escHtml(c.source) + '</span>'
+          : '';
+        return '<li>' + tag + '<strong>' + escHtml(c.file + (c.line ? ':' + c.line : '')) +
+               '</strong><span class="tc-desc">' + escHtml(desc) + '</span></li>';
+      }).join('');
+    }
+
+    // Export stubs (implemented in Task 5)
+    function exportJira() { alert('导出为 Jira 功能待实现'); }
+    function exportExcel() { alert('导出为 Excel 功能待实现'); }
+    function exportCsv() { alert('导出为 CSV 功能待实现'); }
+
+    // Inject summary data (Task 5)
+    if (typeof renderCategoryChart === 'function') renderCategoryChart({"\u9700\u6c42\u5916\u52a8\u4f5c": 2, "\u8fb9\u754c\u6761\u4ef6": 2, "\u5e76\u53d1\u5b89\u5168": 2, "\u5b89\u5168\u98ce\u9669": 1, "\u65e5\u5fd7\u89c4\u8303": 1, "\u5f02\u5e38\u5904\u7406": 1, "\u6743\u9650\u4e0e\u8bbf\u95ee\u63a7\u5236": 1, "\u9700\u6c42\u672a\u5b9e\u73b0": 1});
+if (typeof renderTopCriticals === 'function') renderTopCriticals([{"file": "pos-api/src/main/java/com/miq/posapi/controller/api/PusApiController.java", "line": "188-190", "severity": "critical", "category": "权限与访问控制", "description": "**原因：** 新增的 **PusApiController.getBeansAccount(...)** 直接通过 `@PostMapping(\"/pickup/beansAccount\")` 暴露接口，并在方法体内无任何权限注解、无 `INNER_API_KEY` 校验、无 `facilityCode` 归属校验，直接返回 `routeAccountService.getBeansAccount(req.getFacilityCode(), req.getPickupType())` 的结果。结合调用链可见，`RouteAccountServiceImpl.getBeansAccount(...)` 在 `available=true` 时会把 `fixRouteAccountAuthorization` 作为 `apiKey` 返回给调用方，这是敏感凭证读取接口。\n\n**影响：** 只要能够访问该 HTTP 入口的调用方，就可以枚举任意 `facilityCode` 和 `pickupType` 获取 Beans 账号凭证或探测配置状态（`NOT_CONFIGURED` / `INACTIVE`）。这会导致跨仓配置越权读取和敏感密钥泄露，后续可被用于冒用 Beans 账号发起外部调用。", "suggestion": "给 **PusApiController.getBeansAccount(...)** 增加与现有内部接口一致的鉴权门槛，并在服务层补充 `facilityCode` 数据范围校验；如果该接口仅供内部系统调用，至少应复用现有 `INNER_API_KEY` 或等价的内部鉴权机制，且禁止把 `fixRouteAccountAuthorization` 明文返回给无必要的调用方。可改为仅返回是否可用和账号标识，真正需要凭证的调用放在服务端完成。", "test_scenario": "未携带任何内部鉴权凭证直接调用 `POST /pickup/beansAccount`，请求体传入其他仓的 `facilityCode` 与有效 `pickupType`；验证当前实现会返回 `available`、`reason`，在已配置场景下还会返回 `apiKey`。修复后应返回未授权，或仅允许调用方访问其被授权的 `facilityCode`。", "http_method": "POST", "path_pattern": "/pickup/beansAccount", "permission_tags": [], "java_entry_method": "PusApiController.getBeansAccount(...)", "expected_permission": "仅被授权的内部调用方可访问，且只能读取其被授权范围内的 facilityCode 配置；不应向普通调用方返回 Beans 凭证明文。", "actual_behavior": "当前入口未见任何鉴权或数据范围限制，按请求中的 `facilityCode` 直接查询并返回 Beans 账号信息。", "evidence_refs": ["pos-api/src/main/java/com/miq/posapi/controller/api/PusApiController.java:188", "pos-api/src/main/java/com/miq/posapi/controller/api/PusApiController.java:190", "pos-service/src/main/java/com/miq/posservice/service/route/impl/RouteAccountServiceImpl.java:58-82"], "risk_label_zh": "高风险（敏感凭证越权读取）", "evidence_quote": "", "requirement_ref": "", "unimplemented_feature": "", "deviation_rationale_check": ""}, {"file": "pos-api/src/main/java/com/miq/posapi/job/BackfillChuteMappingDestinationJob.java", "line": "1-44", "severity": "critical", "category": "需求未实现", "description": "原因：需求文档在「💡Solution」下明确写了“上线前, 需确保历史数据的初始化或者兼容取大包目的地”，并且影响面里单列了“创建大包对象的时候, 取大包的Destination, 来自于新增字段: Container Destination”。本次 diff 反而删除了唯一显式承担历史数据回填职责的 `BackfillChuteMappingDestinationJob`，且从当前材料里看不到替代性的历史初始化实现或“兼容取大包目的地”的落地代码证据。删除后，需求里“上线前确保历史数据初始化或者兼容”的验收点没有实现证据支撑。 \n影响：如果线上已有 `pos_sorter_chute_mapping.destination` 存量为空或旧值数据，切换到依赖 `Container Destination` 的新逻辑后，历史 profile 仍可能继续按旧目的地或空值运行，导致创建大包、打印包牌或下游传输使用错误目的地。", "suggestion": "恢复并保留 `BackfillChuteMappingDestinationJob`，或在本次改动中补充等价的历史数据初始化/兼容读取实现，并在代码或文档中明确上线前执行路径。", "test_scenario": "准备两类历史 sorter profile 数据：第 1 类历史 `pos_sorter_chute_mapping.destination` 为空但业务上应有 `Container Destination`，第 2 类为已有旧目的地值。上线前执行初始化/兼容逻辑后，分别验证创建大包对象、打印包牌、下游目的地读取是否都得到需求期望的目的地。", "http_method": "", "path_pattern": "", "permission_tags": [], "java_entry_method": "", "expected_permission": "", "actual_behavior": "", "evidence_refs": [], "risk_label_zh": "", "evidence_quote": "public class BackfillChuteMappingDestinationJob {", "requirement_ref": "需求文档·💡Solution·“上线前, 需确保历史数据的初始化或者兼容取大包目的地”段落", "unimplemented_feature": "上线前对历史 sorter chute destination 数据做初始化回填或提供兼容读取，确保旧数据也能按新的 Container Destination 生效。", "deviation_rationale_check": ""}, {"file": "pos-service/src/main/java/com/miq/posservice/dto/pus/BeansAccountResp.java", "line": "25-26", "severity": "critical", "category": "安全风险", "description": "**原因：** `BeansAccountResp` 新增了 `apiKey` 字段，并且注释明确说明返回的是 `Beans Authorization` 原值且“含 Basic 前缀”。这意味着该 DTO 被序列化返回时，会把可直接用于调用 Beans 的凭证明文暴露给上游调用方，而不是仅返回脱敏标识或服务端代调用结果。\n\n**影响：** 一旦对应接口被误调用、越权调用、被抓包或被日志/监控链路采集，攻击者可直接复用 `apiKey` 冒充系统访问 Beans，造成第三方账号凭证泄露和后续横向调用风险；由于这是完整授权头值，风险等级应按敏感密钥泄露处理。", "suggestion": "不要在 `BeansAccountResp` 中返回 `Beans Authorization` 原值。应删除 `apiKey` 对外字段，改为仅在服务端内部使用；如果业务确需让调用方区分账号状态，只保留 `available`、`reason`、`accountName`（必要时也应评估是否脱敏）。若必须传递凭证，至少改为返回一次性短期令牌或脱敏值，而不是 `account.getFixRouteAccountAuthorization()` 的原文。", "test_scenario": "调用返回 `BeansAccountResp` 的接口，验证响应体中不再出现 `apiKey` 明文；同时抓取应用访问日志、网关日志和 APM 采样数据，确认不会记录 `Basic ` 开头的 Beans 凭证。", "http_method": "", "path_pattern": "", "permission_tags": [], "java_entry_method": "", "expected_permission": "", "actual_behavior": "", "evidence_refs": [], "risk_label_zh": "", "evidence_quote": "+    @ApiModelProperty(\"available=true 时返回；Beans Authorization 原值（含 Basic 前缀）\")", "requirement_ref": "", "unimplemented_feature": "", "deviation_rationale_check": "", "_line_unverified": true}]);
+
+    // Export dropdown toggle
+    (function() {
+      var btn = document.getElementById('export-btn');
+      var menu = document.getElementById('export-menu');
+      if (!btn || !menu) return;
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var shown = menu.style.display === 'block';
+        menu.style.display = shown ? 'none' : 'block';
+      });
+      document.addEventListener('click', function() {
+        menu.style.display = 'none';
+      });
+    })();
+  </script>
+</body>
+</html>
