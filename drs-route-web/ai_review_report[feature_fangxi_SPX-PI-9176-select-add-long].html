@@ -1,0 +1,2232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Code Review Report</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      /* 重新设计（用户反馈"前端样式不好看"）：底色/正文/次要文字/边框/标题
+         此前全部带一层绿色调（跟 --accent 撞在一起，显得到处都是同一种绿），
+         改成中性板岩灰基调 + 一个teal 强调色，层次更清楚，也更耐看。 */
+      --bg: #f3f4f7;
+      --card: #ffffff;
+      --text: #1c2333;
+      --muted: #667085;
+      --border: #e3e6ec;
+      --heading: #0f1420;
+      --accent: #0f766e;
+      --accent-dark: #0b5850;
+      --accent-soft: #e6f4f2;
+
+      --critical-bg: #fdeceb;
+      --critical-text: #b3261e;
+      --critical-border: #f3b7b2;
+      --critical-strong: #d1291f;
+
+      --major-bg: #fdf1e3;
+      --major-text: #a85311;
+      --major-border: #f4d19d;
+      --major-strong: #d5720f;
+
+      --minor-bg: #fdf7e0;
+      --minor-text: #8a6208;
+      --minor-border: #f1e096;
+      --minor-strong: #a37d0a;
+
+      --info-bg: #eaf1fd;
+      --info-text: #23509c;
+      --info-border: #c0d6f6;
+      --info-strong: #2f66c9;
+
+      --safe-bg: #e8f6ee;
+      --safe-text: #1a7a4c;
+      --safe-border: #aee3c4;
+
+      --chip-bg: #eef0f5;
+      --code-bg: #10182b;
+      --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+      --shadow: 0 8px 24px rgba(16, 24, 40, 0.08);
+      --shadow-lg: 0 20px 44px rgba(16, 24, 40, 0.14);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans SC", Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .page {
+      max-width: 1180px;
+      margin: 28px auto 48px;
+      padding: 0 20px;
+    }
+
+    /* 重新设计：原来是一大片高饱和绿色渐变斜切块，视觉上很"闹"；
+       改成深板岩底色 + 顶部一条细 teal 强调线，克制一些，也更像专业
+       研发工具的报告头，而不是营销落地页banner。 */
+    .hero {
+      position: relative;
+      background: linear-gradient(165deg, #0b1220 0%, #121a2c 55%, #0e2422 100%);
+      color: #f4f7fb;
+      border-radius: 18px;
+      padding: 26px 28px 24px;
+      box-shadow: var(--shadow-lg);
+      margin-bottom: 18px;
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 3px;
+      background: linear-gradient(90deg, #14b8a6, #22d3ee 45%, #14b8a6 100%);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -60px;
+      top: -60px;
+      width: 220px;
+      height: 220px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(20, 184, 166, 0.22), transparent 70%);
+      pointer-events: none;
+    }
+
+    .hero h1 {
+      margin: 0 0 10px;
+      font-size: 24px;
+      font-weight: 700;
+      line-height: 1.25;
+      letter-spacing: 0.1px;
+    }
+
+    .hero-meta {
+      margin: 0;
+      font-size: 13.5px;
+      color: #aab4c8;
+      letter-spacing: 0.01em;
+    }
+
+    .summary {
+      background: var(--card);
+      padding: 16px 18px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      margin-bottom: 20px;
+    }
+
+    .summary h2,
+    .section-title {
+      margin: 0 0 12px;
+      font-size: 18px;
+      color: var(--heading);
+    }
+
+    .subsection-title {
+      margin-top: 28px;
+    }
+
+    .api-permission-block code {
+      font-size: 12px;
+      word-break: break-all;
+    }
+
+    .api-surface-sub {
+      margin: 18px 0 8px;
+      font-size: 16px;
+      color: var(--heading);
+    }
+
+    .inferred-hint {
+      margin: 0 0 12px;
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    /* 总体结论正文区 */
+    .summary-body {
+      margin: 0 0 16px;
+      font-size: 14px;
+      color: var(--text);
+      line-height: 1.75;
+    }
+
+    .summary-body p {
+      margin: 0 0 10px;
+    }
+
+    .summary-body p:last-child {
+      margin-bottom: 0;
+    }
+
+    .summary-body ol,
+    .summary-body ul {
+      margin: 4px 0 12px;
+      padding-left: 22px;
+    }
+
+    .summary-body ol li,
+    .summary-body ul li {
+      margin-bottom: 6px;
+      line-height: 1.65;
+    }
+
+    .summary-body .summary-section-title {
+      font-weight: 700;
+      color: var(--heading);
+      margin: 16px 0 6px;
+      font-size: 13px;
+      letter-spacing: 0.3px;
+      padding-left: 8px;
+      border-left: 3px solid var(--accent);
+    }
+
+    .summary-body .summary-section-title:first-child {
+      margin-top: 0;
+    }
+
+    .summary-body strong {
+      color: var(--heading);
+      font-weight: 700;
+    }
+
+    /* 严重级别筛选区 */
+    .filter-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-top: 6px;
+    }
+
+    .filter-label {
+      font-size: 12px;
+      color: var(--muted);
+      margin-right: 2px;
+    }
+
+    .chips-impact-note {
+      width: 100%;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 5px 13px;
+      border-radius: 9px;
+      font-size: 12.5px;
+      font-weight: 700;
+      background: var(--chip-bg);
+      color: var(--heading);
+      border: 1px solid transparent;
+    }
+
+    .filter-chip {
+      cursor: pointer;
+      transition: transform 0.12s, box-shadow 0.12s, opacity 0.12s;
+      user-select: none;
+    }
+
+    .filter-chip:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 3px 8px rgba(0,0,0,0.12);
+    }
+
+    .filter-chip.active {
+      box-shadow: 0 0 0 2.5px currentColor;
+      transform: translateY(-1px);
+    }
+
+    .filter-chip.dimmed {
+      opacity: 0.4;
+    }
+
+    .critical { background: var(--critical-bg); color: var(--critical-text); border-color: var(--critical-border); }
+    .major { background: var(--major-bg); color: var(--major-text); border-color: var(--major-border); }
+    .minor { background: var(--minor-bg); color: var(--minor-text); border-color: var(--minor-border); }
+    .info { background: var(--info-bg); color: var(--info-text); border-color: var(--info-border); }
+
+    /* 筛选状态提示条 */
+    #filter-hint {
+      display: none;
+      margin: -10px 0 14px;
+      padding: 8px 14px;
+      background: var(--accent-soft);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    #filter-hint .clear-filter {
+      margin-left: 8px;
+      color: var(--accent);
+      cursor: pointer;
+      font-weight: 600;
+      text-decoration: underline;
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    /* 工具栏：搜索 + 展开折叠 */
+    .findings-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+      padding: 12px 14px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+    }
+
+    .findings-search {
+      flex: 1 1 220px;
+      min-width: 0;
+      padding: 10px 14px;
+      font: inherit;
+      font-size: 14px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+      color: var(--text);
+    }
+
+    .findings-search:focus {
+      outline: none;
+      box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.35);
+      border-color: var(--accent);
+    }
+
+    .findings-toolbar-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .toolbar-btn {
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--chip-bg);
+      color: var(--heading);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .toolbar-btn:hover {
+      background: #e3e6ec;
+    }
+
+    /* 文件 TOC */
+    .findings-toc {
+      margin-bottom: 16px;
+      padding: 10px 12px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+    }
+
+    .toc-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 8px;
+      letter-spacing: 0.04em;
+    }
+
+    .toc-pill-wrap {
+      display: flex;
+      flex-wrap: nowrap;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .toc-pill {
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      text-decoration: none;
+      color: var(--heading);
+      background: var(--chip-bg);
+      border: 1px solid var(--border);
+      transition: transform 0.12s, box-shadow 0.12s;
+    }
+
+    .toc-pill:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+
+    .toc-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .toc-dot.sev-critical { background: var(--critical-text); }
+    .toc-dot.sev-major { background: var(--major-text); }
+    .toc-dot.sev-minor { background: var(--minor-text); }
+    .toc-dot.sev-info { background: var(--info-text); }
+
+    /* 总体结论：多分片 */
+    .summary-shards-wrap {
+      margin-bottom: 4px;
+    }
+
+    .summary-shard {
+      margin-bottom: 14px;
+      padding: 12px 14px;
+      background: #fafbfd;
+      border-radius: 10px;
+      border-left: 4px solid var(--accent);
+    }
+
+    .summary-shard:last-of-type {
+      margin-bottom: 10px;
+    }
+
+    .summary-more[hidden] {
+      display: none !important;
+    }
+
+    .summary-toggle {
+      display: inline-block;
+      margin-top: 4px;
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 16px;
+      border-radius: 8px;
+      border: 1px solid var(--accent);
+      background: #fff;
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .summary-toggle:hover {
+      background: #eef8f5;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details {
+      margin-top: 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0 12px 10px;
+      background: #fafbfc;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details summary {
+      cursor: pointer;
+      padding: 10px 0;
+      font-weight: 600;
+      color: var(--accent);
+      list-style: none;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .summary-raw-pre {
+      margin: 0;
+      max-height: 420px;
+      overflow: auto;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* 按文件 findings：可折叠组 + 卡片 */
+    .findings-list-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    details.file-group.findings-file-group {
+      margin: 0;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .file-group-summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 14px;
+      padding: 14px 16px;
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .file-group-summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .file-group-title {
+      display: inline-flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 14px;
+      color: var(--heading);
+      flex: 1 1 200px;
+      min-width: 0;
+    }
+
+    .file-path-text {
+      word-break: break-all;
+      line-height: 1.45;
+    }
+
+    .sev-indicator {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      margin-top: 4px;
+    }
+
+    .sev-indicator.sev-critical { background: var(--critical-text); box-shadow: 0 0 0 2px var(--critical-bg); }
+    .sev-indicator.sev-major { background: var(--major-text); box-shadow: 0 0 0 2px var(--major-bg); }
+    .sev-indicator.sev-minor { background: var(--minor-text); box-shadow: 0 0 0 2px var(--minor-bg); }
+    .sev-indicator.sev-info { background: var(--info-text); box-shadow: 0 0 0 2px var(--info-bg); }
+
+    .file-group-stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .stat-chip {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 999px;
+    }
+
+    .stat-chip.stat-critical { background: var(--critical-bg); color: var(--critical-text); }
+    .stat-chip.stat-major { background: var(--major-bg); color: var(--major-text); }
+    .stat-chip.stat-minor { background: var(--minor-bg); color: var(--minor-text); }
+    .stat-chip.stat-info { background: var(--info-bg); color: var(--info-text); }
+
+    .file-group-count {
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .file-group-body {
+      padding: 12px 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .finding-card {
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: #fff;
+      padding: 15px 17px;
+      border-left-width: 4px;
+      border-left-style: solid;
+      box-shadow: var(--shadow-sm);
+      transition: box-shadow 0.15s;
+    }
+
+    .finding-card:hover { box-shadow: var(--shadow); }
+
+    .finding-card.severity-critical { border-left-color: var(--critical-strong); background: linear-gradient(90deg, var(--critical-bg) 0%, #fff 14px); }
+    .finding-card.severity-major { border-left-color: var(--major-strong); background: linear-gradient(90deg, var(--major-bg) 0%, #fff 14px); }
+    .finding-card.severity-minor { border-left-color: var(--minor-strong); background: linear-gradient(90deg, var(--minor-bg) 0%, #fff 14px); }
+    .finding-card.severity-info { border-left-color: var(--info-strong); background: linear-gradient(90deg, var(--info-bg) 0%, #fff 14px); }
+
+    .finding-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .sev-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 4px 12px;
+      border-radius: 7px;
+      font-size: 11.5px;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .sev-badge.critical { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .sev-badge.major { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .sev-badge.minor { background: var(--minor-bg); color: var(--minor-text); border: 1px solid var(--minor-border); }
+    .sev-badge.info { background: var(--info-bg); color: var(--info-text); border: 1px solid var(--info-border); }
+
+    .finding-line {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      background: var(--chip-bg);
+      padding: 4px 8px;
+      border-radius: 6px;
+    }
+
+    .finding-cat {
+      font-size: 12.5px;
+      font-weight: 700;
+      color: var(--accent-dark);
+      background: var(--accent-soft);
+      padding: 3px 9px;
+      border-radius: 6px;
+    }
+
+    /* 需求对账三类（需求未实现/需求矛盾/需求外动作）用色块徽章而非纯文字，
+       跟严重级别徽章一样醒目——用户反馈普通文字分类容易在列表里被漏看，
+       尤其"需求未实现"现在总是 Critical。*/
+    .finding-cat-requirement {
+      background: var(--critical-bg);
+      color: var(--critical-text);
+      border: 1px solid var(--critical-border);
+      border-radius: 6px;
+      padding: 3px 10px;
+    }
+
+    /* ── 接口审查覆盖清单 ── */
+    .endpoint-coverage {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px 18px;
+      box-shadow: var(--shadow);
+      margin-bottom: 20px;
+    }
+
+    .ec-note {
+      margin: 0 0 10px;
+      font-size: 13px;
+      line-height: 1.7;
+      color: var(--muted);
+    }
+
+    .ec-note-warn {
+      padding: 9px 12px;
+      border-radius: 8px;
+      background: var(--major-bg);
+      border-left: 4px solid var(--major-strong);
+      color: var(--major-text);
+    }
+
+    .ec-note-warn strong { color: var(--major-strong); }
+
+    .ec-table-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid var(--border); }
+
+    .ec-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .ec-table th {
+      text-align: left;
+      padding: 9px 12px;
+      background: #fafbfd;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .ec-table td {
+      padding: 10px 12px;
+      border-top: 1px solid var(--border);
+      vertical-align: top;
+      line-height: 1.65;
+    }
+
+    .ec-table tbody tr:first-child td { border-top: none; }
+
+    .ec-table .ec-method,
+    .ec-table .ec-verdict { white-space: nowrap; }
+
+    .ec-table .ec-path code {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+      word-break: break-all;
+    }
+
+    .ec-table .ec-reason { color: var(--muted); }
+
+    .ec-badge {
+      display: inline-block;
+      padding: 2px 9px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .ec-badge.ec-risk { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .ec-badge.ec-pending { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .ec-badge.ec-safe { background: var(--safe-bg); color: var(--safe-text); border: 1px solid var(--safe-border); }
+
+    tr.ec-risk td { background: #fffbfa; }
+    tr.ec-pending td { background: #fffdf9; }
+
+    /* 分片没审成时的披露条：必须比正文更抢眼，否则读者会把
+       「报告里没写」误当成「这里没问题」 */
+    .shard-health-alert {
+      margin: 0 0 12px;
+      padding: 12px 15px;
+      border-radius: 10px;
+      background: var(--critical-bg);
+      border: 1px solid var(--critical-border);
+      border-left: 4px solid var(--critical-strong);
+      color: var(--critical-text);
+      font-size: 13.5px;
+      line-height: 1.7;
+    }
+
+    .shard-health-alert strong { color: var(--critical-strong); }
+
+    .finding-desc {
+      font-size: 14px;
+      line-height: 1.65;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* finding 卡片正文的四行结构（问题 / 后果 / 怎么改 / 怎么验）。
+       用户反馈（build 532）"文案挤在一团，难以阅读"：此前正文是一整段
+       `原因：…影响：…` 靠 white-space:pre-wrap 原样糊上去，修复建议和测试
+       场景又被折叠藏起来。改成左标签 + 右正文的两列网格，每行一个语义单元，
+       段落之间有明确留白，长句由 Python 侧按句末标点拆成多个 <p>。 */
+    .finding-body {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      font-size: 14px;
+      line-height: 1.7;
+      color: var(--text);
+    }
+
+    .fb-row {
+      display: grid;
+      grid-template-columns: 68px minmax(0, 1fr);
+      gap: 2px 14px;
+      padding: 10px 0;
+      border-top: 1px dashed var(--border);
+    }
+
+    .fb-row:first-child {
+      border-top: none;
+      padding-top: 2px;
+    }
+
+    /* 重新设计：标签从"一段带颜色的纯文字"改成小色块标签（跟 sev-badge/
+       finding-cat 同一套视觉语言），扫一眼列表就能靠色块分辨这行是"问题"
+       还是"怎么改"，比单靠文字颜色更容易一眼分辨。 */
+    .fb-label {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1.6;
+      letter-spacing: 0.03em;
+      white-space: nowrap;
+      padding: 2px 8px;
+      border-radius: 6px;
+      margin-top: 1px;
+    }
+
+    .fb-problem .fb-label { color: var(--major-text); background: var(--major-bg); }
+    .fb-impact .fb-label { color: var(--critical-text); background: var(--critical-bg); }
+    .fb-fix .fb-label { color: var(--accent-dark); background: var(--accent-soft); }
+    .fb-test .fb-label { color: var(--info-text); background: var(--info-bg); }
+
+    .fb-text {
+      min-width: 0;
+      word-break: break-word;
+    }
+
+    .fb-text > p {
+      margin: 0 0 7px;
+    }
+
+    .fb-text > p:last-child {
+      margin-bottom: 0;
+    }
+
+    .fb-text .rt-list {
+      margin: 2px 0 6px;
+      padding-left: 20px;
+    }
+
+    .fb-text .rt-list li {
+      margin-bottom: 4px;
+    }
+
+    .fb-text .code-block {
+      margin: 8px 0 4px;
+      font-size: 12.5px;
+    }
+
+    .fb-text code {
+      background: var(--chip-bg);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+    }
+
+    /* 窄屏（Jenkins 里报告常挤在窗格里看）时标签落到正文上方，不再抢走
+       62px 宽度，避免正文被压成一列细条 */
+    @media (max-width: 720px) {
+      .fb-row {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 2px;
+      }
+    }
+
+    /* 证据代码块从固定 div 改成可折叠 details（默认展开）——一份报告里
+       十几张卡片各带 8-10 行代码，读者需要能收起来快速扫结论 */
+    details.finding-evidence > summary {
+      cursor: pointer;
+      list-style: none;
+    }
+
+    details.finding-evidence > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    details.finding-evidence > summary::before {
+      content: "▾ ";
+      color: var(--muted);
+    }
+
+    details.finding-evidence:not([open]) > summary::before {
+      content: "▸ ";
+    }
+
+    /* 证据代码块（2026-07-19 补）：evidence_quote 的稳定展示位置，不再依赖
+       模型是否顺手把代码写进 description 里；纯 CSS + Python 正则高亮，
+       不引外部 JS 库，内网报告零外部依赖风险。 */
+    .finding-evidence {
+      margin-top: 10px;
+    }
+
+    .finding-evidence .detail-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .code-block {
+      margin: 0;
+      padding: 12px 15px;
+      background: var(--code-bg);
+      color: #e6edf3;
+      border-radius: 9px;
+      overflow-x: auto;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+      line-height: 1.6;
+    }
+
+    .code-block code {
+      white-space: pre;
+      /* 2026-09-02 用户反馈：安全/权限折叠卡里"怎么改"给的整段修复示意代码
+         （``` 代码围栏渲染出来也是 <pre class="code-block"><code>）看不清——
+         根因是 .fb-text code（第 833 行，给"问题/后果/怎么改/怎么验"正文里
+         `existsActive` 这类行内代码片段配的浅灰底色）跟这里选择器优先级/
+         特异性相同，同一个 <code> 标签只要落在 .fb-text 范围内就会被套上
+         浅灰底，而 .code-annotation/.code-keyword 这套语法高亮配色是给
+         .code-block 本来的深色底（--code-bg）设计的，叠在浅灰底上对比度
+         塌陷，几乎看不见字。显式声明透明背景覆盖掉那条通用规则，让
+         .code-block 自己的深色底透出来。 */
+      background: transparent;
+    }
+
+    .code-comment { color: #8b949e; font-style: italic; }
+    .code-string { color: #a5d6ff; }
+    .code-annotation { color: #d2a8ff; }
+    .code-keyword { color: #ff7b72; font-weight: 600; }
+    .code-number { color: #79c0ff; }
+
+    /* 带上下文的证据代码块（逐行渲染，问题行整行高亮）*/
+    .code-row {
+      display: block;
+      padding: 0 6px;
+      border-left: 3px solid transparent;
+    }
+
+    .code-row-target {
+      background: rgba(255, 123, 114, 0.16);
+      border-left-color: #ff7b72;
+    }
+
+    .code-ln {
+      display: inline-block;
+      min-width: 2.5em;
+      margin-right: 12px;
+      color: #6e7681;
+      text-align: right;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    .finding-details {
+      margin-top: 12px;
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+      padding: 0;
+      background: #fafbfd;
+    }
+
+    .finding-details > summary {
+      cursor: pointer;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--heading);
+      list-style: none;
+    }
+
+    .finding-details > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .finding-details-body {
+      padding: 0 14px 14px;
+      border-top: 1px solid var(--border);
+    }
+
+    .detail-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin: 12px 0 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .finding-suggestion p,
+    .finding-test p {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.65;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .file-block {
+      margin: 14px 0 18px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: var(--shadow);
+    }
+
+    .file-block h3 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      color: var(--heading);
+      word-break: break-all;
+    }
+
+    table {
+      border-collapse: separate;
+      border-spacing: 0;
+      width: 100%;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+    }
+
+    th, td {
+      border-bottom: 1px solid var(--border);
+      padding: 10px;
+      vertical-align: top;
+      text-align: left;
+      font-size: 13px;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      background: #fafbfd;
+      color: var(--heading);
+      font-weight: 700;
+      z-index: 1;
+    }
+
+    tbody tr:nth-child(even) { background: #fafbfd; }
+    tbody tr:last-child td { border-bottom: none; }
+
+    .empty {
+      padding: 18px;
+      border: 1px dashed var(--border);
+      border-radius: 14px;
+      color: var(--muted);
+      background: #fafbfd;
+    }
+
+    @media (max-width: 900px) {
+      .hero h1 { font-size: 22px; }
+      .summary,
+      .file-block { padding: 12px; }
+      th, td { padding: 8px; font-size: 12px; }
+      .charts-row { flex-direction: column; }
+    }
+
+    /* ── 报告标签页 ──
+       重新设计：从"按钮选中变绿色渐变块"改成分段控件（segmented control）
+       的样式——浅灰底槽 + 选中项浮成白色药丸，更接近成熟工具（如 GitHub/
+       Linear）里的页签观感，也跟下面卡片的白底形成呼应。 */
+    .report-tabs {
+      display: inline-flex;
+      gap: 2px;
+      padding: 4px;
+      margin-bottom: 18px;
+      background: #e9ebf0;
+      border-radius: 12px;
+      flex-wrap: wrap;
+    }
+    .report-tabs button {
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 18px;
+      border-radius: 9px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 13.5px;
+      transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+    }
+    .report-tabs button:hover {
+      color: var(--heading);
+    }
+    .report-tabs button[aria-selected="true"] {
+      background: #ffffff;
+      color: var(--heading);
+      box-shadow: var(--shadow-sm);
+    }
+    .report-panel { display: none; }
+    .report-panel.is-active { display: block; }
+
+    /* ── 数据权限页（嵌入，与综合页隔离） ── */
+    .dp-shell {
+      font-family: "Avenir Next", "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif;
+      color: #1a2b22;
+      line-height: 1.6;
+    }
+
+    /* 重置全局 table 样式污染 */
+    .dp-shell table {
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+    }
+    .dp-shell th, .dp-shell td {
+      border: none !important;
+      border-bottom: 1px solid #edf2f7 !important;
+      background: transparent !important;
+    }
+
+    .dp-shell .dp-header {
+      position: relative;
+      background: linear-gradient(165deg, #0b1220 0%, #121a2c 55%, #0e2422 100%);
+      color: #f4f7fb;
+      padding: 26px 28px 24px;
+      border-radius: 18px;
+      margin-bottom: 24px;
+      box-shadow: var(--shadow-lg);
+      overflow: hidden;
+    }
+    .dp-shell .dp-header::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 3px;
+      background: linear-gradient(90deg, #14b8a6, #22d3ee 45%, #14b8a6 100%);
+    }
+    .dp-shell .dp-header h1 { font-size: 1.4rem; font-weight: 700; letter-spacing: .01em; margin: 0 0 6px; }
+    .dp-shell .dp-header .subtitle { margin: 0; color: #aab4c8; font-size: .9rem; }
+    .dp-shell .dp-header .meta-row { margin-top: 16px; display: flex; gap: 24px; flex-wrap: wrap; }
+    .dp-shell .dp-header .meta-item { font-size: .8rem; color: #8b95ab; }
+    .dp-shell .dp-header .meta-item strong { color: #8ce8d4; font-weight: 600; }
+
+    .dp-shell .dp-body { padding: 0 0 32px; }
+
+    /* ── dp-shell 内部组件（与 Python 生成的类名严格对齐） ── */
+
+    /* 统计卡片区（Python 生成 .summary-grid / .summary-card） */
+    .dp-shell .dp-stats { margin-bottom: 4px; }
+    .dp-shell .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+    .dp-shell .summary-card {
+      background: #fff;
+      border-radius: 14px;
+      padding: 18px 20px;
+      box-shadow: var(--shadow-sm);
+      border: 1px solid var(--border);
+      border-top: 3px solid transparent;
+    }
+    .dp-shell .summary-card.critical { border-top-color: var(--critical-strong); }
+    .dp-shell .summary-card.high     { border-top-color: var(--major-strong); }
+    .dp-shell .summary-card.medium   { border-top-color: var(--minor-strong); }
+    .dp-shell .summary-card.info     { border-top-color: var(--info-strong); }
+    .dp-shell .summary-card .count   { font-size: 2.1rem; font-weight: 800; line-height: 1; }
+    .dp-shell .summary-card.critical .count { color: var(--critical-text); }
+    .dp-shell .summary-card.high     .count { color: var(--major-text); }
+    .dp-shell .summary-card.medium   .count { color: var(--minor-text); }
+    .dp-shell .summary-card.info     .count { color: var(--info-text); }
+    .dp-shell .summary-card .label   { margin-top: 8px; font-size: .72rem; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .07em; }
+
+    /* 区块标题 */
+    .dp-shell .dp-section { margin-bottom: 24px; }
+    .dp-shell .dp-section-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--heading);
+      margin: 0 0 14px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* 角色定义盒（Python 生成 .role-box / .role-icon / .role-info） */
+    .dp-shell .dp-roles { display: flex; flex-direction: column; gap: 10px; }
+    .dp-shell .role-box {
+      background: #fff;
+      border-radius: 12px;
+      padding: 16px 20px;
+      box-shadow: 0 2px 10px rgba(17,51,38,.07);
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+    }
+    .dp-shell .role-box.muted {
+      background: #f8f9fb;
+      border: 1px solid var(--border);
+      box-shadow: none;
+    }
+    .dp-shell .role-icon { font-size: 1.8rem; line-height: 1; flex-shrink: 0; }
+    .dp-shell .role-info { flex: 1; min-width: 0; }
+    .dp-shell .role-info h3 { font-size: 1rem; font-weight: 700; color: var(--heading); margin: 0 0 4px; }
+    .dp-shell .role-info .role-md { font-size: .88rem; color: #4a5568; margin-top: 8px; line-height: 1.65; word-break: break-word; }
+    .dp-shell .role-info code { background: #edf2f7; padding: 1px 6px; border-radius: 4px; font-size: .85em; }
+
+    /* gate banner */
+    .dp-shell .dp-gate { margin-bottom: 20px; }
+
+    /* 审计表格包装（Python 生成 .table-wrap > table.dp-audit）
+       表头从深绿底改成跟报告其它表格（.ec-table）同一套浅底大写小标签，
+       整份报告的表格风格统一，不再是"深色表头 vs 浅色表头"两套语言。 */
+    .dp-shell .table-wrap {
+      overflow-x: auto;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow-sm);
+    }
+    .dp-shell table.dp-audit {
+      width: 100% !important;
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+      font-size: .84rem;
+    }
+    .dp-shell .dp-audit th {
+      background: #fafbfd !important;
+      color: var(--muted) !important;
+      padding: 11px 14px !important;
+      text-align: left !important;
+      font-size: .68rem !important;
+      font-weight: 700 !important;
+      text-transform: uppercase !important;
+      letter-spacing: .07em !important;
+      white-space: nowrap !important;
+      border-bottom: 1px solid var(--border) !important;
+      position: sticky;
+      top: 0;
+    }
+    .dp-shell .dp-audit td {
+      padding: 11px 14px !important;
+      border-bottom: 1px solid var(--border) !important;
+      vertical-align: top !important;
+      color: var(--text) !important;
+      background: transparent !important;
+    }
+    .dp-shell .dp-audit tr:last-child td { border-bottom: none !important; }
+    .dp-shell .dp-audit tr:hover td { background: #f8f9fb !important; }
+    .dp-shell .dp-audit tr.row-critical td { background: var(--critical-bg) !important; }
+    .dp-shell .dp-audit tr.row-critical:hover td { background: #fbdcda !important; }
+    .dp-shell .dp-audit tr.row-major td { background: var(--major-bg) !important; }
+    .dp-shell .dp-audit tr.row-major:hover td { background: #fbe4c4 !important; }
+
+    /* HTTP 方法 & 严重性徽标（Python 生成 .badge .badge-*） */
+    .dp-shell .badge {
+      display: inline-block; padding: 2px 9px; border-radius: 6px;
+      font-size: .72rem; font-weight: 700; letter-spacing: .04em; white-space: nowrap;
+    }
+    .dp-shell .badge-get    { background: var(--info-bg); color: var(--info-text); }
+    .dp-shell .badge-post   { background: var(--safe-bg); color: var(--safe-text); }
+    .dp-shell .badge-put    { background: var(--minor-bg); color: var(--minor-text); }
+    .dp-shell .badge-delete { background: var(--critical-bg); color: var(--critical-text); }
+    .dp-shell .badge-patch  { background: #f4f0fd; color: #6b46c1; }
+    .dp-shell .badge-critical { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .dp-shell .badge-high     { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .dp-shell .badge-medium   { background: var(--minor-bg); color: var(--minor-text); border: 1px solid var(--minor-border); }
+    .dp-shell .badge-info     { background: var(--info-bg); color: var(--info-text); border: 1px solid var(--info-border); }
+
+    /* 风险文字 */
+    .dp-shell .risk-zh { font-size: .82rem; color: var(--text); font-weight: 600; line-height: 1.4; }
+
+    /* Issue 列表（Python 生成 .issue-list） */
+    .dp-shell .issue-list { list-style: none !important; margin: 6px 0 0; padding: 0; }
+    .dp-shell .issue-list li { position: relative; padding: 3px 0 3px 18px; font-size: .84rem; color: #4a5568; line-height: 1.55; }
+    .dp-shell .issue-list li::before { content: "▸"; position: absolute; left: 2px; color: #e53e3e; }
+    .dp-shell .issue-list li strong { color: var(--heading); }
+    .dp-shell .issue-list code { background: #edf2f7; padding: 1px 5px; border-radius: 3px; font-size: .85em; }
+
+    /* 修复建议卡片（Python 生成 .fix-card） */
+    .dp-shell .fix-card {
+      background: #f0faf5;
+      border-left: 4px solid var(--accent);
+      border-radius: 0 10px 10px 0;
+      padding: 13px 16px;
+      margin-top: 10px;
+    }
+    .dp-shell .fix-card h4 { font-size: .84rem; font-weight: 700; color: var(--heading); margin: 0 0 6px; }
+    .dp-shell .fix-card p, .dp-shell .fix-card li { font-size: .83rem; color: #2d4a3d; line-height: 1.6; margin: 0; }
+    .dp-shell .fix-card ul, .dp-shell .fix-card ol { padding-left: 18px; margin: 6px 0; }
+    .dp-shell .fix-card code { background: #d4efe4; padding: 1px 5px; border-radius: 4px; font-size: .85em; }
+
+    /* 代码块（Python 生成 .code-block） */
+    .dp-shell .code-block {
+      background: var(--code-bg); color: #e2e8f0; border-radius: 9px;
+      padding: 12px 16px; margin-top: 8px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: .78rem; line-height: 1.55; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+    }
+
+    /* 端点详情折叠（Python 生成 details.issue-fold） */
+    .dp-shell details.issue-fold {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: var(--shadow-sm);
+      margin-bottom: 12px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .dp-shell details.issue-fold > summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 13px 16px;
+      font-weight: 600;
+      font-size: .9rem;
+      color: var(--heading);
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid transparent;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transition: background .15s;
+    }
+    .dp-shell details.issue-fold > summary::-webkit-details-marker { display: none; }
+    .dp-shell details.issue-fold > summary::before { content: "▸"; font-size: 11px; color: var(--accent); transition: transform .15s; }
+    .dp-shell details.issue-fold[open] > summary::before { transform: rotate(90deg); }
+    .dp-shell details.issue-fold[open] > summary { border-bottom-color: var(--border); background: var(--accent-soft); }
+    .dp-shell .issue-fold-body { padding: 16px 20px; font-size: .85rem; color: #4a5568; }
+    .dp-shell .issue-fold-body p { margin: 6px 0; line-height: 1.65; }
+    .dp-shell .issue-fold-body strong { color: var(--heading); }
+
+    /* dp-fold（端点详情另一种渲染，Python 生成 details.dp-fold） */
+    .dp-shell .dp-folds { display: flex; flex-direction: column; gap: 10px; }
+    .dp-shell .dp-fold {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
+    }
+    .dp-shell .dp-fold > summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 13px 16px;
+      font-weight: 600;
+      font-size: .9rem;
+      color: var(--heading);
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .dp-shell .dp-fold > summary::-webkit-details-marker { display: none; }
+    .dp-shell .dp-fold > summary::before { content: "▸"; font-size: 11px; color: var(--accent); transition: transform .15s; }
+    .dp-shell .dp-fold[open] > summary::before { transform: rotate(90deg); }
+    .dp-shell .dp-fold-body { padding: 16px; font-size: .85rem; color: #4a5568; }
+
+    /* issue list（dp-fold 内部用） */
+    .dp-shell .dp-issue-list { list-style: none; margin: 8px 0 0; padding: 0; }
+    .dp-shell .dp-issue-list li { position: relative; padding: 3px 0 3px 18px; font-size: .84rem; color: #4a5568; }
+    .dp-shell .dp-issue-list li::before { content: "▸"; position: absolute; left: 2px; color: #e53e3e; }
+
+    /* dp-fix（dp-fold 内部修复建议） */
+    .dp-shell .dp-fix {
+      background: #f0faf5;
+      border-left: 4px solid var(--accent);
+      border-radius: 0 10px 10px 0;
+      padding: 12px 16px;
+      margin-top: 10px;
+    }
+    .dp-shell .dp-fix h4 { font-size: .84rem; font-weight: 700; color: var(--heading); margin: 0 0 6px; }
+    .dp-shell .dp-fix p, .dp-shell .dp-fix li { font-size: .83rem; color: #2d4a3d; line-height: 1.6; margin: 0; }
+    .dp-shell .dp-fix code { background: #d4efe4; padding: 1px 5px; border-radius: 4px; font-size: .85em; }
+
+    /* dp-code（dp-fold 内部代码块） */
+    .dp-shell .dp-code {
+      background: var(--code-bg); color: #e2e8f0; border-radius: 9px;
+      padding: 12px 16px; margin-top: 8px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: .78rem; line-height: 1.55; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+    }
+
+    /* 存量越权风险区块（dp-shell 内，全文扫描）*/
+    .dp-shell .legacy-privilege-block {
+      background: var(--minor-bg);
+      border: 1px solid var(--minor-border);
+      border-left: 4px solid var(--minor-strong);
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin-bottom: 16px;
+    }
+    .dp-shell .legacy-privilege-block .lp-title { font-size: 14px; font-weight: 700; color: var(--minor-strong); margin: 0 0 4px; }
+    .dp-shell .legacy-privilege-block .lp-subtitle { font-size: 12px; color: var(--minor-text); margin: 0 0 14px; }
+
+    .dp-shell .dp-footer {
+      text-align: center; font-size: .78rem; color: #a0aec0;
+      margin-top: 36px; padding-top: 20px; border-top: 1px solid var(--border);
+    }
+
+    /* ── 综合审查 Tab 权限接口表（privilege_endpoints 模式，在 dp-shell 外） ── */
+    .perm-table-wrap {
+      overflow-x: auto;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow-sm);
+    }
+    .perm-table {
+      width: 100%;
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+      font-size: .84rem;
+    }
+    .perm-table th {
+      background: #fafbfd !important;
+      color: var(--muted) !important;
+      padding: 10px 14px !important;
+      text-align: left !important;
+      font-size: .68rem !important;
+      font-weight: 700 !important;
+      text-transform: uppercase !important;
+      letter-spacing: .07em !important;
+      white-space: nowrap !important;
+      border-bottom: 1px solid var(--border) !important;
+    }
+    .perm-table td {
+      padding: 10px 14px !important;
+      border-bottom: 1px solid var(--border) !important;
+      vertical-align: top !important;
+      color: var(--text) !important;
+      background: transparent !important;
+    }
+    .perm-table tr:last-child td { border-bottom: none !important; }
+    .perm-table tr:hover td { background: #f8f9fb !important; }
+    .api-permission-block { overflow-x: auto; }
+
+    /* 存量越权风险区块（综合审查 Tab，全文扫描） */
+    .legacy-privilege-block {
+      background: var(--minor-bg);
+      border: 1px solid var(--minor-border);
+      border-left: 4px solid var(--minor-strong);
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin-bottom: 16px;
+    }
+    .legacy-privilege-block .lp-title { font-size: 14px; font-weight: 700; color: var(--minor-strong); margin: 0 0 4px; }
+    .legacy-privilege-block .lp-subtitle { font-size: 12px; color: var(--minor-text); margin: 0 0 14px; }
+    /* 根因聚合卡片 */
+    .cluster-card { border-left: 4px solid #6366f1; }
+    .cluster-badge {
+      background: #6366f1; color: #fff;
+      font-size: 11px; padding: 2px 8px;
+      border-radius: 10px; margin-left: 8px;
+      font-weight: 600; letter-spacing: .02em;
+    }
+    .cluster-locations { margin: 8px 0 4px; }
+    .cluster-locations > summary {
+      cursor: pointer; color: #6366f1;
+      font-size: 13px; font-weight: 500;
+    }
+    .cluster-locations > summary:hover { text-decoration: underline; }
+    .loc-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+    .loc-table th, .loc-table td {
+      padding: 4px 8px; border: 1px solid #e5e7eb; text-align: left;
+    }
+    .loc-table th { background: #f9fafb; font-weight: 600; }
+    .loc-file { font-family: monospace; color: #374151; }
+    .loc-line { text-align: center; color: #6b7280; white-space: nowrap; }
+    .loc-snippet { color: #4b5563; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* ── Charts Row (并列布局) ── */
+    .charts-row {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    /* ── Chart Section ── */
+    .chart-section {
+      flex: 1 1 0;
+      min-width: 0;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .chart-container {
+      position: relative;
+      height: 260px;
+    }
+
+    /* ── Top 3 Criticals in Hero ── */
+    .top-criticals {
+      position: relative;
+      margin-top: 18px;
+      padding-top: 16px;
+      border-top: 1px solid rgba(255,255,255,0.12);
+    }
+
+    .top-criticals h3 {
+      margin: 0 0 10px;
+      font-size: 13px;
+      font-weight: 700;
+      color: #ff9d94;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .top-criticals ul {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .top-criticals li {
+      font-size: 13px;
+      color: #d6dcea;
+      line-height: 1.5;
+      padding: 9px 12px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.09);
+      border-left: 3px solid #f2645a;
+      border-radius: 0 8px 8px 0;
+    }
+
+    .top-criticals li strong {
+      color: #ffe1dc;
+      font-weight: 700;
+      display: block;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12px;
+    }
+
+    .top-criticals[hidden] { display: none !important; }
+
+    .top-criticals .tc-desc {
+      display: block;
+      margin-top: 3px;
+    }
+
+    .top-criticals .tc-source {
+      display: inline-block;
+      margin-bottom: 4px;
+      padding: 1px 7px;
+      border-radius: 5px;
+      background: rgba(255,255,255,0.14);
+      color: #f4f7fb;
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    /* ── Export Dropdown ── */
+    .export-dropdown {
+      position: relative;
+    }
+
+    .export-menu {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 4px);
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+      min-width: 160px;
+      z-index: 100;
+      overflow: hidden;
+    }
+
+    .export-menu a {
+      display: block;
+      padding: 10px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--heading);
+      text-decoration: none;
+      transition: background 0.12s;
+    }
+
+    .export-menu a:hover {
+      background: #eef5f1;
+    }
+
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <h1>AI Code Review 报告</h1>
+      <p class="hero-meta">服务: drs-route-web | 生成时间: 2026-10-19 14:26:37</p>
+      <div class="top-criticals" id="top-criticals" hidden>
+        <h3>最需要先看的问题（Critical）</h3>
+        <ul id="top-criticals-list"></ul>
+      </div>
+    </header>
+
+    <div class="report-tabs" role="tablist" aria-label="报告视图">
+      <button type="button" role="tab" id="tab-general" aria-controls="panel-general" aria-selected="true" onclick="switchReportTab('general')">综合审查</button>
+      <button type="button" role="tab" id="tab-dp" aria-controls="panel-dp" aria-selected="false" onclick="switchReportTab('dp')">权限与业务规则</button>
+    </div>
+
+    <div id="panel-general" class="report-panel is-active" role="tabpanel" aria-labelledby="tab-general">
+    <section class="summary">
+      <h2>总体结论</h2>
+      <div id="summary-text" class="summary-body summary-preformatted"><div class="shard-health-alert">⚠ 这份报告不完整：本次把改动切成 37 段分别审查，其中 1 段代码没审成（第 34 段）。这些内容不会出现在下面任何一处，<strong>不能把「报告里没写」当成「这里没问题」</strong>——请重跑本次审查，或对这部分人工过一遍。</div><div class="summary-condensed"><p>合并 <strong>37</strong> 个分片审查，共 <strong>40</strong> 条发现 （Critical 7 · Major 26 · Minor 5 · Info 2）。</p><p>逐条明细见下方「按文件的审查发现」；接口与数据权限维度见顶部「权限与业务规则」页签。</p><details class="summary-raw-details"><summary>展开各分片原文结论</summary><pre class="summary-raw-pre"><strong>分片 1</strong>
+
+本分片发现 2 个安全问题：一处是文档中提交了可直接使用的 Nacos 默认凭据，另一处是 <code>backend/app/application.py</code> 放宽了 5xx 错误脱敏范围，可能把上游内部异常细节暴露给客户端。其余本分片新增/修改行未见可直接确认的新增越权、SQL 注入或前端安全问题。
+
+<strong>分片 2</strong>
+
+本分片未发现新增鉴权放行或密钥硬编码问题，但 <code>vinted_route_pos_backfill.py</code> 新增了一个并发下的先查后写竞态，以及一个把真实失败静默伪装成空结果的异常处理问题，都会直接影响补单链路的可靠性与数据一致性。HTTP 入口清单：本分片 diff 中未出现 <code>@GetMapping</code>/<code>@PostMapping</code>/<code>@RequestMapping</code> 等映射，无法列出新增 HTTP 入口。
+
+<strong>分片 3</strong>
+
+发现 1 个安全问题：Redis TLS 连接关闭了服务端证书校验，允许中间人伪造进度与锁状态，影响组路任务控制面的完整性。本分片未出现可识别的 HTTP 路由映射新增，因此无 HTTP 入口清单。
+
+<strong>分片 4</strong>
+
+本分片未发现新增鉴权放行或敏感数据直出问题，但有多处把数据库连接关闭条件从“已连接再关闭”放宽为仅判空，清理阶段二次抛错会放大异常路径并造成可触发的服务不稳定风险。建议统一封装安全关闭逻辑，避免在 finally 中覆盖原始异常。
+
+<strong>分片 5</strong>
+
+本分片新增内容以调度器与测试代码为主，未看到新增 HTTP 入口、鉴权放行或前端敏感数据落地问题。主要安全风险是 <code>backend/scheduler_worker.py</code> 将所有业务线程设为 daemon，停机时可能中断正在进行的数据库/外部同步任务，带来数据一致性隐患。
+
+<strong>分片 6</strong>
+
+本分片新增内容均为后端测试代码，未看到新增 HTTP 路由、鉴权放行、敏感信息持久化或可被生产流量触发的安全逻辑变更。按仅审查 diff 中新增/修改行的约束，本分片未发现需要报告的安全问题。
+
+<strong>分片 7</strong>
+
+本分片新增内容均为 backend/tests 下的测试代码，未看到新增 HTTP 入口、鉴权放行、硬编码真实密钥、敏感日志泄露、命令执行、反序列化或可被外部输入触发的 SQL 拼接风险。基于仅审查本 diff 新增/修改行的约束，本分片未发现需要报告的安全问题。
+
+HTTP 入口清单（方法 + 路径）
+- 本分片 diff 未出现 <code>@GetMapping</code>、<code>@PostMapping</code>、<code>@PutMapping</code>、<code>@DeleteMapping</code>、<code>@PatchMapping</code> 或带路径的 <code>@RequestMapping</code>，无新增 HTTP 入口可审查。
+
+<strong>分片 8</strong>
+
+本分片新增内容主要是后端测试代码，未见新增 HTTP 入口、鉴权放行、敏感信息落盘/日志、命令执行或不受信反序列化等安全风险；新增 SQL 均带参数或明确 WHERE 条件，未发现会直接影响生产安全面的变更。
+
+<strong>分片 9</strong>
+
+本分片仅新增了两个 backend 测试文件，变更内容主要是集成测试与测试数据清理/构造逻辑；基于当前可见 diff，未发现新增的鉴权放行、敏感信息暴露、命令执行、反序列化或可被生产路径直接利用的安全问题。当前分片也未出现可识别的 HTTP 映射注解，因此无 HTTP 入口清单。
+
+<strong>分片 10</strong>
+
+本分片仅看到新增测试文件 <code>backend/tests/test_vinted_route_pickup_result_consumer.py</code> 与 <code>backend/tests/test_vinted_route_pos_backfill.py</code> 的 diff，未发现新增/修改行中直接引入的安全问题。未出现 HTTP 路由映射、鉴权放行、敏感信息落盘/日志、命令执行或不安全反序列化等高风险变更；现有新增代码主要为测试桩、测试数据构造与受限范围的测试清理 SQL。
+
+<strong>分片 11</strong>
+
+本分片仅新增测试文件，未引入新的 HTTP 入口、鉴权放行、前端敏感数据存储或真实外部调用实现变更；从安全维度看，新增代码主要是 mock/内存假实现/测试数据清理，未发现需要报告的新增安全问题。
+
+<strong>分片 12</strong>
+
+本分片新增内容主要是 <code>backend/app/core/_sw_protocol/protocol/**</code> 下的 protobuf/gRPC 生成代码与空 <code>__init__.py</code>，未看到新增 HTTP 入口、鉴权放行、敏感信息落盘/日志、命令执行、SQL 拼接或其他可直接落地的安全缺陷。当前 diff 中可见风险主要是版本兼容性检查与协议定义引入，本分片未发现需要报告的安全问题。
+
+<strong>分片 13</strong>
+
+本分片新增内容均为 backend/tests 下的测试代码，未见新增 HTTP 入口、鉴权放行、敏感信息落盘/日志、命令执行、反序列化或生产路径上的 SQL 拼接等安全问题。测试中虽包含真实 Kafka/Azure 访问与若干动态 SQL，但均限定在测试文件内且新增语句都带有明确过滤条件，未发现会直接削弱生产安全边界的变更。
+
+<strong>分片 14</strong>
+
+本分片新增内容以测试、worker 启动入口、构建/部署说明和数据库迁移脚本为主；基于当前可见 diff，未发现可直接落到新增/修改行上的安全问题。未见新增 HTTP 映射、匿名放行、鉴权关闭、敏感信息硬编码或可确认的 SQL 注入/越权入口。
+
+<strong>分片 15</strong>
+
+本分片仅看到一份新增接入文档，但文档本身泄露了 beans 的真实接入端点、鉴权头格式、凭证形态以及 Redis 键模式等高敏运行细节，已构成可利用的敏感信息暴露风险。未见本分片中的 HTTP 入口变更。
+
+<strong>分片 16</strong>
+
+本分片仅看到新增业务需求文档 <code>docs/pudo route/Generate_Vinted_Route_业务需求文档.md</code>，未出现可执行代码、HTTP 映射、鉴权配置或前端渲染逻辑变更；基于当前 diff，未发现可直接落到新增/修改行上的安全问题。由于本分片没有 <code>@GetMapping</code>/<code>@PostMapping</code> 等 HTTP 入口变更，HTTP 入口清单不适用。
+
+<strong>分片 17</strong>
+
+本分片仅看到新增的静态原型文档 <code>docs/pudo route/Generate_Vinted_Route_原型.html</code> 的截断 diff，未见可执行前端/后端业务代码、HTTP 映射、鉴权配置或敏感数据处理逻辑；基于当前可见新增行，未发现可确认的安全问题。由于 diff 被截断且本分片未提供该 HTML 文件的完整新增内容，若文件后半段包含内联脚本、外链凭证或可提交真实数据的表单逻辑，需在完整 diff 上补充复审。
+
+<strong>分片 18</strong>
+
+本分片新增内容主要是文档，但发现 1 处明确的明文凭证泄露：外部流程图访问密码被直接提交到仓库，属于可被立即利用的信息暴露风险。未见本分片 diff 中可识别的 HTTP 入口映射变更，因此无需列出 HTTP 入口清单。
+
+<strong>分片 19</strong>
+
+本分片仅看到一个新增原型 HTML 文件，未发现可识别的后端 HTTP 入口或鉴权变更；主要安全问题是未校验的第三方 CDN 脚本引入，存在前端供应链攻击面。
+
+<strong>分片 20</strong>
+
+本分片仅包含新增的需求文档与静态 HTML 原型文件，未见新增后端/前端可执行逻辑、HTTP 入口、鉴权配置、外部调用或数据处理代码；基于当前 diff，未发现可落到新增/修改行的安全问题。
+
+HTTP 入口清单（方法 + 路径）
+- 本分片 diff 未出现 <code>@GetMapping</code>、<code>@PostMapping</code>、<code>@PutMapping</code>、<code>@DeleteMapping</code>、<code>@PatchMapping</code> 或带路径的 <code>@RequestMapping</code>，无可识别 HTTP 入口。
+
+<strong>分片 21</strong>
+
+本分片仅看到新增的原型 HTML 文档片段，且 diff 被截断，当前可见新增内容主要是静态样式与外链字体引用，未发现可直接落到新增/修改行上的安全问题。当前可见片段中也未出现可识别的 HTTP 入口映射，因此无需补充 HTTP 入口清单。
+
+<strong>分片 22</strong>
+
+本分片新增内容主要是 drs_frontend 的构建与包管理配置，未发现直接的 XSS、越权、Token 持久化或匿名放行问题。需要关注的是 npm registry 与 Docker 构建方式同时放宽了依赖供应链控制，建议尽快补齐 lockfile、<code>npm ci</code> 和可审计私有代理以降低发布链路风险。
+
+<strong>分片 23</strong>
+
+本分片新增内容主要是 SkyWalking 的 protobuf/gRPC 生成代码与类型声明，未看到新增 HTTP 入口、鉴权放行、敏感数据落盘/日志、命令执行、SQL 拼接或其他可直接落地的安全问题。基于当前 diff，可认为本分片无新增安全风险。
+
+<strong>分片 24</strong>
+
+本分片仅看到 <code>drs_frontend/dist/assets/index-B1kFS87k.css</code> 的新增构建产物，未见可判定的新增安全逻辑、HTTP 入口或鉴权相关代码；基于当前 diff 片段，未发现需要报告的安全问题。
+
+HTTP 入口清单（方法 + 路径）：本分片 diff 未出现 <code>@GetMapping</code>、<code>@PostMapping</code>、<code>@PutMapping</code>、<code>@DeleteMapping</code>、<code>@PatchMapping</code> 或带路径的 <code>@RequestMapping</code>，无可列出的新增/修改 HTTP 入口。
+
+<strong>分片 25</strong>
+
+本分片仅看到新增的 <code>drs_frontend/dist/assets/index-tnHn_fBl.js</code> 构建产物片段，内容主要是 React/runtime 压缩代码与 Vite 预加载样板；在可见 diff 范围内未发现可直接落到新增行上的 XSS、敏感凭证存储、匿名放行、鉴权削弱或其他明确安全问题。由于该文件为编译后的压缩产物且 diff 已截断，当前结论仅限本分片可见新增行。
+
+<strong>分片 26</strong>
+
+本分片发现 1 个严重安全问题：<code>Sidebar</code> 将 <code>token</code> 放入跨应用跳转 URL，导致访问凭证可经地址栏、日志和 Referer 泄露，存在会话劫持风险。其余本分片新增前端代码未见新增匿名放行、硬编码密钥或明显的前端鉴权绕过。
+
+<strong>分片 27</strong>
+
+本分片新增的前端代码未发现可直接落在 diff 新增/修改行上的安全问题。已检查 XSS、前端鉴权绕过、敏感凭证落地、关键请求是否携带 <code>token</code>、异常处理与边界条件；当前变更主要是受控 UI 组件与页面编排，未见新增匿名放行、硬编码密钥或明显越权入口。
+
+<strong>分片 28</strong>
+
+本分片新增的前端组件主要是状态展示、轮询与用户交互逻辑；在给出的 diff 范围内，未发现新增的 XSS、鉴权绕过、敏感凭证落地、硬编码密钥或未携带 token 的关键请求等安全问题。未见新增 HTTP 映射入口；本分片均为 React 组件层代码，因此无需列出 HTTP 入口清单。
+
+<strong>分片 29</strong>
+
+本分片新增的大多数 UI 组件未见直接安全问题，但两个 hook 存在明显的异常处理缺陷：一个会把后端临时故障误判为未登录，另一个在轮询失败时可能保留旧批次状态并误导当前页面。未发现本分片新增 HTTP 入口。
+
+<strong>分片 30</strong>
+
+发现 1 个高风险配置问题：本次变更在 <code>frontend/.streamlit/config.toml</code> 中全局关闭了 Streamlit 的 XSRF 防护，会让已登录浏览器会话暴露给跨站请求利用。其余本分片新增/修改代码未见可直接从 diff 断言的新增越权、敏感信息明文落盘或硬编码密钥问题。
+
+HTTP 入口清单（方法 + 路径）：本分片 diff 未出现 <code>@GetMapping</code>、<code>@PostMapping</code>、<code>@PutMapping</code>、<code>@DeleteMapping</code>、<code>@PatchMapping</code> 或带路径的 <code>@RequestMapping</code> 新增/修改，无法列出新的 HTTP 入口。
+
+<strong>分片 31</strong>
+
+本分片新增内容均为 SkyWalking protobuf/gRPC 生成代码与空 <code>__init__.py</code>，未看到新增 HTTP 入口、鉴权放行、敏感数据落盘/日志、命令执行、SQL 拼接或其他可从 diff 直接确认的安全问题。整体看属于协议代码补充，未引入可识别的新增安全风险。
+
+HTTP 入口清单（方法 + 路径）
+- 本分片未出现 <code>@GetMapping</code>、<code>@PostMapping</code>、<code>@PutMapping</code>、<code>@DeleteMapping</code>、<code>@PatchMapping</code> 或带路径的 <code>@RequestMapping</code>，无新增 HTTP 入口需要评估。
+
+<strong>分片 32</strong>
+
+本分片未发现新增 HTTP 入口或直接鉴权放行代码，但发现两处安全配置风险：一处把认证 cookie 默认扩散到整个 <code>speedx.io</code> 父域，另一处把第三方外部服务地址硬编码为默认值，都会放大跨系统攻击面。其余新增 protobuf/gRPC 生成代码在本分片内未见直接安全问题。
+
+HTTP 入口清单（方法 + 路径）
+- 本分片未出现 <code>@GetMapping</code>、<code>@PostMapping</code>、<code>@PutMapping</code>、<code>@DeleteMapping</code>、<code>@PatchMapping</code> 或带路径的 <code>@RequestMapping</code>，无可列出的新增 HTTP 入口。
+
+<strong>分片 33</strong>
+
+本分片未发现新增 HTTP 入口层面的鉴权放行问题，但发现 1 个高风险运行时系统安装行为，以及 2 处 KafkaProducer 逐次创建的资源管理隐患。建议优先移除 API 进程内的 <code>apt-get install</code> 逻辑，其次收敛脚本中的 Kafka 客户端复用策略。
+
+HTTP 入口清单（方法 + 路径）：本分片 diff 未出现 <code>@GetMapping</code>、<code>@PostMapping</code>、<code>@PutMapping</code>、<code>@DeleteMapping</code>、<code>@PatchMapping</code> 或带路径的 <code>@RequestMapping</code>，无可列出的新增/修改 HTTP 入口。
+
+<strong>分片 34</strong>
+
+Combined review failed, skipped.
+
+<strong>分片 35</strong>
+
+本分片新增代码整体有较强的容错意识，但存在 1 处高风险开关解析错误和 2 处共享表写入竞态：<code>ods_write_enabled</code> 会把字符串 <code>&quot;false&quot;</code> 误判为开启，且 <code>ods_vinted_pickup_list</code>、<code>ods_vinted_route_list</code> 的先查后写在并发下可能产生重复数据。未发现本分片新增 HTTP 入口，因此无 HTTP 入口清单。
+
+<strong>分片 36</strong>
+
+本分片仅看到 <code>backend/app/services/pudo_route_generate/vinted_route_order_review.py</code> 的新增片段，未发现可由当前 diff 直接证实的新增安全问题。当前可见代码未出现匿名放行、鉴权开关关闭、敏感信息日志、命令执行、不受信反序列化或可确认的 SQL 注入模式；且本分片未展示任何 HTTP 路由映射，因此无 HTTP 入口清单可列。
+
+<strong>分片 37</strong>
+
+发现 1 个主要问题：K3 消费循环在消息处理失败后仍推进 Kafka offset，会把失败消息从主消费链路中跳过，造成揽收结果数据一致性风险。
+
+HTTP 入口清单（方法 + 路径）：本分片新增代码未出现 <code>@GetMapping</code>、<code>@PostMapping</code>、<code>@PutMapping</code>、<code>@DeleteMapping</code>、<code>@PatchMapping</code> 或带路径的 <code>@RequestMapping</code>，无可列出的 HTTP 入口。</pre></details></div></div>
+      <div class="filter-row">
+        <span class="filter-label">点击筛选:</span>
+        <div class="chips">
+          <span class="chip critical filter-chip" data-filter="critical" onclick="filterBySeverity(this)">Critical: 7</span>
+          <span class="chip major filter-chip" data-filter="major" onclick="filterBySeverity(this)">Major: 26</span>
+          <span class="chip minor filter-chip" data-filter="minor" onclick="filterBySeverity(this)">Minor: 5</span>
+          <span class="chip info filter-chip" data-filter="info" onclick="filterBySeverity(this)">Info: 2</span>
+          <span class="chip">Total: 40</span>
+        </div>
+        
+      </div>
+    </section>
+
+    <div class="charts-row">
+      <div class="chart-section" id="chart-section">
+        <h3 class="section-title">问题分布</h3>
+        <div class="chart-container">
+          <canvas id="categoryChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div id="filter-hint">
+      筛选中: <strong id="filter-hint-label"></strong>，仅显示对应问题
+      <span class="clear-filter" onclick="clearFilter()">清除筛选</span>
+    </div>
+
+    <div class="findings-toolbar" id="findings-toolbar" style="display: none;">
+      <!-- 筛选按钮已下线：与上方「总体结论」区的 filter-row（Critical/Major/Minor/Info 计数
+           chip）功能重复，且从未挂过点击事件，是从未生效的死代码（用户反馈"这个筛选多余了"）。
+           筛选统一走上方 filter-row 的 filterBySeverity()，这里只保留搜索 + 导出。 -->
+      <input type="text" class="findings-search" id="findings-search" placeholder="搜索文件/描述…">
+      <div class="export-dropdown">
+        <button class="toolbar-btn" id="export-btn">导出 ▼</button>
+        <div class="export-menu" id="export-menu" style="display:none;">
+          <a href="#" onclick="exportJira()">导出为 Jira</a>
+          <a href="#" onclick="exportExcel()">导出为 Excel</a>
+          <a href="#" onclick="exportCsv()">导出为 CSV</a>
+        </div>
+      </div>
+    </div>
+
+    <h2 class="section-title subsection-title">按文件的审查发现</h2><details class="action-group action-group-fix_now" open="open" style="margin-bottom:14px;border:1px solid #c53030;border-radius:8px;"><summary style="cursor:pointer;font-weight:700;font-size:15px;color:#c53030;padding:8px 12px;list-style:none;">&#128308; 立即修代码 &middot; 28 个问题</summary><div style="padding:0 12px 8px;"><div class="findings-list-wrap"><details class="file-group findings-file-group" open="open" id="fg-7033ea72b9a6" data-file-path="backend/app/api/v1/vinted_route.py" data-short-name="vinted_route.py" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/app/api/v1/vinted_route.py</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L1-746</span><span class="finding-cat finding-cat-requirement">需求外动作</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>需求文档《Business Requirement Document》里仅明确了两项改动：一是“detail downlonad导出文件增加一列pudo loaction code”，二是“路线同步界面的明细下载按钮的位置与路线审核界面一致”。</p><p>本次 diff 却新增了整份 <code>backend/app/api/v1/vinted_route.py</code>，文件头注释明确写的是“DRS Generate Vinted Route API…接成 HTTP 接口”，并包含批次列表、审核订单、未匹配处理、同步路线、已同步详情等整套新接口能力，这些都不属于上述两个验收点。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>如果按本需求合入，这次改动会把一整套新的 Vinted Route HTTP 能力一并带入发布范围，超出需求声明的变更面，增加联调、回归和上线风险；</p><p>同时也会让后续需求对账无法区分哪些行为是本需求要求、哪些是顺带上线的功能。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请将 <code>backend/app/api/v1/vinted_route.py</code> 这类整套新能力拆分到独立需求/独立 MR，或在本需求文档中补充明确的功能范围与验收点后再合入。</p><p>若只是为本需求服务，请仅保留与“detail download 导出增加 pudo loaction code”及“按钮位置调整”直接相关的最小改动。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>补充一次需求范围回归：分别核对“detail downlonad 导出文件增加一列 pudo loaction code”和“路线同步界面的明细下载按钮位置调整”这两个验收点，确认本次发布包中不存在额外新增的 Vinted Route 批次、审核、同步等接口能力。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码</summary><pre class="code-block"><code>+DRS Generate Vinted Route API：把已经在服务层跑通、有真实数据库测试覆盖的</code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-fe200b8e28c1" data-file-path="backend/app/application.py" data-short-name="application.py" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/app/application.py</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><details class="finding-security-fold" style="margin-top:8px;border-top:1px dashed #e2e2e2;padding-top:8px;"><summary style="cursor:pointer;font-weight:600;font-size:13px;color:#555;">🔒 安全/权限相关 · 1 项（点击展开）</summary><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L112</span><span class="finding-cat">安全风险</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>sanitize_http_exception</code> 将原本对所有 <code>&gt;=500</code> 的 <code>HTTPException</code> 统一脱敏，改成了只对 <code>500</code> 脱敏，导致 <code>502</code>、<code>503</code> 等服务端错误会把上游异常原文直接返回给客户端。</p><p>结合同文件注释可知这是刻意让 PKS 等上游错误“看到原文”，但这里没有任何白名单或内容过滤。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>一旦上游异常消息包含内部主机名、请求参数、认证失败细节、第三方返回体甚至临时凭据，调用任意受影响接口的前端用户都能直接看到这些内部错误细节，形成信息泄露并帮助攻击者枚举内部依赖与故障模式。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>把 <code>sanitize_http_exception</code> 改为默认继续脱敏所有 <code>5xx</code>，仅对经过显式筛选且确认不含敏感信息的上游错误码/错误消息做受控透传；</p><p>更稳妥的做法是记录完整异常到服务端日志，对客户端返回固定错误码和经过白名单映射的业务提示。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>构造一个上游依赖返回 <code>HTTPException(status_code=502, detail=&#x27;upstream host pks.internal:8443 token=abc&#x27;)</code> 的场景，请求对应接口并检查响应体；</p><p>当前实现会把 <code>detail</code> 原样返回给客户端，修复后客户端应只看到通用错误提示而敏感细节仅保留在服务端日志。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码</summary><pre class="code-block"><code>+        <span class="code-keyword">if</span> exc.status_code == <span class="code-number">500</span>:</code></pre></details></div></details></div></details><details class="file-group findings-file-group" open="open" id="fg-4996e6087822" data-file-path="backend/app/core/auth_cookie.py" data-short-name="auth_cookie.py" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/app/core/auth_cookie.py</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><details class="finding-security-fold" style="margin-top:8px;border-top:1px dashed #e2e2e2;padding-top:8px;"><summary style="cursor:pointer;font-weight:600;font-size:13px;color:#555;">🔒 安全/权限相关 · 1 项（点击展开）</summary><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L17-25</span><span class="finding-cat">安全风险</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>resolve_auth_cookie_domain</code> 只要 <code>host</code> 等于 <code>speedx.io</code> 或以 <code>.speedx.io</code> 结尾，就统一返回 <code>f&quot;.{parent}&quot;</code>，把登录 cookie 的作用域扩大到整个 <code>speedx.io</code> 父域，没有对白名单子域、环境隔离或受信任应用范围做任何限制。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>只要同一父域下存在任一被接管、可上传脚本或安全基线较弱的子站点，它就能在浏览器同站策略下收到这枚跨应用共享的认证 cookie，进而放大为跨子域会话泄露或会话固定风险；</p><p>尤其这里的注释明确用于在 <code>DAYS</code>、<code>DRS</code>、<code>PATH</code> 间共享登录，意味着一处子域失陷会连带影响其他系统。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>把 <code>resolve_auth_cookie_domain</code> 改成仅对明确允许共享登录的主机名返回固定 Domain，而不是对所有 <code>*.speedx.io</code> 一概放开；</p><p>至少引入受信任子域白名单，并对生产、SIT、UAT 环境分别配置。若无法保证所有子域同等可信，优先保持 Host-only cookie。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>准备 <code>host=&quot;drs-sit2.speedx.io&quot;</code>、<code>host=&quot;days-sit2.speedx.io&quot;</code>、<code>host=&quot;untrusted.speedx.io&quot;</code> 三组输入；</p><p>验证前两者仅在白名单命中时返回共享 Domain，而 <code>untrusted.speedx.io</code> 必须返回 <code>None</code>，避免把认证 cookie 下发到未授权子域。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码</summary><pre class="code-block"><code>+    <span class="code-keyword">if</span> hostname == parent or hostname.endswith(f<span class="code-string">".{parent}"</span>):
++        <span class="code-keyword">return</span> f<span class="code-string">".{parent}"</span></code></pre></details></div></details></div></details><details class="file-group findings-file-group" open="open" id="fg-21773ecadd74" data-file-path="backend/app/core/config.py" data-short-name="config.py" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/app/core/config.py</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><details class="finding-security-fold" style="margin-top:8px;border-top:1px dashed #e2e2e2;padding-top:8px;"><summary style="cursor:pointer;font-weight:600;font-size:13px;color:#555;">🔒 安全/权限相关 · 1 项（点击展开）</summary><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L205</span><span class="finding-cat">安全风险</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>Settings.DRS_BEANS_API_BASE_URL</code> 新增了硬编码外部服务地址 <code>&quot;https://isp.beans.ai/enterprise/v1&quot;</code>，代码里直接固定第三方接口 Endpoint，而不是完全从环境变量或配置中心下发。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>一旦不同环境需要切换到专线网关、代理地址、沙箱地址或紧急熔断地址，应用会默认继续访问这个固定外部域名；这会增加误连生产外部服务、绕过环境隔离和变更审计的风险，也使安全团队无法仅通过配置完成出口收敛。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>删除默认硬编码地址，把 <code>DRS_BEANS_API_BASE_URL</code> 改为必须由环境变量或 Nacos 显式提供；如果确实需要默认值，也应指向内部受控网关而不是第三方公网域名。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>在未设置 <code>DRS_BEANS_API_BASE_URL</code> 的环境启动应用，验证配置加载阶段直接报缺失配置，而不是静默回退到 <code>https://isp.beans.ai/enterprise/v1</code>。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码</summary><pre class="code-block"><code>+    DRS_BEANS_API_BASE_URL: str = os.getenv(<span class="code-string">"DRS_BEANS_API_BASE_URL"</span>, <span class="code-string">"https://isp.beans.ai/enterprise/v1"</span>)</code></pre></details></div></details></div></details><details class="file-group findings-file-group" open="open" id="fg-5cab1a12b73d" data-file-path="backend/app/ops/simulate_pks_pickup_push.py" data-short-name="simulate_pks_pickup_push.py" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/app/ops/simulate_pks_pickup_push.py</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L228-231</span><span class="finding-cat">资源管理</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>send_and_consume</code> 在方法内部新建 <code>KafkaProducer</code>：<code>producer = KafkaProducer(...)</code>。</p><p><code>KafkaProducer</code> 是线程安全且适合长生命周期复用的客户端，这里每次执行脚本都重新建连、拉取元数据并初始化缓冲区，命中自定义规则 <code>POOL-003</code>。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>当该脚本被频繁用于联调、批量验证或被其他自动化流程重复调用时，会持续放大 Kafka 连接与元数据初始化开销，增加 broker 负载，并让消息发送阶段更容易因瞬时建连失败而抖动，影响验证链路稳定性。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>把 <code>KafkaProducer</code> 提升为可复用的模块级单例或复用现有 Kafka 客户端封装，避免在 <code>send_and_consume</code> 内逐次创建。</p><p>若脚本必须独立运行，也应至少通过共享工厂缓存同一 <code>bootstrap_servers</code> 的 <code>KafkaProducer</code> 实例。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>连续多次调用 <code>send_and_consume</code> 发送小批量消息，观察当前实现每次都会重新建立 producer 连接；</p><p>修复后应复用同一个 <code>KafkaProducer</code>，broker 侧连接数和 metadata 请求次数明显下降。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码</summary><pre class="code-block"><code>+    producer = KafkaProducer(bootstrap_servers=bootstrap_servers, **kafka_auth_kwargs(), **KAFKA_PRODUCER_TUNING_KWARGS)</code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-c0bb9d19e057" data-file-path="backend/app/ops/simulate_pks_pickup_result_push.py" data-short-name="simulate_pks_pickup_result_push.py" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/app/ops/simulate_pks_pickup_result_push.py</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L122-123</span><span class="finding-cat">资源管理</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>send_messages</code> 在方法内部新建 <code>KafkaProducer</code>：<code>producer = KafkaProducer(...)</code>。</p><p>这同样命中自定义规则 <code>POOL-003</code>，因为 <code>KafkaProducer</code> 设计上应复用而不是按调用次数反复创建。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>当开发或测试环境反复执行 <code>simulate_pks_pickup_result_push.py</code> 模拟 K3 消息时，会不断重复建连和初始化 producer，增加 Kafka broker 连接压力，并让脚本在高频使用时更容易出现发送抖动或超时，降低验证稳定性。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>将 <code>KafkaProducer</code> 抽到模块级缓存或统一 Kafka 客户端工厂中复用，不要在 <code>send_messages</code> 内逐次创建。</p><p>若保留脚本式入口，至少按 <code>bootstrap_servers</code> 维度缓存 producer 实例并在进程退出时统一关闭。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>在同一进程内多次调用 <code>send_messages</code> 发送少量 K3 消息，确认当前实现每次都会创建新的 <code>KafkaProducer</code>；修复后应复用已有 producer，连接数不再随调用次数线性增长。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码</summary><pre class="code-block"><code>+    producer = KafkaProducer(bootstrap_servers=bootstrap_servers, **kafka_auth_kwargs(), **KAFKA_PRODUCER_TUNING_KWARGS)</code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-c2c0f947e262" data-file-path="backend/app/services/delivery_orders.py" data-short-name="delivery_orders.py" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">backend/app/services/delivery_orders.py</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">1 Critical</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L584-621</span><span class="finding-cat">安全风险</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>find_office_binary</code> 在发现容器内没有 <code>soffice</code>/<code>libreoffice</code> 时，会进入 <code>_install_libreoffice_packages</code>，直接从 API 进程里执行 <code>apt-get update</code> 和 <code>apt-get install -y --no-install-recommends libreoffice-calc fontconfig fonts-liberation</code>。</p><p>这相当于把运行时包安装能力暴露给线上业务路径，且安装内容来自外部软件源，代码里没有任何完整性校验、版本钉死或环境隔离。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>一旦调用 <code>convert_xlsx_to_pdf</code> 的请求在生产环境首次触发该分支，业务线程就会执行高权限系统变更；</p><p>如果基础镜像以 root 运行且软件源被污染、被中间人劫持或配置错误，攻击面会从应用层扩大到容器系统层，最坏可导致远程代码执行或服务被植入恶意包。</p><p>同时 <code>apt-get update/install</code> 还会显著拉长请求时延并放大可用性风险。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>删除运行时自动安装逻辑，把 <code>libreoffice-calc</code>、<code>fontconfig</code>、<code>fonts-liberation</code> 固化到镜像构建或部署前置检查中；</p><p><code>find_office_binary</code> 只做存在性校验，缺失时直接返回明确错误，不要在业务进程里执行 <code>apt-get</code>。如果必须保留自愈能力，也应限制为离线、受控的初始化任务，并对安装源和包版本做校验。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>在一个以 root 运行且未预装 <code>soffice</code> 的容器里调用触发 <code>convert_xlsx_to_pdf</code> 的接口，验证当前代码会实际执行 <code>apt-get update</code>/<code>apt-get install</code>；</p><p>修复后应只返回“缺少 LibreOffice”的错误，不再产生任何系统级安装行为。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码</summary><pre class="code-block"><code>+            [apt, <span class="code-string">'install'</span>, <span class="code-string">'-y'</span>, <span class="code-string">'--no-install-recommends'</span>, *_OFFICE_PACKAGES],</code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-bbd23c2de7a7" data-file-path="backend/app/services/pudo_route_generate/vinted_route_feature_flags.py" data-short-name="vinted_route_feature_flags.py" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/app/services/pudo_route_generate/vinted_route_feature_flags.py</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L278</span><span class="finding-cat">配置变更</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>parse_flags_yaml</code> 对 <code>ods_write_enabled</code> 使用了 <code>bool(section.get(&quot;ods_write_enabled&quot;, False))</code>。</p><p>这会把 Nacos/YAML 中带引号的字符串值 <code>&quot;false&quot;</code> 解析成真值，而同文件前面已经在 <code>_parse_cache_enabled</code> 里明确规避过同类布尔解析陷阱，说明这里的解析方式与本模块自己的安全默认策略不一致。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>运维如果在 Nacos 中把 <code>ods_write_enabled</code> 配成字符串 <code>&quot;false&quot;</code> 试图关闭共享表写入，代码会实际把它当成开启处理，导致本应停止的 <code>ods_vinted_pickup_list</code> / <code>ods_vinted_pickup_parcel_list</code> / <code>ods_vinted_route_list</code> 写入继续发生，灰度回退失效，扩大错误数据写入范围。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>把 <code>ods_write_enabled</code> 的解析改成与 <code>_parse_cache_enabled</code> 同级别的严格布尔解析，拒绝把任意非空字符串当成开启。</p><p>可直接新增一个专用解析函数并在 <code>parse_flags_yaml</code> 中替换当前写法，例如复用 <code>_parse_cache_enabled</code> 的判定逻辑或新增 <code>_parse_ods_write_enabled(section.get(&quot;ods_write_enabled&quot;))</code>。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>在 Nacos 配置文本中设置 <code>vinted_route.ods_write_enabled: &quot;false&quot;</code>，调用 <code>parse_flags_yaml</code> 后断言返回的 <code>VintedRouteFlags.ods_write_enabled</code> 为 <code>False</code>；</p><p>再覆盖 <code>&quot;true&quot;</code>、布尔 <code>false</code>、布尔 <code>true</code>、非法字符串 <code>&quot;abc&quot;</code>，验证不会把 <code>&quot;false&quot;</code> 误判为开启。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码</summary><pre class="code-block"><code>+    enabled = bool(section.get(<span class="code-string">"ods_write_enabled"</span>, False))</code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-fd4be2961869" data-file-path="backend/app/services/pudo_route_generate/vinted_route_ods_writer.py" data-short-name="vinted_route_ods_writer.py" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/app/services/pudo_route_generate/vinted_route_ods_writer.py</span></span><span class="file-group-stats"><span class="stat-chip stat-major">2 Major</span></span><span class="file-group-count">2 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L319-328</span><span class="finding-cat">并发安全</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>upsert_missing_route_row</code> 与 <code>upsert_missing_pickup_row</code> 一样，先查询 <code>ods_vinted_route_list</code> 是否已有 <code>site_id + order_date + Number</code>，再执行插入；</p><p>新增代码里没有看到唯一约束、异常捕获或原子 upsert。该实现同样属于无保护的 check-then-act。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>组路或重放消息并发命中同一个 <code>pickup_order</code> 时，多个事务可能同时通过存在性检查并重复写入 <code>ods_vinted_route_list</code>。</p><p>这会让同一 PO 在共享路线表中出现多条记录，影响下游按路线同步、报表统计和人工排查。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>将 <code>upsert_missing_route_row</code> 改为数据库原子幂等写入：为 <code>ods_vinted_route_list</code> 的 <code>site_id + order_date + Number</code> 建唯一约束，并改成直接插入后捕获 <code>IntegrityError</code>；</p><p>若暂时无法改表结构，则至少使用数据库锁或单语句原子写法避免并发重复插入。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>并发启动两个事务，对同一个 <code>site_id</code>、<code>order_date</code>、<code>pickup_order</code> 调用 <code>upsert_missing_route_row</code>，检查当前实现是否会插入重复路线行；</p><p>修复后应只有一个事务插入成功，另一个返回 <code>already_exists</code>。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码</summary><pre class="code-block"><code>+    existing = conn.execute(</code></pre></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L72-81</span><span class="finding-cat">并发安全</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>upsert_missing_pickup_row</code> 先 <code>SELECT id</code> 判断是否存在，再执行 <code>INSERT INTO ods_vinted_pickup_list</code>，中间没有唯一约束兜底、没有 <code>SAVEPOINT</code>/异常处理，也没有原子化 SQL。</p><p>该函数注释还明确说明 <code>ods_vinted_pickup_list</code> “表无唯一约束，用 SELECT 判存在”，这使新增代码形成典型 check-then-act 竞态。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>当两个消费者线程或补单流程并发处理同一个 <code>site_id + order_date + Pickup_Order</code> 时，两个事务都可能在 <code>SELECT</code> 阶段看到“不存在”，随后各自成功插入，最终在 <code>ods_vinted_pickup_list</code> 产生重复 PO 行。</p><p>后续依赖共享表做报表、同步或对账时会出现重复统计和错误状态。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>把 <code>ods_vinted_pickup_list</code> 的幂等写入改成数据库原子约束方案：优先为 <code>site_id + order_date + Pickup_Order</code> 增加唯一索引，再改为直接 <code>INSERT</code> 并捕获 <code>IntegrityError</code>；</p><p>如果当前表结构短期不能改，至少在同一事务内使用显式锁或数据库侧原子语句避免 <code>SELECT</code> 与 <code>INSERT</code> 分离。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>构造两个并发事务，同时调用 <code>upsert_missing_pickup_row</code> 写入相同的 <code>site_id</code>、<code>order_date</code>、<code>pickup_order</code>，验证当前实现会在 <code>ods_vinted_pickup_list</code> 产生两条记录；</p><p>修复后应只保留一条，另一条返回已存在结果。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码</summary><pre class="code-block"><code>+    existing = conn.execute(</code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-7e70f0f449b3" data-file-path="backend/app/services/pudo_route_generate/vinted_route_pickup_result_consumer_loop.py" data-short-name="vinted_route_pickup_result_consumer_loop.py" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/app/services/pudo_route_generate/vinted_route_pickup_result_consumer_loop.py</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L76</span><span class="finding-cat">数据一致性</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>run_consumer_loop</code> 在 <code>except Exception</code> 分支里即使 <code>handle_raw_kafka_message</code> 处理失败，也会继续执行 <code>pending_offsets[tp] = record.offset + 1</code>。</p><p>这意味着 Kafka offset 会被标记为已处理，而失败消息只依赖日志表人工/异步重放，不再由 Kafka 自动重投。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>一旦 <code>process_pickup_result_message</code> 因临时数据库异常、代码缺陷或脏数据失败，当前消费者仍会提交该条消息的 offset，导致这条 K3 消息从主消费链路永久跳过。</p><p>若后续没有及时执行日志表重放，<code>pickup_status</code>、<code>pickup_time</code> 等揽收结果会长期缺失，形成业务数据不一致。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>把 <code>pending_offsets[tp] = record.offset + 1</code> 移到成功处理分支，仅在 <code>handle_raw_kafka_message</code> 返回成功后推进 offset；</p><p>如果设计上必须在失败后也提交 offset，则至少要在同一事务性保障链路里确认失败消息已进入可自动重放队列，并补充明确的自动重放机制与监控告警。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>构造一条合法的 K3 消息，并让 <code>process_pickup_result_message</code> 在更新 <code>VINTED_ROUTE_PO_REVIEW_TABLE</code> 时抛出异常；</p><p>验证本次消费后 <code>fact_vinted_route_kafka_result_log</code> 被标记为 FAILED，同时 Kafka offset 没有前移，重启消费者后该消息仍会再次被消费。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码</summary><pre class="code-block"><code>pending_offsets[tp] = record.offset + <span class="code-number">1</span></code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-9409ce166cfc" data-file-path="backend/app/services/pudo_route_generate/vinted_route_pos_backfill.py" data-short-name="vinted_route_pos_backfill.py" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/app/services/pudo_route_generate/vinted_route_pos_backfill.py</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L319-325</span><span class="finding-cat">异常处理</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>run_pos_backfill</code> 在最外层捕获了所有 <code>Exception</code>，仅记录 warning 后直接 <code>return PosBackfillSummary()</code>，把上游接口异常、数据库异常、数据一致性异常都折叠成“补单=0”的正常返回。</p><p>调用方无法区分“确实没有可补 PO”和“补单链路已经失败”。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>一旦 <code>query_pickup_orders_by_ref</code>、<code>_write_orders_as_backfill</code> 或事务提交出现异常，调用方和前端会收到一个看似成功但为空的摘要，导致失败被静默掩盖，运营可能误以为当前批次无需补单，从而漏补订单。</p><p>对依赖该返回值做后续流程判断的代码来说，这也是错误的成功信号。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>不要在 <code>run_pos_backfill</code> 把所有异常都转换成空 <code>PosBackfillSummary</code>。</p><p>至少应区分“全部 <code>facility_code</code> 都无数据”和“执行失败”，对后者抛出 <code>PksApiError</code>/业务异常，或在 <code>PosBackfillSummary</code> 中新增明确的失败字段并由调用方显式处理。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>模拟 <code>query_pickup_orders_by_ref</code> 抛出异常或让 <code>_write_orders_as_backfill</code> 在事务内抛出数据库异常，调用 <code>run_pos_backfill</code>。</p><p>期望调用方能收到失败信号（抛异常或明确失败状态），而不是得到与“没有可补数据”完全相同的空 <code>PosBackfillSummary</code>。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码</summary><pre class="code-block"><code>+    except Exception as exc:</code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-e1a6b56d2a04" data-file-path="backend/app/services/pudo_route_generate/vinted_route_routing_progress.py" data-short-name="vinted_route_routing_progress.py" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/app/services/pudo_route_generate/vinted_route_routing_progress.py</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><details class="finding-security-fold" style="margin-top:8px;border-top:1px dashed #e2e2e2;padding-top:8px;"><summary style="cursor:pointer;font-weight:600;font-size:13px;color:#555;">🔒 安全/权限相关 · 1 项（点击展开）</summary><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L157-166</span><span class="finding-cat">安全风险</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>_get_redis_client</code> 在启用 TLS 时把 <code>ssl_cert_reqs</code> 显式设为 <code>None</code>，这会关闭 Redis 服务端证书校验。</p><p>代码里同时根据 <code>settings.DRS_REDIS_PORT == 6380</code> 自动启用 <code>ssl=True</code>，但没有任何主机名/证书链校验，等于把加密连接降级成“只加密不认证”。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>只要部署环境中的 Redis 链路可被中间人劫持或被错误地指向伪造 Redis，攻击者就可以伪造 <code>drs:routing:progress:{batch_id}</code> 和 <code>drs:routing:lock:{batch_id}</code> 的内容，导致组路任务被错误地显示为成功/失败，或通过伪造锁阻断/放行并发执行，直接影响后台任务控制面的完整性。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>把 <code>_get_redis_client</code> 中的 <code>ssl_cert_reqs=None</code> 改为强制校验证书，并补充受信 CA 或证书配置；如果当前环境使用自签证书，也应通过配置传入 CA 文件而不是关闭校验。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>在 <code>settings.DRS_REDIS_PORT</code> 为 <code>6380</code> 的环境下，将 Redis 地址指向一个使用不受信证书的测试实例；验证当前代码仍可连通。</p><p>修复后应连接失败，并且只有在配置了受信 CA 后才允许建立连接。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码</summary><pre class="code-block"><code>+            ssl_cert_reqs=None <span class="code-keyword">if</span> use_ssl <span class="code-keyword">else</span> None,</code></pre></details></div></details></div></details><details class="file-group findings-file-group" open="open" id="fg-4217cee7ad7d" data-file-path="backend/app/services/transportation_departure_dashboard.py" data-short-name="transportation_departure_dashboard.py" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/app/services/transportation_departure_dashboard.py</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L2287</span><span class="finding-cat">异常处理</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>query_transportation_departure_dashboard</code> 的 <code>finally</code> 块把连接关闭条件从 <code>if conn and conn.is_connected():</code> 改成了 <strong><code>if conn:</code></strong>，新增代码不再确认 <code>conn</code> 是否仍处于可关闭状态，就直接调用 <code>conn.close()</code>。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>当 <code>conn</code> 已被上游释放、替换为不兼容对象，或底层驱动在异常路径返回半初始化连接对象时，这里的 <code>conn.close()</code> 会在清理阶段再次抛错，覆盖原始异常或把本应成功返回的请求变成 500，导致仪表盘查询接口出现可被异常输入稳定触发的拒绝服务。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>把关闭逻辑恢复为仅在连接仍有效时执行，至少保留 <code>conn.is_connected()</code> 之类的状态判断；</p><p>如果当前连接类型已不支持该方法，应先统一封装一个安全关闭函数，在函数内部兼容不同连接实现并吞掉关闭阶段的二次异常。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>构造一个让 <code>query_transportation_departure_dashboard</code> 在业务逻辑中先抛出异常、同时 <code>conn</code> 已被提前关闭或替换为不支持重复关闭状态的连接对象的场景，验证 <code>finally</code> 不会因 <code>conn.close()</code> 二次抛错而覆盖原始异常。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码</summary><pre class="code-block"><code>+        <span class="code-keyword">if</span> conn:</code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-d2828d7ada9f" data-file-path="backend/app/services/transportation_package_flow.py" data-short-name="transportation_package_flow.py" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/app/services/transportation_package_flow.py</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L819</span><span class="finding-cat">异常处理</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>_package_flow_active_hub_codes_from_db</code> 的 <code>finally</code> 块把连接关闭条件改成了 <strong><code>if conn:</code></strong>，删除了原先对连接状态的校验，新增代码会无条件执行 <code>conn.close()</code>。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>该函数本身已经在 <code>except Exception</code> 中返回默认值 <code>None</code>，如果清理阶段再因 <code>conn.close()</code> 抛错，就会把原本设计成“降级返回”的路径升级成接口异常，导致包裹流查询在数据库抖动或连接对象异常时更容易整体失败。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>恢复连接状态判断，或抽出统一的安全关闭辅助函数，确保 <code>_package_flow_active_hub_codes_from_db</code> 在异常降级路径中不会因为关闭连接再次抛错。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>模拟 <code>_package_flow_active_hub_codes_from_db</code> 查询阶段抛出异常且 <code>conn</code> 已失效的情况，确认函数仍返回 <code>None</code>，而不是在 <code>finally</code> 的 <code>conn.close()</code> 处再次抛错。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码</summary><pre class="code-block"><code>+        <span class="code-keyword">if</span> conn:</code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-fac7d8a08657" data-file-path="backend/app/services/transportation_storage.py" data-short-name="transportation_storage.py" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/app/services/transportation_storage.py</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L832</span><span class="finding-cat">异常处理</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>_fetch_active_alias_map</code> 在 <code>finally</code> 中把自有连接的关闭条件从 <code>if own_conn and conn and conn.is_connected():</code> 改成了 <strong><code>if own_conn and conn:</code></strong>，新增代码对 <code>conn</code> 的生命周期状态不再做校验。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p><code>_fetch_active_alias_map</code> 是底层公共查询函数，若它在异常路径或连接已关闭场景下因为 <code>conn.close()</code> 再次抛错，会把上层多个运输模块的原始错误掩盖成清理阶段异常，扩大故障面并增加排障难度。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>在 <code>_fetch_active_alias_map</code> 中恢复连接状态判断，或统一使用一个可兼容不同连接实现的安全关闭方法，只在确认连接可关闭时执行 <code>conn.close()</code>。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>让 <code>_fetch_active_alias_map</code> 走 <code>own_conn=True</code> 分支，并模拟查询过程中连接已提前关闭；验证函数退出时不会因为 <code>conn.close()</code> 二次抛错而覆盖原始异常。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码</summary><pre class="code-block"><code>+        <span class="code-keyword">if</span> own_conn and conn:</code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-ad361ff98e5a" data-file-path="backend/scheduler_worker.py" data-short-name="scheduler_worker.py" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/scheduler_worker.py</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L294-301</span><span class="finding-cat">并发安全</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>main()</code> 里把所有调度线程都创建为 <code>daemon=True</code>，随后在收到停止信号后仅执行 <code>t.join(timeout=30)</code>，无论线程是否真的完成都继续退出主进程。</p><p>像 <code>_run_due_vinted_pickup_label_sftp_import()</code>、<code>run_due_auto_sync_configs(limit=1)</code>、<code>warm_daily_report_cache()</code> 这类会执行数据库写入或外部同步的任务，没有任何保证能在 30 秒内完成，也没有在 <code>join</code> 超时后阻止进程退出。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>当 <code>scheduler_worker.py</code> 被发布、重启或被 SIGTERM 回收时，正在执行的同步线程可能被进程直接中断，导致部分导入日志、自动同步状态或缓存刷新只完成一半；</p><p>这会把一次正常的停机操作放大成数据一致性问题，后续任务还可能基于残缺状态重复执行或漏执行。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>把 <code>threads</code> 中承担实际业务写入的线程改为非 daemon 线程，并在 <code>join(timeout=30)</code> 后检查 <code>t.is_alive()</code>；</p><p>如果仍未退出，应继续等待、显式记录失败并以非 0 状态退出，避免主进程在任务未收尾时直接结束。</p><p>至少要对 <code>_material_loop</code>、<code>_pickup_route_loop</code>、<code>_pudo_warmer_loop</code> 和 <code>_pudo_daily_report_loop</code> 的退出结果做显式校验。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>启动 <code>scheduler_worker.py</code> 后，让 <code>import_latest_vinted_pickup_label_report_from_sftp</code> 或 <code>warm_daily_report_cache</code> 人为阻塞超过 30 秒，再发送 SIGTERM；</p><p>验证进程不会在对应线程仍存活时直接退出，且不会留下只写入一半的自动同步状态或缓存记录。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码</summary><pre class="code-block"><code>+        threading.Thread(target=_material_loop, args=(stop_event,), name=<span class="code-string">"material-scheduler"</span>, daemon=True),</code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-fea3929b5401" data-file-path="drs_frontend/.npmrc" data-short-name=".npmrc" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">drs_frontend/.npmrc</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L5</span><span class="finding-cat">配置变更</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>drs_frontend/.npmrc</code> 新增了项目级 <code>registry=https://registry.npmmirror.com</code>，把整个前端依赖供应链固定切到第三方镜像，而 diff 中没有同时新增 lockfile、完整性校验或私有代理兜底。</p><p>这样 <code>npm install</code> 与 Docker 构建都会信任该镜像返回的包元数据和 tarball。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>一旦 <code>registry.npmmirror.com</code> 返回被篡改、延迟同步或与官方源不一致的包版本，开发机和 CI 构建会在无感知情况下拉入错误依赖，最终把恶意或未审计代码打进 <code>drs_frontend/dist</code> 并随 nginx 镜像发布，属于前端供应链安全面扩大。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>把 <code>drs_frontend/.npmrc</code> 改为指向公司可审计的私有 npm 代理，或至少配套提交 lockfile 并在 CI 中使用 <code>npm ci</code> 及完整性校验，避免仅靠第三方镜像决定最终安装内容。</p><p>若必须保留该镜像，建议在构建流程中增加依赖来源白名单和 lockfile 漂移检测。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>在两台干净环境中分别执行基于当前 <code>.npmrc</code> 的安装与构建：一台使用当前镜像，一台使用官方源或公司私有代理；</p><p>对比 <code>package-lock.json</code>、<code>node_modules</code> 中关键包版本与 integrity 字段，验证镜像切换时是否会产生未预期的依赖差异。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码</summary><pre class="code-block"><code>+registry=https:<span class="code-comment">//registry.npmmirror.com</span></code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-89aface7ccc2" data-file-path="drs_frontend/Dockerfile" data-short-name="Dockerfile" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">drs_frontend/Dockerfile</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L6</span><span class="finding-cat">配置变更</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>drs_frontend/Dockerfile</code> 在构建阶段执行 <code>npm install</code>，而不是基于锁文件的确定性安装；同时 diff 中未见 <code>package-lock.json</code> 被复制进镜像。</p><p><code>npm install</code> 会按 semver 范围解析最新可用版本，且受上游 registry 返回结果影响。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>同一份源码在不同时间或不同构建节点上可能安装出不同依赖树，攻击者只要污染某个间接依赖的新版本，就可能在镜像构建时被自动拉入，形成不可复现且难审计的前端供应链风险。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>把 Dockerfile 改为先复制 <code>package-lock.json</code>，再使用 <code>npm ci</code> 进行只读、可复现安装；同时在 CI 中禁止 lockfile 缺失时构建通过。例如：</p><pre class="code-block"><code>COPY <span class="code-keyword">package</span>.json <span class="code-keyword">package</span>-lock.json ./
+RUN npm ci</code></pre></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>准备同一份代码，在相隔一段时间的两个干净构建环境中分别执行当前 Dockerfile 构建；</p><p>比较两次生成的 <code>node_modules</code> 依赖树或最终镜像摘要，确认 <code>npm install</code> 是否会因上游版本漂移产生不同结果。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码</summary><pre class="code-block"><code>+    &amp;&amp; npm install</code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-fd24a40012c6" data-file-path="drs_frontend/dist/assets/index-tnHn_fBl.js" data-short-name="index-tnHn_fBl.js" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">drs_frontend/dist/assets/index-tnHn_fBl.js</span></span><span class="file-group-stats"><span class="stat-chip stat-major">6 Major</span></span><span class="file-group-count">6 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L1</span><span class="finding-cat">性能隐患</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 PERF-001 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 PERF-001</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [PERF-001] N+1 查询检测 命中了这行代码：<code>var m0=Object.defineProperty;var Af=e=&gt;{throw TypeError(e)};var g0=(e,t,n)=&gt;t in e?m0(e,t,{enumerable:!0,configurable:!0,writable:!0,value:n}):e[t]=n;var bl=(e,t,n)=&gt;g0(e,typeof t!=&quot;symbol&quot;?t+&quot;&quot;:t,n),…</code>。</p><p>这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「N+1 查询检测」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码</summary><pre class="code-block"><code><span class="code-keyword">var</span> m0=Object.defineProperty;<span class="code-keyword">var</span> Af=e=&gt;{<span class="code-keyword">throw</span> TypeError(e)};<span class="code-keyword">var</span> g0=(e,t,n)=&gt;t in e?m0(e,t,{enumerable:!<span class="code-number">0</span>,configurable:!<span class="code-number">0</span>,writable:!<span class="code-number">0</span>,value:n}):e[t]=n;<span class="code-keyword">var</span> bl=(e,t,n)=&gt;g0(e,typeof t!=<span class="code-string">"symbol"</span>?t+<span class="code-string">""</span>:t,n),…</code></pre></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L166</span><span class="finding-cat">性能隐患</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 PERF-001 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 PERF-001</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [PERF-001] N+1 查询检测 命中了这行代码：<code>*/const Id=Ie(&quot;X&quot;,[[&quot;path&quot;,{d:&quot;M18 6 6 18&quot;,key:&quot;1bl5f8&quot;}],[&quot;path&quot;,{d:&quot;m6 6 12 12&quot;,key:&quot;d8bk6v&quot;}]]),Ob=({...e})=&gt;{const{theme:t=&quot;system&quot;}=G1();return l.jsx(wb,{theme:t,className:&quot;toaster group&quot;,icons:{…</code>。</p><p>这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「N+1 查询检测」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码</summary><pre class="code-block"><code>*/<span class="code-keyword">const</span> Id=Ie(<span class="code-string">"X"</span>,[[<span class="code-string">"path"</span>,{d:<span class="code-string">"M18 6 6 18"</span>,key:<span class="code-string">"1bl5f8"</span>}],[<span class="code-string">"path"</span>,{d:<span class="code-string">"m6 6 12 12"</span>,key:<span class="code-string">"d8bk6v"</span>}]]),Ob=({...e})=&gt;{<span class="code-keyword">const</span>{theme:t=<span class="code-string">"system"</span>}=G1();<span class="code-keyword">return</span> l.jsx(wb,{theme:t,className:<span class="code-string">"toaster group"</span>,icons:{…</code></pre></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L206</span><span class="finding-cat">性能隐患</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 PERF-001 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 PERF-001</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [PERF-001] N+1 查询检测 命中了这行代码：`<code>)},eE=0,Zr=[];function tE(e){var t=f.useRef([]),n=f.useRef([0,0]),r=f.useRef(),o=f.useState(eE++)[0],s=f.useState(py)[0],a=f.useRef(e);f.useEffect(function(){a.current=e},[e]),f.useEffect(function(){…</code>。这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「N+1 查询检测」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码</summary><pre class="code-block"><code>`)},eE=<span class="code-number">0</span>,Zr=[];<span class="code-keyword">function</span> tE(e){<span class="code-keyword">var</span> t=f.useRef([]),n=f.useRef([<span class="code-number">0</span>,<span class="code-number">0</span>]),r=f.useRef(),o=f.useState(eE++)[<span class="code-number">0</span>],s=f.useState(py)[<span class="code-number">0</span>],a=f.useRef(e);f.useEffect(<span class="code-keyword">function</span>(){a.current=e},[e]),f.useEffect(<span class="code-keyword">function</span>(){…</code></pre></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L217</span><span class="finding-cat">性能隐患</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 PERF-001 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 PERF-001</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [PERF-001] N+1 查询检测 命中了这行代码：<code>Please change the parent &lt;Route path=&quot;${m}&quot;&gt; to &lt;Route path=&quot;${m===&quot;/&quot;?&quot;*&quot;:</code>${m}/*<code>}&quot;&gt;.</code>)}let d=dn(),p;if(t){let m=typeof t==&quot;string&quot;?Gr(t):t;ke(c===&quot;/&quot;||((w=m.pathname)==null?void 0:w.startsWith(c)),…`。这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「N+1 查询检测」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码</summary><pre class="code-block"><code>Please change the parent &lt;Route path=<span class="code-string">"${m}"</span>&gt; to &lt;Route path=<span class="code-string">"${m==="</span>/<span class="code-string">"?"</span>*<span class="code-string">":`${m}/*`}"</span>&gt;.`)}<span class="code-keyword">let</span> d=dn(),p;<span class="code-keyword">if</span>(t){<span class="code-keyword">let</span> m=typeof t==<span class="code-string">"string"</span>?Gr(t):t;ke(c===<span class="code-string">"/"</span>||((w=m.pathname)==<span class="code-keyword">null</span>?<span class="code-keyword">void</span> <span class="code-number">0</span>:w.startsWith(c)),…</code></pre></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L37</span><span class="finding-cat">性能隐患</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 PERF-001 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 PERF-001</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [PERF-001] N+1 查询检测 命中了这行代码：`<code>+o[a].replace(&quot; at new &quot;,&quot; at &quot;);return e.displayName&amp;&amp;c.includes(&quot;&lt;anonymous&gt;&quot;)&amp;&amp;(c=c.replace(&quot;&lt;anonymous&gt;&quot;,e.displayName)),c}while(1&lt;=a&amp;&amp;0&lt;=i);break}}}finally{kl=!1,Error.prepareStackTrace=n}return…</code>。这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「N+1 查询检测」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码</summary><pre class="code-block"><code>`+o[a].replace(<span class="code-string">" at new "</span>,<span class="code-string">" at "</span>);<span class="code-keyword">return</span> e.displayName&amp;&amp;c.includes(<span class="code-string">"&lt;anonymous&gt;"</span>)&amp;&amp;(c=c.replace(<span class="code-string">"&lt;anonymous&gt;"</span>,e.displayName)),c}<span class="code-keyword">while</span>(<span class="code-number">1</span>&lt;=a&amp;&amp;<span class="code-number">0</span>&lt;=i);break}}}<span class="code-keyword">finally</span>{kl=!<span class="code-number">1</span>,Error.prepareStackTrace=n}<span class="code-keyword">return</span>…</code></pre></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L40</span><span class="finding-cat">性能隐患</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 PERF-001 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 PERF-001</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [PERF-001] N+1 查询检测 命中了这行代码：`<code>+s.stack}return{value:e,source:t,stack:o,digest:null}}function Vl(e,t,n){return{value:e,source:null,stack:n??null,digest:t??null}}function Qc(e,t){try{console.error(t.value)}catch(n){setTimeout(funct…</code>。这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「N+1 查询检测」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码</summary><pre class="code-block"><code>`+s.stack}<span class="code-keyword">return</span>{value:e,source:t,stack:o,digest:<span class="code-keyword">null</span>}}<span class="code-keyword">function</span> Vl(e,t,n){<span class="code-keyword">return</span>{value:e,source:<span class="code-keyword">null</span>,stack:n??<span class="code-keyword">null</span>,digest:t??<span class="code-keyword">null</span>}}<span class="code-keyword">function</span> Qc(e,t){<span class="code-keyword">try</span>{console.error(t.value)}<span class="code-keyword">catch</span>(n){setTimeout(funct…</code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-1f956d222b87" data-file-path="drs_frontend/src/components/app/Sidebar.tsx" data-short-name="Sidebar.tsx" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">drs_frontend/src/components/app/Sidebar.tsx</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">1 Critical</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L118</span><span class="finding-cat">安全风险</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>Sidebar</code> 在拼接跳回 DAYS 的链接时，把登录态凭证 <code>token</code> 直接作为参数传给 <code>daysPageUrl(item.daysPagePath, workspace, activeSiteCode, token)</code>。</p><p>这会把 Bearer Token 放进 URL 查询串，随后暴露给浏览器历史、书签、代理日志、监控埋点，以及目标页面后续发起的跨站请求 <code>Referer</code>。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>任何能读取地址栏、访问日志或第三方资源请求头的人，都可能拿到这个 <code>token</code> 并复用为当前用户调用受保护接口，造成会话劫持和越权访问；该风险由所有点击侧边栏跳转 DAYS 菜单的已登录用户触发。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>不要把 <code>token</code> 传入 <code>daysPageUrl</code> 或任何 URL。</p><p>改为仅依赖现有的 HttpOnly session cookie 完成跨应用登录恢复，若确实需要跨页传递短期状态，使用一次性后端交换码而不是 Bearer Token 明文出现在查询参数中。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>登录 DRS 后点击 <code>Sidebar</code> 中任一带 <code>daysPagePath</code> 的菜单，确认跳转后的地址栏、浏览器历史记录、反向代理访问日志和目标页收到的 <code>Referer</code> 中都不包含 <code>token</code> 或等价访问凭证。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码</summary><pre class="code-block"><code><span class="code-keyword">const</span> href = daysPageUrl(item.daysPagePath, workspace, activeSiteCode, token);</code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-6165cbee4a3a" data-file-path="drs_frontend/src/hooks/useRoutingProgress.ts" data-short-name="useRoutingProgress.ts" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">drs_frontend/src/hooks/useRoutingProgress.ts</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L89-93</span><span class="finding-cat">异常处理</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>useRoutingProgress</code> 的 <code>poll</code> 在 <code>catch</code> 中只累计 <code>errorCountRef.current</code> 并设置 <code>pollBroken</code>，但没有在 <code>token</code>、<code>siteCode</code> 或 <code>batchId</code> 变化时清理旧的 <code>data</code> / <code>wasRunningRef</code> / <code>trackingRef</code>。</p><p>结合该分支“静默吞错”的处理方式，新的批次或站点如果首次轮询连续失败，界面仍可能继续展示上一个批次的进度快照。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>用户切换到新的 <code>siteCode</code> 或 <code>batchId</code> 后，一旦新轮询失败，前端可能把旧任务的 <code>running</code>/进度信息继续暴露给当前页面，造成跨批次状态混淆；</p><p>在运营场景下这会误导用户对当前任务是否仍在执行的判断，属于状态泄漏型风险。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>在 <code>token</code>、<code>siteCode</code>、<code>batchId</code> 变化时显式重置 <code>data</code>、<code>elapsedMs</code>、<code>pollBroken</code> 以及相关 <code>ref</code>，并在 <code>catch</code> 中避免继续保留与当前参数不匹配的旧快照。</p><p>至少应在新的轮询上下文建立前先 <code>setData(null)</code>。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>先让某个 <code>batchId</code> 轮询成功并得到 <code>data.running=true</code>，再切换到另一个 <code>batchId</code>，同时让新批次的 <code>getRoutingProgress</code> 连续抛错；</p><p>验证页面不会继续显示前一个 <code>batchId</code> 的进度数据。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码</summary><pre class="code-block"><code>+    } <span class="code-keyword">catch</span> {</code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-4f407fa39a5d" data-file-path="frontend/.streamlit/config.toml" data-short-name="config.toml" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">frontend/.streamlit/config.toml</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">1 Critical</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L22</span><span class="finding-cat">安全风险</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>新增配置把 Streamlit 的跨站请求伪造防护全局关闭了：<code>enableXsrfProtection = false</code>。</p><p>这会让所有依赖 Streamlit 内置会话的表单提交、文件上传和交互请求失去服务端 XSRF 校验，而本次变更里又明确引入了跨应用共享登录态与浏览器会话恢复逻辑，攻击面比默认配置更大。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>只要受害者浏览器仍带着有效的 Streamlit 会话，第三方站点就可以诱导其发起跨站请求，代替用户触发页面内的敏感操作或上传请求；</p><p>即使当前注释声称是为了解决多副本问题，这也把完整的请求来源校验让渡掉了，属于可被外部页面利用的认证上下文滥用风险。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>恢复 <code>enableXsrfProtection = true</code>，并改为通过反向代理粘性会话、统一 <code>server.cookieSecret</code>、或让上传请求命中同一副本来解决多副本 400 问题；</p><p>如果确实存在必须跨站调用的少数入口，应只对那部分入口做显式豁免，而不是关闭整个 Streamlit 应用的 XSRF 防护。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>在开启有效登录会话的浏览器中，访问一个第三方页面，由该页面自动向当前 Streamlit 应用的交互或上传端点发起跨站 POST 请求；验证在修复前请求可被服务端接受，修复后会因缺少有效 XSRF 校验而被拒绝。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码</summary><pre class="code-block"><code>enableXsrfProtection = <span class="code-keyword">false</span></code></pre></details></div></div></details></div></div></details><details class="action-group action-group-pm_decision" style="margin-bottom:14px;border:1px solid #b7791f;border-radius:8px;"><summary style="cursor:pointer;font-weight:700;font-size:15px;color:#b7791f;padding:8px 12px;list-style:none;">&#128993; 待确认 / 需人工拍板 &middot; 5 个问题</summary><div style="padding:0 12px 8px;"><div class="findings-list-wrap"><details class="file-group findings-file-group" open="open" id="fg-60c2777ec5f9" data-file-path="LOCAL_NACOS_SETUP.md" data-short-name="LOCAL_NACOS_SETUP.md" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">LOCAL_NACOS_SETUP.md</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">1 Critical</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L17-18</span><span class="finding-cat">安全风险</span><span class="evidence-unverified-badge" style="color:#e65100;border:1px solid #e65100;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="evidence_quote 在 diff 中未找到匹配：可能是 AI 概括/改写而非原文摘抄">&#9888; 证据待核实</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>新增的 <code>LOCAL_NACOS_SETUP.md</code> 直接把本地 Nacos 控制台登录凭据写成了明文：账号 <code>nacos</code>、密码 <code>nacos</code>。这不是占位符示例，而是可直接用于访问配置中心的真实默认凭据说明。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>配置中心承载 <code>database</code>、<code>kafka</code>、<code>redis</code>、<code>azure_blob</code> 等敏感配置；</p><p>一旦该文档被传播到不该接触配置中心的人，或默认凭据未在环境中改掉，攻击者可直接登录 Nacos 读取或篡改配置，进一步导致数据库、Kafka、Redis、Azure Blob 凭据泄露或服务被接管。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>把 <code>LOCAL_NACOS_SETUP.md</code> 中的默认凭据删除，改成“从安全渠道获取本地 Nacos 凭据”或使用明确的占位符（例如 <code>&lt;NACOS_USERNAME&gt;</code>、<code>&lt;NACOS_PASSWORD&gt;</code>）；</p><p>如果确需保留本地默认值说明，也必须同时注明“仅限隔离开发环境且上线前必须修改默认密码”，并避免把可直接登录的真实凭据提交到仓库。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>在代码仓库只读权限的前提下，让一名未被授权管理配置中心的成员仅依据 <code>LOCAL_NACOS_SETUP.md</code> 尝试登录 <code>http://localhost:8848/nacos</code>；</p><p>若能使用文档中的 <code>nacos</code> / <code>nacos</code> 成功进入并查看 <code>drs-api.yaml</code>，则证明存在凭据暴露风险。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码</summary><pre class="code-block"><code>+ 账号：`nacos`</code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-3a28ccb09c0a" data-file-path="docs/pudo route/DRS_beans_接口调用规范.md" data-short-name="DRS_beans_接口调用规范.md" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">docs/pudo route/DRS_beans_接口调用规范.md</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">2 Critical</span></span><span class="file-group-count">2 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L41</span><span class="finding-cat">安全风险</span><span class="evidence-unverified-badge" style="color:#e65100;border:1px solid #e65100;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="evidence_quote 在 diff 中未找到匹配：可能是 AI 概括/改写而非原文摘抄">&#9888; 证据待核实</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>新增文档直接公开了第三方 beans 的生产级接入端点 <code>https://isp.beans.ai/enterprise/v1</code>，并在同一份文档中说明 <code>Authorization: {apiKey}</code>、<code>apiKey</code> 形如 <code>Basic &lt;base64&gt;</code> 且“从 PKS A2 拿到后原样放进请求头”。</p><p>这使仓库内任何能读取该文档的人都获得了可直接复用的敏感接入细节，而不是仅保留抽象的集成说明。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>一旦仓库访问范围大于最小必要人员，攻击者或误用者可据此快速构造对 beans 的真实请求；再结合其他位置泄露的 <code>apiKey</code> 或 <code>accountName</code>，会显著降低凭证滥用门槛，扩大第三方账户被未授权操作的风险。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>把 <code>Base URL</code>、<code>Authorization</code> 头格式和 <code>apiKey</code> 编码形态从仓库文档中移除，改为引用受控的内部密钥管理/运行手册；</p><p>代码仓库内仅保留“通过配置中心注入凭证并调用 beans 客户端”的高层约定，不要提供可直接拼装请求的逐字段说明。若必须保留，至少迁移到访问受限的内部文档系统，并在仓库中只留下链接。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>使用普通开发者仓库只读权限账号检查是否仍能仅凭该文档拼出完整的 beans 请求要素（域名、路径前缀、Authorization 头格式、apiKey 形态）；修复后应无法从代码仓库直接获得这些敏感接入细节。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码</summary><pre class="code-block"><code>+| **Base URL** | `https:<span class="code-comment">//isp.beans.ai/enterprise/v1` | `pos-api/src/main/resources/application-dev.yml` `exchange.beans.host` |</span></code></pre></details></div><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L46</span><span class="finding-cat">安全风险</span><span class="evidence-unverified-badge" style="color:#e65100;border:1px solid #e65100;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="evidence_quote 在 diff 中未找到匹配：可能是 AI 概括/改写而非原文摘抄">&#9888; 证据待核实</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>新增文档明确写出“<code>apiKey</code> 是可直接操作 beans 账户的凭证”，并进一步披露其缓存键规则 <code>drs:beans:account:{facilityCode}:{pickupType}</code>、TTL 600s、以及 <code>accountName</code> 可用于日志标识。</p><p>该信息把凭证价值、存储位置命名规律和关联业务维度集中暴露在仓库中，属于敏感运行细节泄露。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>拥有应用侧 Redis 读权限、日志读权限或配置读权限的人员，可更容易按 <code>facilityCode</code> 与 <code>pickupType</code> 定位并枚举 beans 账户凭证缓存；</p><p>一旦 Redis 或日志侧权限控制存在薄弱点，这份文档会直接放大凭证检索与横向利用风险。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>删除仓库文档中的 Redis 键命名规则、TTL、<code>accountName</code> 日志策略和“可直接操作 beans 账户的凭证”这类可操作性很强的描述，改为写成“凭证按安全规范缓存于受控存储，不在代码仓库披露键名与生命周期细节”。</p><p>同时把具体键规则迁移到受限运维文档。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>让仅具备仓库访问权限但不参与该模块运维的人员评估是否能根据文档推断 Redis 中 beans 凭证的键空间与枚举维度；修复后，仓库文档不应再提供可直接定位凭证缓存的键模式。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码</summary><pre class="code-block"><code>+&gt; ⚠️ **apiKey 是可直接操作 beans 账户的凭证**：只存 Redis（有 TTL），**不落库、不写日志、不进导出文件**。日志需标识账号时打 `accountName`。</code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-83a87be175ec" data-file-path="docs/pudo route/Generate_Vinted_Route_部署说明.md" data-short-name="Generate_Vinted_Route_部署说明.md" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">docs/pudo route/Generate_Vinted_Route_部署说明.md</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">1 Critical</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L111-112</span><span class="finding-cat">安全风险</span><span class="evidence-unverified-badge" style="color:#e65100;border:1px solid #e65100;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="evidence_quote 在 diff 中未找到匹配：可能是 AI 概括/改写而非原文摘抄">&#9888; 证据待核实</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>新增部署文档直接公开了业务流程图的访问入口和固定访问密码，形成明文凭证泄露。</p><p><code>https://www.processon.com/view/link/6a82ba31baee41790c332b35</code> 与访问密码 <code>6zvm</code> 被提交到仓库后，任何能读取代码仓库的人都可以直接访问该外部文档。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>一旦仓库读权限范围大于该流程图原本的授权范围，未授权人员即可查看 <code>Generate Vinted Route</code> 的业务流程、系统边界和上线策略等内部信息，扩大外部系统与业务流程被枚举、社工或定向攻击的暴露面。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请删除仓库中的明文访问密码与受保护链接，改为只保留文档名称或通过受控的内部知识库引用；如果必须保留入口，至少将密码迁移到受访问控制的密码管理系统，并立即轮换 <code>6zvm</code>。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>在一个仅具备代码仓库只读权限、但原本不应访问该流程图的账号下，按文档中的链接和密码尝试访问 <code>https://www.processon.com/view/link/6a82ba31baee41790c332b35</code>；</p><p>若可直接打开流程图，即证明凭证泄露已造成未授权访问。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码</summary><pre class="code-block"><code>+ - 访问密码：`6zvm`</code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-4ae68b9ad568" data-file-path="docs/stardard route plan/Standard_Route_原型.html" data-short-name="Standard_Route_原型.html" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">docs/stardard route plan/Standard_Route_原型.html</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L6</span><span class="finding-cat">前端安全</span><span class="evidence-unverified-badge" style="color:#e65100;border:1px solid #e65100;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="evidence_quote 在 diff 中未找到匹配：可能是 AI 概括/改写而非原文摘抄">&#9888; 证据待核实</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>新增的 <code>docs/stardard route plan/Standard_Route_原型.html</code> 直接从第三方 CDN 加载 <code>https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js</code>，但当前 diff 中没有同时提供 <code>integrity</code> 和 <code>crossorigin</code> 约束，也没有改为项目内受控静态资源。</p><p>该页面是一个独立 HTML 原型文件，脚本会在打开页面时以当前页面权限直接执行。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>一旦 CDN 资源被篡改、DNS/代理链路被劫持，访问该原型页面的用户浏览器就会执行攻击者注入的脚本，导致页面中的导入数据、账号态信息或后续联动接口请求被窃取或篡改，属于典型前端供应链风险。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>将 <code>xlsx.full.min.js</code> 改为项目仓库内固定版本的受控静态资源，或至少为当前 CDN <code>&lt;script&gt;</code> 增加 <code>integrity</code> 和 <code>crossorigin=&quot;anonymous&quot;</code> 并在发布流程中校验哈希值，避免无校验执行第三方脚本。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>在浏览器开发者工具中确认 <code>xlsx.full.min.js</code> 的 <code>&lt;script&gt;</code> 标签是否带有 <code>integrity</code>；</p><p>再通过替换为本地篡改过的同名脚本进行验证，确认页面当前会无条件执行外部脚本，修复后应因哈希不匹配而拒绝加载。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码</summary><pre class="code-block"><code>+&lt;script src=<span class="code-string">"https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"</span>&gt;&lt;/script&gt;</code></pre></details></div></div></details></div></div></details><details class="action-group action-group-optional" style="margin-bottom:14px;border:1px solid #2f855a;border-radius:8px;"><summary style="cursor:pointer;font-weight:700;font-size:15px;color:#2f855a;padding:8px 12px;list-style:none;">&#128994; 可选优化 &middot; 7 个问题</summary><div style="padding:0 12px 8px;"><div class="findings-list-wrap"><details class="file-group findings-file-group" id="fg-a084b794bc07" data-file-path=".gitignore" data-short-name=".gitignore" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">.gitignore</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">3 处影响（1 个根因）</span></summary><div class="file-group-body"><div class="finding-card cluster-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-cat">边界条件</span><span class="cluster-badge">根因 · 3 处影响</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 NULL-003 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 NULL-003</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：<code>.nacos_snapshot/</code>。这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「除法运算未判分母为零」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码</summary><pre class="code-block"><code>.nacos_snapshot/</code></pre></details><details class="cluster-locations"><summary>展开查看全部 3 处影响位置</summary><table class="loc-table"><thead><tr><th>文件</th><th>行</th><th>问题摘要</th></tr></thead><tbody><tr><td class="loc-file">.gitignore</td><td class="loc-line">64</td><td class="loc-snippet">固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：`.nacos_snapshot/`。</td></tr><tr><td class="loc-file">.gitignore</td><td class="loc-line">68</td><td class="loc-snippet">固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：`docs/robin draft/`。</td></tr><tr><td class="loc-file">.gitignore</td><td class="loc-line">68</td><td class="loc-snippet">固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：`docs/robin draft/`。</td></tr></tbody></table></details></div></div></details><details class="file-group findings-file-group" id="fg-532a2baa536d" data-file-path="backend/Dockerfile" data-short-name="Dockerfile" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">backend/Dockerfile</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">3 处影响（1 个根因）</span></summary><div class="file-group-body"><div class="finding-card cluster-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-cat">边界条件</span><span class="cluster-badge">根因 · 3 处影响</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 NULL-003 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 NULL-003</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：<code>RUN mkdir -p /www/logs/${APP_NAME}</code>。</p><p>这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「除法运算未判分母为零」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码</summary><pre class="code-block"><code>RUN mkdir -p /www/logs/${APP_NAME}</code></pre></details><details class="cluster-locations"><summary>展开查看全部 3 处影响位置</summary><table class="loc-table"><thead><tr><th>文件</th><th>行</th><th>问题摘要</th></tr></thead><tbody><tr><td class="loc-file">backend/Dockerfile</td><td class="loc-line">12</td><td class="loc-snippet">固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：`RUN mkdir -p /www/logs/${APP_NAME}`。</td></tr><tr><td class="loc-file">backend/Dockerfile</td><td class="loc-line">37</td><td class="loc-snippet">固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：`&amp;&amp; test -f app/core/auth_cookie.py \`。</td></tr><tr><td class="loc-file">backend/Dockerfile</td><td class="loc-line">38</td><td class="loc-snippet">固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：`&amp;&amp; test -f app/core/vinted_route_kafka_consumers.py \`…</td></tr></tbody></table></details></div></div></details><details class="file-group findings-file-group" id="fg-38cde2f6f2bd" data-file-path="backend/app/api/v1/auth.py" data-short-name="auth.py" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">backend/app/api/v1/auth.py</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">2 处影响（1 个根因）</span></summary><div class="file-group-body"><div class="finding-card cluster-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-cat">边界条件</span><span class="cluster-badge">根因 · 2 处影响</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 NULL-003 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 NULL-003</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：<code>﻿# backend/app/api/v1/auth.py</code>。这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「除法运算未判分母为零」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码</summary><pre class="code-block"><code>﻿# backend/app/api/v1/auth.py</code></pre></details><details class="cluster-locations"><summary>展开查看全部 2 处影响位置</summary><table class="loc-table"><thead><tr><th>文件</th><th>行</th><th>问题摘要</th></tr></thead><tbody><tr><td class="loc-file">backend/app/api/v1/auth.py</td><td class="loc-line">1</td><td class="loc-snippet">固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：`﻿# backend/app/api/v1/auth.py`。</td></tr><tr><td class="loc-file">backend/app/api/v1/auth.py</td><td class="loc-line">1</td><td class="loc-snippet">固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：`﻿# backend/app/api/v1/auth.py`。</td></tr></tbody></table></details></div></div></details><details class="file-group findings-file-group" id="fg-9409ce166cfc" data-file-path="backend/app/services/pudo_route_generate/vinted_route_pos_backfill.py" data-short-name="vinted_route_pos_backfill.py" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">backend/app/services/pudo_route_generate/vinted_route_pos_backfill.py</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L149-153</span><span class="finding-cat">并发安全</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>_write_orders_as_backfill</code> 先调用 <code>_existing_po_numbers_by_order_no</code> / <code>_find_po_id</code> 做存在性检查，再继续执行 <code>upsert_po_from_created_message</code> 和 <code>write_parcels</code>，这是典型的 check-then-act 流程，但新增代码里没有任何锁、唯一约束冲突处理或幂等重试来兜住并发。</p><p>两个并发的 <code>run_pos_backfill</code> 调用处理同一个 <code>pickup_order_no</code> 时，都可能在检查阶段看到“尚不存在”。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>当同一 <code>batch_id</code> 被重复点击触发，或多个 worker 同时跑补单时，可能出现重复写入尝试、唯一键冲突异常，甚至在 <code>write_parcels</code> 已部分执行后留下不一致状态；</p><p>当前外层还会把这类异常吞掉并继续其它 <code>facility_code</code>，使补单结果变成非确定性。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>把幂等保证下沉到写入语句本身：优先依赖数据库唯一约束，并在 <code>upsert_po_from_created_message</code> / <code>write_parcels</code> 处显式处理唯一冲突；</p><p>如果必须先判存，再写入，则至少在同一事务里使用可防并发插入的锁定读或原子 UPSERT。可补充一个并发测试，验证两个并发调用处理同一个 <code>pickup_order_no</code> 时最终只落一条 PO/parcel。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>准备同一个 <code>batch_id</code>、同一个 <code>pickup_order_no</code> 的 PKS 返回数据，并发触发两次 <code>run_pos_backfill</code>。</p><p>断言 <code>VINTED_ROUTE_PO_REVIEW_TABLE</code> 中该 <code>pickup_order_no</code> 最终只有一条记录，<code>write_parcels</code> 对应的 parcel 也没有重复，且不会因为其中一个事务的唯一冲突导致另一批 <code>facility_code</code> 被静默跳过。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码</summary><pre class="code-block"><code>+            existing_global = _existing_po_numbers_by_order_no(conn, pickup_order_nos=[order.pickup_order_no])</code></pre></details></div></div></details><details class="file-group findings-file-group" id="fg-fd24a40012c6" data-file-path="drs_frontend/dist/assets/index-tnHn_fBl.js" data-short-name="index-tnHn_fBl.js" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">drs_frontend/dist/assets/index-tnHn_fBl.js</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span> <span class="stat-chip stat-info">1 Info</span></span><span class="file-group-count">13 处影响（2 个根因）</span></summary><div class="file-group-body"><div class="finding-card cluster-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-cat">并发安全</span><span class="cluster-badge">根因 · 5 处影响</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 ATOM-001 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 ATOM-001</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [ATOM-001] 先查后写（check-then-act）无锁保护（并发场景有竞态风险） 命中了这行代码：<code>*/const Id=Ie(&quot;X&quot;,[[&quot;path&quot;,{d:&quot;M18 6 6 18&quot;,key:&quot;1bl5f8&quot;}],[&quot;path&quot;,{d:&quot;m6 6 12 12&quot;,key:&quot;d8bk6v&quot;}]]),Ob=({...e})=&gt;{const{theme:t=&quot;system&quot;}=G1();return l.jsx(wb,{theme:t,className:&quot;toaster group&quot;,icons:{…</code>。</p><p>这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「先查后写（check-then-act）无锁保护（并发场景有竞态风险）」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码</summary><pre class="code-block"><code>*/<span class="code-keyword">const</span> Id=Ie(<span class="code-string">"X"</span>,[[<span class="code-string">"path"</span>,{d:<span class="code-string">"M18 6 6 18"</span>,key:<span class="code-string">"1bl5f8"</span>}],[<span class="code-string">"path"</span>,{d:<span class="code-string">"m6 6 12 12"</span>,key:<span class="code-string">"d8bk6v"</span>}]]),Ob=({...e})=&gt;{<span class="code-keyword">const</span>{theme:t=<span class="code-string">"system"</span>}=G1();<span class="code-keyword">return</span> l.jsx(wb,{theme:t,className:<span class="code-string">"toaster group"</span>,icons:{…</code></pre></details><details class="cluster-locations"><summary>展开查看全部 5 处影响位置</summary><table class="loc-table"><thead><tr><th>文件</th><th>行</th><th>问题摘要</th></tr></thead><tbody><tr><td class="loc-file">drs_frontend/dist/assets/index-tnHn_fBl.js</td><td class="loc-line">166</td><td class="loc-snippet">固定规则 [ATOM-001] 先查后写（check-then-act）无锁保护（并发场景有竞态风险） 命中了这行代码：`*/const Id=Ie(&quot;X&quot;,[[&quot;path&quot;,{d…</td></tr><tr><td class="loc-file">drs_frontend/dist/assets/index-tnHn_fBl.js</td><td class="loc-line">206</td><td class="loc-snippet">固定规则 [ATOM-001] 先查后写（check-then-act）无锁保护（并发场景有竞态风险） 命中了这行代码：``)},eE=0,Zr=[];function tE(e)…</td></tr><tr><td class="loc-file">drs_frontend/dist/assets/index-tnHn_fBl.js</td><td class="loc-line">217</td><td class="loc-snippet">固定规则 [ATOM-001] 先查后写（check-then-act）无锁保护（并发场景有竞态风险） 命中了这行代码：`Please change the parent &lt;Rou…</td></tr><tr><td class="loc-file">drs_frontend/dist/assets/index-tnHn_fBl.js</td><td class="loc-line">218</td><td class="loc-snippet">固定规则 [ATOM-001] 先查后写（check-then-act）无锁保护（并发场景有竞态风险） 命中了这行代码：``).length:0;f.useLayoutEffect…</td></tr><tr><td class="loc-file">drs_frontend/dist/assets/index-tnHn_fBl.js</td><td class="loc-line">37</td><td class="loc-snippet">固定规则 [ATOM-001] 先查后写（check-then-act）无锁保护（并发场景有竞态风险） 命中了这行代码：``+o[a].replace(&quot; at new &quot;,&quot; a…</td></tr></tbody></table></details></div><div class="finding-card cluster-card severity-info" data-severity="info"><div class="finding-header"><span class="sev-badge info">INFO</span><span class="finding-cat">兼容与部署</span><span class="cluster-badge">根因 · 8 处影响</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 COMPAT-003 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 COMPAT-003</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [COMPAT-003] 使用var或jakarta包（项目基线约定） 命中了这行代码：<code>var m0=Object.defineProperty;var Af=e=&gt;{throw TypeError(e)};var g0=(e,t,n)=&gt;t in e?m0(e,t,{enumerable:!0,configurable:!0,writable:!0,value:n}):e[t]=n;var bl=(e,t,n)=&gt;g0(e,typeof t!=&quot;symbol&quot;?t+&quot;&quot;:t,n),…</code>。</p><p>这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「使用var或jakarta包（项目基线约定）」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码</summary><pre class="code-block"><code><span class="code-keyword">var</span> m0=Object.defineProperty;<span class="code-keyword">var</span> Af=e=&gt;{<span class="code-keyword">throw</span> TypeError(e)};<span class="code-keyword">var</span> g0=(e,t,n)=&gt;t in e?m0(e,t,{enumerable:!<span class="code-number">0</span>,configurable:!<span class="code-number">0</span>,writable:!<span class="code-number">0</span>,value:n}):e[t]=n;<span class="code-keyword">var</span> bl=(e,t,n)=&gt;g0(e,typeof t!=<span class="code-string">"symbol"</span>?t+<span class="code-string">""</span>:t,n),…</code></pre></details><details class="cluster-locations"><summary>展开查看全部 8 处影响位置</summary><table class="loc-table"><thead><tr><th>文件</th><th>行</th><th>问题摘要</th></tr></thead><tbody><tr><td class="loc-file">drs_frontend/dist/assets/index-tnHn_fBl.js</td><td class="loc-line">1</td><td class="loc-snippet">固定规则 [COMPAT-003] 使用var或jakarta包（项目基线约定） 命中了这行代码：`var m0=Object.defineProperty;var Af=e=&gt;{…</td></tr><tr><td class="loc-file">drs_frontend/dist/assets/index-tnHn_fBl.js</td><td class="loc-line">1</td><td class="loc-snippet">固定规则 [COMPAT-003] 使用var或jakarta包（项目基线约定） 命中了这行代码：`var m0=Object.defineProperty;var Af=e=&gt;{…</td></tr><tr><td class="loc-file">drs_frontend/dist/assets/index-tnHn_fBl.js</td><td class="loc-line">1</td><td class="loc-snippet">固定规则 [COMPAT-003] 使用var或jakarta包（项目基线约定） 命中了这行代码：`var m0=Object.defineProperty;var Af=e=&gt;{…</td></tr><tr><td class="loc-file">drs_frontend/dist/assets/index-tnHn_fBl.js</td><td class="loc-line">1</td><td class="loc-snippet">固定规则 [COMPAT-003] 使用var或jakarta包（项目基线约定） 命中了这行代码：`var m0=Object.defineProperty;var Af=e=&gt;{…</td></tr><tr><td class="loc-file">drs_frontend/dist/assets/index-tnHn_fBl.js</td><td class="loc-line">1</td><td class="loc-snippet">固定规则 [COMPAT-003] 使用var或jakarta包（项目基线约定） 命中了这行代码：`var m0=Object.defineProperty;var Af=e=&gt;{…</td></tr><tr><td class="loc-file">drs_frontend/dist/assets/index-tnHn_fBl.js</td><td class="loc-line">1</td><td class="loc-snippet">固定规则 [COMPAT-003] 使用var或jakarta包（项目基线约定） 命中了这行代码：`var m0=Object.defineProperty;var Af=e=&gt;{…</td></tr><tr><td class="loc-file">drs_frontend/dist/assets/index-tnHn_fBl.js</td><td class="loc-line">1</td><td class="loc-snippet">固定规则 [COMPAT-003] 使用var或jakarta包（项目基线约定） 命中了这行代码：`var m0=Object.defineProperty;var Af=e=&gt;{…</td></tr><tr><td class="loc-file">drs_frontend/dist/assets/index-tnHn_fBl.js</td><td class="loc-line">9</td><td class="loc-snippet">固定规则 [COMPAT-003] 使用var或jakarta包（项目基线约定） 命中了这行代码：`*/var Xs=Symbol.for(&quot;react.element&quot;),y0=…</td></tr></tbody></table></details></div></div></details><details class="file-group findings-file-group" id="fg-6875d861243b" data-file-path="drs_frontend/src/hooks/useAuthSession.ts" data-short-name="useAuthSession.ts" data-worst-severity="info"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-info" aria-hidden="true"></span><span class="file-path-text">drs_frontend/src/hooks/useAuthSession.ts</span></span><span class="file-group-stats"><span class="stat-chip stat-info">1 Info</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-info" data-severity="info"><div class="finding-header"><span class="sev-badge info">INFO</span><span class="finding-line" title="行号">L24-31</span><span class="finding-cat">异常处理</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>useAuthSession</code> 在启动阶段把 <code>refreshSession()</code> 的所有失败都统一吞掉并直接执行 <code>setStatus(&quot;login-required&quot;)</code>，没有区分网络异常、服务端临时错误和真实未登录场景。</p><p>这样 <code>loadContext(restored)</code> 里如果 <code>getUserContext(activeSession.token)</code> 因接口故障抛错，也会沿着同一个 <code>.catch(() =&gt; { ... })</code> 分支被误判成需要重新登录。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>当 <code>/users/me/context</code> 或会话恢复接口短暂失败时，已持有有效 <code>HttpOnly session cookie</code> 的用户会被错误踢回登录页；</p><p>如果用户随后重复输入账号密码，既放大认证接口压力，也会掩盖真实后端故障，导致前端把可恢复的异常表现成认证失效。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>把 <code>refreshSession()</code> 失败与 <code>loadContext(restored)</code> 失败分开处理：仅在明确的未认证错误时设置 <code>setStatus(&quot;login-required&quot;)</code>，其余异常应保留在 <code>checking</code>/错误态并向界面暴露可重试信息。</p><p>例如先单独 <code>await refreshSession()</code>，再对 <code>loadContext(restored)</code> 做独立 <code>try/catch</code>，按 <code>ApiError</code> 的状态码区分未登录与服务异常。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>模拟 <code>refreshSession()</code> 成功返回 <code>UserSession</code>，但 <code>getUserContext(activeSession.token)</code> 返回 500 或网络超时；</p><p>验证 <code>status</code> 不应变成 <code>login-required</code>，而应进入可见错误态并允许重试。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码</summary><pre class="code-block"><code>+      .<span class="code-keyword">catch</span>(() =&gt; {</code></pre></details></div></div></details></div></div></details>
+    </div>
+
+    <div id="panel-dp" class="report-panel" role="tabpanel" aria-labelledby="tab-dp">
+      <div class="dp-shell"><div class="dp-header">
+  <h1>数据权限分析报告</h1>
+  <p class="subtitle">AI Code Review · 接口级别数据权限审计</p>
+  <div class="meta-row"><div class="meta-item">项目 <strong>drs-route-web</strong></div><div class="meta-item">涉及接口路径（自动汇总） <strong>服务 drs-route-web · 本次无可聚合路径的权限类接口（请检查 path_pattern）</strong></div><div class="meta-item">报告日期 <strong>2026-10-19 14:26:37</strong></div><div class="meta-item">涉及角色标签 <strong>见 role_data / findings</strong></div></div>
+</div>
+
+<div class="dp-body">
+
+  <div class="dp-stats">
+    
+  <div class="summary-grid">
+    <div class="summary-card critical"><div class="count">0</div><div class="label">Critical</div></div>
+    <div class="summary-card high"><div class="count">0</div><div class="label">Major</div></div>
+    <div class="summary-card medium"><div class="count">0</div><div class="label">Minor</div></div>
+    <div class="summary-card info"><div class="count">0</div><div class="label">Info</div></div>
+  </div>
+  <p style="margin:8px 0 0;font-size:.8rem;color:#718096;">Total 0 条权限类问题 · 涉及 0 个接口（已解析路径）</p>
+
+  </div>
+
+  <div class="dp-section">
+    <div class="dp-section-title">角色权限定义</div>
+    <div class="dp-roles"><div class="role-box muted"><div class="role-icon">&#128100;</div><div class="role-info"><h3>未提供 role_data.md</h3><p class="role-md">请在仓库根目录放置 <code>role_data.md</code> 并由流水线传入 <code>--role-data-file</code>。</p></div></div></div>
+  </div>
+
+  <div class="dp-gate"></div>
+
+  <div class="dp-section">
+    <div class="dp-section-title">接口权限审计总览</div>
+    <div class="empty">暂无可解析路径的「权限与访问控制」条目；请检查 path_pattern 与 HTTP 清单。</div>
+  </div>
+
+  
+
+  <div class="dp-section">
+    <div class="dp-section-title">端点详情</div>
+    <div class="dp-folds"></div>
+  </div>
+
+  
+
+  
+
+  <div class="dp-footer"><p>本报告由 AI Code Review 生成（data_permission 模式）。权限类 finding 涉及文件：<strong>（无）</strong></p><p style="margin-top:4px;">生成时间：2026-10-19 14:26:37 · 项目：drs-route-web</p></div>
+
+</div>
+</div>
+    </div>
+  </div>
+  <script>
+    function escHtml(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function formatSummaryInner(rawBlock) {
+      var lines = rawBlock.split(/\r?\n/);
+      var html = '';
+      var listType = null;
+
+      function closeList() {
+        if (listType) { html += '</' + listType + '>'; listType = null; }
+      }
+
+      function renderInline(text) {
+        var st = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        st = st.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        st = st.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+        return st;
+      }
+
+      lines.forEach(function(line) {
+        var trimmed = line.trim();
+        if (!trimmed) { closeList(); return; }
+
+        if (/^#{1,3}\s+/.test(trimmed)) {
+          closeList();
+          var title = trimmed.replace(/^#{1,3}\s+/, '');
+          html += '<p class="summary-section-title">' + renderInline(title) + '</p>';
+          return;
+        }
+
+        if (/^\*\*[^*]+\*\*[：:。]?$/.test(trimmed)) {
+          closeList();
+          var title2 = trimmed.replace(/^\*\*|\*\*[：:。]?$/g, '');
+          html += '<p class="summary-section-title">' + renderInline(title2) + '</p>';
+          return;
+        }
+
+        if (/^[【「『].*[】」』]$/.test(trimmed) ||
+            (trimmed.length <= 30 && /[：:]$/.test(trimmed) && !/^\d/.test(trimmed))) {
+          closeList();
+          var title3 = trimmed.replace(/^[【「『]|[】」』]$/g, '').replace(/[：:]$/, '');
+          html += '<p class="summary-section-title">' + renderInline(title3) + '</p>';
+          return;
+        }
+
+        if (/^[-*]\s+/.test(trimmed)) {
+          if (listType !== 'ul') { closeList(); html += '<ul>'; listType = 'ul'; }
+          var content = trimmed.replace(/^[-*]\s+/, '');
+          html += '<li>' + renderInline(content) + '</li>';
+          return;
+        }
+
+        if (/^[\(（]?\d+[\)）.\、]\s*/.test(trimmed)) {
+          if (listType !== 'ol') { closeList(); html += '<ol>'; listType = 'ol'; }
+          var content2 = trimmed.replace(/^[\(（]?\d+[\)）.\、]\s*/, '');
+          html += '<li>' + renderInline(content2) + '</li>';
+          return;
+        }
+
+        closeList();
+        if (trimmed.length > 280 && /[。！？][\s\u3000]/.test(trimmed)) {
+          var chunks = trimmed.split(/(?<=[。！？])[\s\u3000]+/).filter(function (c) { return c.trim(); });
+          if (chunks.length > 1) {
+            chunks.forEach(function (c) {
+              html += '<p>' + renderInline(c.trim()) + '</p>';
+            });
+            return;
+          }
+        }
+        html += '<p>' + renderInline(trimmed) + '</p>';
+      });
+
+      closeList();
+      return html;
+    }
+
+    function formatSummary() {
+      var el = document.getElementById('summary-text');
+      if (!el) return;
+      if (el.classList.contains('summary-preformatted')) return;
+      var raw = el.textContent || '';
+      raw = raw.replace(/\s+(?=本分片)/g, '\n---SHARD---\n');
+      var shards = raw.split(/\n---SHARD---\n/).map(function(s) { return s.trim(); }).filter(Boolean);
+      if (!shards.length) shards = [raw.trim()].filter(Boolean);
+
+      if (shards.length <= 1) {
+        var inner = formatSummaryInner(shards[0] || '');
+        if (inner) el.innerHTML = inner;
+        return;
+      }
+
+      var htmlShards = [];
+      for (var i = 0; i < shards.length; i++) {
+        var blockHtml = formatSummaryInner(shards[i]);
+        if (blockHtml) htmlShards.push('<div class="summary-shard">' + blockHtml + '</div>');
+      }
+      var head = htmlShards.slice(0, 3).join('');
+      var tail = htmlShards.slice(3).join('');
+      var moreBtn = '';
+      if (tail) {
+        moreBtn = '<button type="button" class="summary-toggle" id="summary-toggle-btn" aria-expanded="false">展开全部分片结论 (' + (htmlShards.length - 3) + ')</button>';
+      }
+      el.innerHTML = '<div class="summary-shards-wrap">' + head +
+        (tail ? '<div class="summary-more" id="summary-more-block" hidden>' + tail + '</div>' : '') +
+        moreBtn + '</div>';
+
+      var btn = document.getElementById('summary-toggle-btn');
+      var more = document.getElementById('summary-more-block');
+      if (btn && more) {
+        btn.addEventListener('click', function() {
+          var ex = btn.getAttribute('aria-expanded') === 'true';
+          more.hidden = ex;
+          btn.setAttribute('aria-expanded', ex ? 'false' : 'true');
+          btn.textContent = ex
+            ? ('展开全部分片结论 (' + (htmlShards.length - 3) + ')')
+            : '收起分片结论';
+        });
+      }
+    }
+
+    function switchReportTab(which) {
+      var panels = ['panel-general', 'panel-dp'];
+      var tabs = ['tab-general', 'tab-dp'];
+      var activePanel = which === 'dp' ? 'panel-dp' : 'panel-general';
+      var activeTab = which === 'dp' ? 'tab-dp' : 'tab-general';
+      panels.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) { el.classList.toggle('is-active', id === activePanel); }
+      });
+      tabs.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) { el.setAttribute('aria-selected', id === activeTab ? 'true' : 'false'); }
+      });
+    }
+
+    var activeFilter = null;
+
+    function getSearchQuery() {
+      var inp = document.getElementById('findings-search');
+      return inp ? String(inp.value || '').trim().toLowerCase() : '';
+    }
+
+    function applyFindingsFilter() {
+      var hint = document.getElementById('filter-hint');
+      var hintLabel = document.getElementById('filter-hint-label');
+
+      if (activeFilter) {
+        hintLabel.textContent = activeFilter.toUpperCase();
+        hint.style.display = 'block';
+      } else {
+        hint.style.display = 'none';
+      }
+
+      var q = getSearchQuery();
+
+      document.querySelectorAll('.findings-file-group').forEach(function(group) {
+        var visible = 0;
+        group.querySelectorAll('.finding-card').forEach(function(card) {
+          var sev = card.getAttribute('data-severity') || 'info';
+          var sevOk = !activeFilter || sev === activeFilter;
+          var textOk = !q || card.textContent.toLowerCase().indexOf(q) !== -1;
+          var show = sevOk && textOk;
+          card.style.display = show ? '' : 'none';
+          if (show) visible++;
+        });
+        group.style.display = visible === 0 ? 'none' : '';
+        // 任务115续作：finding 现在可能嵌套在 <details class="action-group"> 里，
+        // 该祖先关闭时子元素无论 style.display 如何都不会渲染，命中过滤结果时须一并展开。
+        if (visible > 0) {
+          var actionGroup = group.closest('.action-group');
+          if (actionGroup) actionGroup.open = true;
+        }
+      });
+
+      document.querySelectorAll('.file-block').forEach(function(block) {
+        if (block.classList.contains('findings-file-group')) return;
+        var rows = block.querySelectorAll('tbody tr');
+        if (!rows.length) return;
+        var vis = 0;
+        rows.forEach(function(row) {
+          if (!activeFilter || row.querySelector('.chip.' + activeFilter)) {
+            row.style.display = '';
+            vis++;
+          } else {
+            row.style.display = 'none';
+          }
+        });
+        block.style.display = vis === 0 ? 'none' : '';
+      });
+
+      // 顶部 Critical/Major 计数把「牵连影响」的 RISK/NEEDS_HUMAN 也并了进去
+      // （用户拍板口径），但这些卡片不是 .finding-card，之前点 Critical 只会
+      // 过滤上面两段、对牵连影响毫无反应，数字和实际看到的东西对不上
+      // （build TEST_pus-exchange-api/222 反馈）。按同一套口径把牵连影响的卡
+      // 也纳入过滤：RISK 对应 critical，NEEDS_HUMAN 对应 major；筛 minor/info
+      // 时牵连影响没有对应桶，全部隐藏是符合口径的。
+      var impactLevelMap = { critical: 'RISK', major: 'NEEDS_HUMAN' };
+      document.querySelectorAll('.impact-card[data-impact-level]').forEach(function(card) {
+        var level = card.getAttribute('data-impact-level');
+        var show = !activeFilter || impactLevelMap[activeFilter] === level;
+        card.style.display = show ? '' : 'none';
+        if (show && activeFilter) {
+          var d = card.closest('details');
+          if (d) d.open = true;
+        }
+      });
+    }
+
+    function filterBySeverity(chip) {
+      var filter = chip.dataset.filter;
+      if (activeFilter === filter) {
+        clearFilter();
+        return;
+      }
+      activeFilter = filter;
+      document.querySelectorAll('.filter-chip').forEach(function(c) {
+        if (c.dataset.filter === filter) {
+          c.classList.add('active');
+          c.classList.remove('dimmed');
+        } else {
+          c.classList.remove('active');
+          c.classList.add('dimmed');
+        }
+      });
+      applyFindingsFilter();
+    }
+
+    function clearFilter() {
+      activeFilter = null;
+      document.querySelectorAll('.filter-chip').forEach(function(c) {
+        c.classList.remove('active', 'dimmed');
+      });
+      applyFindingsFilter();
+    }
+
+    function initFindingsToolbar() {
+      var tb = document.getElementById('findings-toolbar');
+      if (!tb) return;
+      var groups = document.querySelectorAll('#panel-general .findings-file-group');
+      tb.style.display = groups.length ? '' : 'none';
+    }
+
+    (function () {
+      var chips = document.querySelectorAll('table .chip');
+      for (var i = 0; i < chips.length; i++) {
+        chips[i].textContent = chips[i].textContent.toUpperCase();
+      }
+
+      formatSummary();
+
+      initFindingsToolbar();
+
+      var ex = document.getElementById('expand-all-files');
+      var cl = document.getElementById('collapse-all-files');
+      if (ex) ex.addEventListener('click', function() {
+        document.querySelectorAll('.findings-file-group').forEach(function(d) { d.open = true; });
+        document.querySelectorAll('.action-group').forEach(function(d) { d.open = true; });
+      });
+      if (cl) cl.addEventListener('click', function() {
+        document.querySelectorAll('.findings-file-group').forEach(function(d) { d.open = false; });
+        document.querySelectorAll('.action-group').forEach(function(d) { d.open = false; });
+      });
+
+      var search = document.getElementById('findings-search');
+      if (search) {
+        search.addEventListener('input', function() { applyFindingsFilter(); });
+      }
+    })();
+
+    // Chart.js initialization
+    function renderCategoryChart(categoryData) {
+      var ctx = document.getElementById('categoryChart');
+      if (!ctx) return;
+      ctx = ctx.getContext('2d');
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: Object.keys(categoryData),
+          datasets: [{
+            label: '问题数量',
+            data: Object.values(categoryData),
+            // 跟报告主色（teal 系）协调的低饱和度调色板，替换 Chart.js 默认的
+            // 高饱和度七彩配色（用户反馈报告"不好看"，实测截图确认默认色彩
+            // 花哨刺眼、跟品牌色不搭）；18 色覆盖 VALID_CATEGORIES 全量枚举，
+            // 保证再多分类同时出现也不会因为数组不够长而退化成无色
+            backgroundColor: [
+              '#0f766e', '#b5651d', '#4a6fa5', '#8e6c96',
+              '#6b8f71', '#b58a3d', '#b56576', '#5c7a89',
+              '#3d8a8a', '#a3703f', '#5f7a9d', '#7a6b9d',
+              '#7fa17f', '#c29b5c', '#9d6b7a', '#6b8a9d',
+              '#8a9d6b', '#9d7a5f'
+            ]
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: true } }
+        }
+      });
+    }
+
+    // 这个短列表只是一句话摘要，不值得把 markdown 代码块渲染进一个 <li> 里——
+    // 直接去掉标记符本身，露出裸文本即可（跟 _render_markdown_lite 的完整
+    // 渲染不同，这里要的是"别露出字面 ** 和 ``` "，不是"渲染出富文本"）
+    function stripMdLite(text) {
+      return (text || '')
+        .replace(/```[a-zA-Z]*\n?/g, '')
+        .replace(/```/g, '')
+        .replace(/\*\*([^*]+)\*\*/g, '$1')
+        .replace(/`([^`]+)`/g, '$1');
+    }
+
+    function renderTopCriticals(topCriticals) {
+      var list = document.getElementById('top-criticals-list');
+      var box = document.getElementById('top-criticals');
+      if (!list) return;
+      // 一条都没有时整块收起，不留「标题 + 暂无 Critical 问题」空框占首屏
+      if (!topCriticals || !topCriticals.length) {
+        if (box) box.hidden = true;
+        list.innerHTML = '';
+        return;
+      }
+      if (box) box.hidden = false;
+      list.innerHTML = topCriticals.map(function(c) {
+        var desc = stripMdLite(c.description || '');
+        if (desc.length > 120) desc = desc.substring(0, 120) + '…';
+        // source 只有牵连影响条目才带：不标来源的话，读者会把"改动波及到的
+        // 其他调用点"当成"这段代码本身写错了"，两者要采取的动作不一样
+        var tag = c.source
+          ? '<span class="tc-source">' + escHtml(c.source) + '</span>'
+          : '';
+        return '<li>' + tag + '<strong>' + escHtml(c.file + (c.line ? ':' + c.line : '')) +
+               '</strong><span class="tc-desc">' + escHtml(desc) + '</span></li>';
+      }).join('');
+    }
+
+    // Export stubs (implemented in Task 5)
+    function exportJira() { alert('导出为 Jira 功能待实现'); }
+    function exportExcel() { alert('导出为 Excel 功能待实现'); }
+    function exportCsv() { alert('导出为 CSV 功能待实现'); }
+
+    // Inject summary data (Task 5)
+    if (typeof renderCategoryChart === 'function') renderCategoryChart({"\u5b89\u5168\u98ce\u9669": 11, "\u5f02\u5e38\u5904\u7406": 6, "\u6027\u80fd\u9690\u60a3": 6, "\u5e76\u53d1\u5b89\u5168": 5, "\u914d\u7f6e\u53d8\u66f4": 3, "\u8fb9\u754c\u6761\u4ef6": 3, "\u8d44\u6e90\u7ba1\u7406": 2, "\u9700\u6c42\u5916\u52a8\u4f5c": 1, "\u6570\u636e\u4e00\u81f4\u6027": 1, "\u524d\u7aef\u5b89\u5168": 1, "\u517c\u5bb9\u4e0e\u90e8\u7f72": 1});
+if (typeof renderTopCriticals === 'function') renderTopCriticals([{"file": "LOCAL_NACOS_SETUP.md", "line": "17-18", "severity": "critical", "category": "安全风险", "description": "**原因：** 新增的 `LOCAL_NACOS_SETUP.md` 直接把本地 Nacos 控制台登录凭据写成了明文：账号 `nacos`、密码 `nacos`。这不是占位符示例，而是可直接用于访问配置中心的真实默认凭据说明。  \n**影响：** 配置中心承载 `database`、`kafka`、`redis`、`azure_blob` 等敏感配置；一旦该文档被传播到不该接触配置中心的人，或默认凭据未在环境中改掉，攻击者可直接登录 Nacos 读取或篡改配置，进一步导致数据库、Kafka、Redis、Azure Blob 凭据泄露或服务被接管。", "suggestion": "把 `LOCAL_NACOS_SETUP.md` 中的默认凭据删除，改成“从安全渠道获取本地 Nacos 凭据”或使用明确的占位符（例如 `\u003cNACOS_USERNAME>`、`\u003cNACOS_PASSWORD>`）；如果确需保留本地默认值说明，也必须同时注明“仅限隔离开发环境且上线前必须修改默认密码”，并避免把可直接登录的真实凭据提交到仓库。", "test_scenario": "在代码仓库只读权限的前提下，让一名未被授权管理配置中心的成员仅依据 `LOCAL_NACOS_SETUP.md` 尝试登录 `http://localhost:8848/nacos`；若能使用文档中的 `nacos` / `nacos` 成功进入并查看 `drs-api.yaml`，则证明存在凭据暴露风险。", "http_method": "", "path_pattern": "", "permission_tags": [], "java_entry_method": "", "expected_permission": "", "actual_behavior": "", "evidence_refs": [], "risk_label_zh": "", "evidence_quote": "+ 账号：`nacos`", "requirement_ref": "", "unimplemented_feature": "", "deviation_rationale_check": "", "_evidence_unverified": "evidence_quote 在 diff 中未找到匹配：可能是 AI 概括/改写而非原文摘抄"}, {"file": "backend/app/services/delivery_orders.py", "line": "584-621", "severity": "critical", "category": "安全风险", "description": "**原因：** `find_office_binary` 在发现容器内没有 `soffice`/`libreoffice` 时，会进入 `_install_libreoffice_packages`，直接从 API 进程里执行 `apt-get update` 和 `apt-get install -y --no-install-recommends libreoffice-calc fontconfig fonts-liberation`。这相当于把运行时包安装能力暴露给线上业务路径，且安装内容来自外部软件源，代码里没有任何完整性校验、版本钉死或环境隔离。\n\n**影响：** 一旦调用 `convert_xlsx_to_pdf` 的请求在生产环境首次触发该分支，业务线程就会执行高权限系统变更；如果基础镜像以 root 运行且软件源被污染、被中间人劫持或配置错误，攻击面会从应用层扩大到容器系统层，最坏可导致远程代码执行或服务被植入恶意包。同时 `apt-get update/install` 还会显著拉长请求时延并放大可用性风险。", "suggestion": "删除运行时自动安装逻辑，把 `libreoffice-calc`、`fontconfig`、`fonts-liberation` 固化到镜像构建或部署前置检查中；`find_office_binary` 只做存在性校验，缺失时直接返回明确错误，不要在业务进程里执行 `apt-get`。如果必须保留自愈能力，也应限制为离线、受控的初始化任务，并对安装源和包版本做校验。", "test_scenario": "在一个以 root 运行且未预装 `soffice` 的容器里调用触发 `convert_xlsx_to_pdf` 的接口，验证当前代码会实际执行 `apt-get update`/`apt-get install`；修复后应只返回“缺少 LibreOffice”的错误，不再产生任何系统级安装行为。", "http_method": "", "path_pattern": "", "permission_tags": [], "java_entry_method": "", "expected_permission": "", "actual_behavior": "", "evidence_refs": [], "risk_label_zh": "", "evidence_quote": "+            [apt, 'install', '-y', '--no-install-recommends', *_OFFICE_PACKAGES],", "requirement_ref": "", "unimplemented_feature": "", "deviation_rationale_check": ""}, {"file": "docs/pudo route/DRS_beans_接口调用规范.md", "line": "41", "severity": "critical", "category": "安全风险", "description": "**原因：** 新增文档直接公开了第三方 beans 的生产级接入端点 `https://isp.beans.ai/enterprise/v1`，并在同一份文档中说明 `Authorization: {apiKey}`、`apiKey` 形如 `Basic \u003cbase64>` 且“从 PKS A2 拿到后原样放进请求头”。这使仓库内任何能读取该文档的人都获得了可直接复用的敏感接入细节，而不是仅保留抽象的集成说明。\n\n**影响：** 一旦仓库访问范围大于最小必要人员，攻击者或误用者可据此快速构造对 beans 的真实请求；再结合其他位置泄露的 `apiKey` 或 `accountName`，会显著降低凭证滥用门槛，扩大第三方账户被未授权操作的风险。", "suggestion": "把 `Base URL`、`Authorization` 头格式和 `apiKey` 编码形态从仓库文档中移除，改为引用受控的内部密钥管理/运行手册；代码仓库内仅保留“通过配置中心注入凭证并调用 beans 客户端”的高层约定，不要提供可直接拼装请求的逐字段说明。若必须保留，至少迁移到访问受限的内部文档系统，并在仓库中只留下链接。", "test_scenario": "使用普通开发者仓库只读权限账号检查是否仍能仅凭该文档拼出完整的 beans 请求要素（域名、路径前缀、Authorization 头格式、apiKey 形态）；修复后应无法从代码仓库直接获得这些敏感接入细节。", "http_method": "", "path_pattern": "", "permission_tags": [], "java_entry_method": "", "expected_permission": "", "actual_behavior": "", "evidence_refs": [], "risk_label_zh": "", "evidence_quote": "+| **Base URL** | `https://isp.beans.ai/enterprise/v1` | `pos-api/src/main/resources/application-dev.yml` `exchange.beans.host` |", "requirement_ref": "", "unimplemented_feature": "", "deviation_rationale_check": "", "_evidence_unverified": "evidence_quote 在 diff 中未找到匹配：可能是 AI 概括/改写而非原文摘抄"}]);
+
+    // Export dropdown toggle
+    (function() {
+      var btn = document.getElementById('export-btn');
+      var menu = document.getElementById('export-menu');
+      if (!btn || !menu) return;
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var shown = menu.style.display === 'block';
+        menu.style.display = shown ? 'none' : 'block';
+      });
+      document.addEventListener('click', function() {
+        menu.style.display = 'none';
+      });
+    })();
+  </script>
+</body>
+</html>
