@@ -1,0 +1,2245 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Code Review Report</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      /* 重新设计（用户反馈"前端样式不好看"）：底色/正文/次要文字/边框/标题
+         此前全部带一层绿色调（跟 --accent 撞在一起，显得到处都是同一种绿），
+         改成中性板岩灰基调 + 一个teal 强调色，层次更清楚，也更耐看。 */
+      --bg: #f3f4f7;
+      --card: #ffffff;
+      --text: #1c2333;
+      --muted: #667085;
+      --border: #e3e6ec;
+      --heading: #0f1420;
+      --accent: #0f766e;
+      --accent-dark: #0b5850;
+      --accent-soft: #e6f4f2;
+
+      --critical-bg: #fdeceb;
+      --critical-text: #b3261e;
+      --critical-border: #f3b7b2;
+      --critical-strong: #d1291f;
+
+      --major-bg: #fdf1e3;
+      --major-text: #a85311;
+      --major-border: #f4d19d;
+      --major-strong: #d5720f;
+
+      --minor-bg: #fdf7e0;
+      --minor-text: #8a6208;
+      --minor-border: #f1e096;
+      --minor-strong: #a37d0a;
+
+      --info-bg: #eaf1fd;
+      --info-text: #23509c;
+      --info-border: #c0d6f6;
+      --info-strong: #2f66c9;
+
+      --safe-bg: #e8f6ee;
+      --safe-text: #1a7a4c;
+      --safe-border: #aee3c4;
+
+      --chip-bg: #eef0f5;
+      --code-bg: #10182b;
+      --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+      --shadow: 0 8px 24px rgba(16, 24, 40, 0.08);
+      --shadow-lg: 0 20px 44px rgba(16, 24, 40, 0.14);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans SC", Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .page {
+      max-width: 1180px;
+      margin: 28px auto 48px;
+      padding: 0 20px;
+    }
+
+    /* 重新设计：原来是一大片高饱和绿色渐变斜切块，视觉上很"闹"；
+       改成深板岩底色 + 顶部一条细 teal 强调线，克制一些，也更像专业
+       研发工具的报告头，而不是营销落地页banner。 */
+    .hero {
+      position: relative;
+      background: linear-gradient(165deg, #0b1220 0%, #121a2c 55%, #0e2422 100%);
+      color: #f4f7fb;
+      border-radius: 18px;
+      padding: 26px 28px 24px;
+      box-shadow: var(--shadow-lg);
+      margin-bottom: 18px;
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 3px;
+      background: linear-gradient(90deg, #14b8a6, #22d3ee 45%, #14b8a6 100%);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -60px;
+      top: -60px;
+      width: 220px;
+      height: 220px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(20, 184, 166, 0.22), transparent 70%);
+      pointer-events: none;
+    }
+
+    .hero h1 {
+      margin: 0 0 10px;
+      font-size: 24px;
+      font-weight: 700;
+      line-height: 1.25;
+      letter-spacing: 0.1px;
+    }
+
+    .hero-meta {
+      margin: 0;
+      font-size: 13.5px;
+      color: #aab4c8;
+      letter-spacing: 0.01em;
+    }
+
+    .summary {
+      background: var(--card);
+      padding: 16px 18px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      margin-bottom: 20px;
+    }
+
+    .summary h2,
+    .section-title {
+      margin: 0 0 12px;
+      font-size: 18px;
+      color: var(--heading);
+    }
+
+    .subsection-title {
+      margin-top: 28px;
+    }
+
+    .api-permission-block code {
+      font-size: 12px;
+      word-break: break-all;
+    }
+
+    .api-surface-sub {
+      margin: 18px 0 8px;
+      font-size: 16px;
+      color: var(--heading);
+    }
+
+    .inferred-hint {
+      margin: 0 0 12px;
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    /* 总体结论正文区 */
+    .summary-body {
+      margin: 0 0 16px;
+      font-size: 14px;
+      color: var(--text);
+      line-height: 1.75;
+    }
+
+    .summary-body p {
+      margin: 0 0 10px;
+    }
+
+    .summary-body p:last-child {
+      margin-bottom: 0;
+    }
+
+    .summary-body ol,
+    .summary-body ul {
+      margin: 4px 0 12px;
+      padding-left: 22px;
+    }
+
+    .summary-body ol li,
+    .summary-body ul li {
+      margin-bottom: 6px;
+      line-height: 1.65;
+    }
+
+    .summary-body .summary-section-title {
+      font-weight: 700;
+      color: var(--heading);
+      margin: 16px 0 6px;
+      font-size: 13px;
+      letter-spacing: 0.3px;
+      padding-left: 8px;
+      border-left: 3px solid var(--accent);
+    }
+
+    .summary-body .summary-section-title:first-child {
+      margin-top: 0;
+    }
+
+    .summary-body strong {
+      color: var(--heading);
+      font-weight: 700;
+    }
+
+    /* 严重级别筛选区 */
+    .filter-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-top: 6px;
+    }
+
+    .filter-label {
+      font-size: 12px;
+      color: var(--muted);
+      margin-right: 2px;
+    }
+
+    .chips-impact-note {
+      width: 100%;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 5px 13px;
+      border-radius: 9px;
+      font-size: 12.5px;
+      font-weight: 700;
+      background: var(--chip-bg);
+      color: var(--heading);
+      border: 1px solid transparent;
+    }
+
+    .filter-chip {
+      cursor: pointer;
+      transition: transform 0.12s, box-shadow 0.12s, opacity 0.12s;
+      user-select: none;
+    }
+
+    .filter-chip:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 3px 8px rgba(0,0,0,0.12);
+    }
+
+    .filter-chip.active {
+      box-shadow: 0 0 0 2.5px currentColor;
+      transform: translateY(-1px);
+    }
+
+    .filter-chip.dimmed {
+      opacity: 0.4;
+    }
+
+    .critical { background: var(--critical-bg); color: var(--critical-text); border-color: var(--critical-border); }
+    .major { background: var(--major-bg); color: var(--major-text); border-color: var(--major-border); }
+    .minor { background: var(--minor-bg); color: var(--minor-text); border-color: var(--minor-border); }
+    .info { background: var(--info-bg); color: var(--info-text); border-color: var(--info-border); }
+
+    /* 筛选状态提示条 */
+    #filter-hint {
+      display: none;
+      margin: -10px 0 14px;
+      padding: 8px 14px;
+      background: var(--accent-soft);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    #filter-hint .clear-filter {
+      margin-left: 8px;
+      color: var(--accent);
+      cursor: pointer;
+      font-weight: 600;
+      text-decoration: underline;
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    /* 工具栏：搜索 + 展开折叠 */
+    .findings-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+      padding: 12px 14px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+    }
+
+    .findings-search {
+      flex: 1 1 220px;
+      min-width: 0;
+      padding: 10px 14px;
+      font: inherit;
+      font-size: 14px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+      color: var(--text);
+    }
+
+    .findings-search:focus {
+      outline: none;
+      box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.35);
+      border-color: var(--accent);
+    }
+
+    .findings-toolbar-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .toolbar-btn {
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--chip-bg);
+      color: var(--heading);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .toolbar-btn:hover {
+      background: #e3e6ec;
+    }
+
+    /* 文件 TOC */
+    .findings-toc {
+      margin-bottom: 16px;
+      padding: 10px 12px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+    }
+
+    .toc-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 8px;
+      letter-spacing: 0.04em;
+    }
+
+    .toc-pill-wrap {
+      display: flex;
+      flex-wrap: nowrap;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .toc-pill {
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      text-decoration: none;
+      color: var(--heading);
+      background: var(--chip-bg);
+      border: 1px solid var(--border);
+      transition: transform 0.12s, box-shadow 0.12s;
+    }
+
+    .toc-pill:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+
+    .toc-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .toc-dot.sev-critical { background: var(--critical-text); }
+    .toc-dot.sev-major { background: var(--major-text); }
+    .toc-dot.sev-minor { background: var(--minor-text); }
+    .toc-dot.sev-info { background: var(--info-text); }
+
+    /* 总体结论：多分片 */
+    .summary-shards-wrap {
+      margin-bottom: 4px;
+    }
+
+    .summary-shard {
+      margin-bottom: 14px;
+      padding: 12px 14px;
+      background: #fafbfd;
+      border-radius: 10px;
+      border-left: 4px solid var(--accent);
+    }
+
+    .summary-shard:last-of-type {
+      margin-bottom: 10px;
+    }
+
+    .summary-more[hidden] {
+      display: none !important;
+    }
+
+    .summary-toggle {
+      display: inline-block;
+      margin-top: 4px;
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 16px;
+      border-radius: 8px;
+      border: 1px solid var(--accent);
+      background: #fff;
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .summary-toggle:hover {
+      background: #eef8f5;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details {
+      margin-top: 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0 12px 10px;
+      background: #fafbfc;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details summary {
+      cursor: pointer;
+      padding: 10px 0;
+      font-weight: 600;
+      color: var(--accent);
+      list-style: none;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .summary-raw-pre {
+      margin: 0;
+      max-height: 420px;
+      overflow: auto;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* 按文件 findings：可折叠组 + 卡片 */
+    .findings-list-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    details.file-group.findings-file-group {
+      margin: 0;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .file-group-summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 14px;
+      padding: 14px 16px;
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .file-group-summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .file-group-title {
+      display: inline-flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 14px;
+      color: var(--heading);
+      flex: 1 1 200px;
+      min-width: 0;
+    }
+
+    .file-path-text {
+      word-break: break-all;
+      line-height: 1.45;
+    }
+
+    .sev-indicator {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      margin-top: 4px;
+    }
+
+    .sev-indicator.sev-critical { background: var(--critical-text); box-shadow: 0 0 0 2px var(--critical-bg); }
+    .sev-indicator.sev-major { background: var(--major-text); box-shadow: 0 0 0 2px var(--major-bg); }
+    .sev-indicator.sev-minor { background: var(--minor-text); box-shadow: 0 0 0 2px var(--minor-bg); }
+    .sev-indicator.sev-info { background: var(--info-text); box-shadow: 0 0 0 2px var(--info-bg); }
+
+    .file-group-stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .stat-chip {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 999px;
+    }
+
+    .stat-chip.stat-critical { background: var(--critical-bg); color: var(--critical-text); }
+    .stat-chip.stat-major { background: var(--major-bg); color: var(--major-text); }
+    .stat-chip.stat-minor { background: var(--minor-bg); color: var(--minor-text); }
+    .stat-chip.stat-info { background: var(--info-bg); color: var(--info-text); }
+
+    .file-group-count {
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .file-group-body {
+      padding: 12px 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .finding-card {
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: #fff;
+      padding: 15px 17px;
+      border-left-width: 4px;
+      border-left-style: solid;
+      box-shadow: var(--shadow-sm);
+      transition: box-shadow 0.15s;
+    }
+
+    .finding-card:hover { box-shadow: var(--shadow); }
+
+    .finding-card.severity-critical { border-left-color: var(--critical-strong); background: linear-gradient(90deg, var(--critical-bg) 0%, #fff 14px); }
+    .finding-card.severity-major { border-left-color: var(--major-strong); background: linear-gradient(90deg, var(--major-bg) 0%, #fff 14px); }
+    .finding-card.severity-minor { border-left-color: var(--minor-strong); background: linear-gradient(90deg, var(--minor-bg) 0%, #fff 14px); }
+    .finding-card.severity-info { border-left-color: var(--info-strong); background: linear-gradient(90deg, var(--info-bg) 0%, #fff 14px); }
+
+    .finding-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .sev-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 4px 12px;
+      border-radius: 7px;
+      font-size: 11.5px;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .sev-badge.critical { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .sev-badge.major { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .sev-badge.minor { background: var(--minor-bg); color: var(--minor-text); border: 1px solid var(--minor-border); }
+    .sev-badge.info { background: var(--info-bg); color: var(--info-text); border: 1px solid var(--info-border); }
+
+    .finding-line {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      background: var(--chip-bg);
+      padding: 4px 8px;
+      border-radius: 6px;
+    }
+
+    .finding-cat {
+      font-size: 12.5px;
+      font-weight: 700;
+      color: var(--accent-dark);
+      background: var(--accent-soft);
+      padding: 3px 9px;
+      border-radius: 6px;
+    }
+
+    /* 需求对账三类（需求未实现/需求矛盾/需求外动作）用色块徽章而非纯文字，
+       跟严重级别徽章一样醒目——用户反馈普通文字分类容易在列表里被漏看，
+       尤其"需求未实现"现在总是 Critical。*/
+    .finding-cat-requirement {
+      background: var(--critical-bg);
+      color: var(--critical-text);
+      border: 1px solid var(--critical-border);
+      border-radius: 6px;
+      padding: 3px 10px;
+    }
+
+    /* ── 接口审查覆盖清单 ── */
+    .endpoint-coverage {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px 18px;
+      box-shadow: var(--shadow);
+      margin-bottom: 20px;
+    }
+
+    .ec-note {
+      margin: 0 0 10px;
+      font-size: 13px;
+      line-height: 1.7;
+      color: var(--muted);
+    }
+
+    .ec-note-warn {
+      padding: 9px 12px;
+      border-radius: 8px;
+      background: var(--major-bg);
+      border-left: 4px solid var(--major-strong);
+      color: var(--major-text);
+    }
+
+    .ec-note-warn strong { color: var(--major-strong); }
+
+    .ec-table-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid var(--border); }
+
+    .ec-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .ec-table th {
+      text-align: left;
+      padding: 9px 12px;
+      background: #fafbfd;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .ec-table td {
+      padding: 10px 12px;
+      border-top: 1px solid var(--border);
+      vertical-align: top;
+      line-height: 1.65;
+    }
+
+    .ec-table tbody tr:first-child td { border-top: none; }
+
+    .ec-table .ec-method,
+    .ec-table .ec-verdict { white-space: nowrap; }
+
+    .ec-table .ec-path code {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+      word-break: break-all;
+    }
+
+    .ec-table .ec-reason { color: var(--muted); }
+
+    .ec-badge {
+      display: inline-block;
+      padding: 2px 9px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .ec-badge.ec-risk { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .ec-badge.ec-pending { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .ec-badge.ec-safe { background: var(--safe-bg); color: var(--safe-text); border: 1px solid var(--safe-border); }
+
+    tr.ec-risk td { background: #fffbfa; }
+    tr.ec-pending td { background: #fffdf9; }
+
+    /* 分片没审成时的披露条：必须比正文更抢眼，否则读者会把
+       「报告里没写」误当成「这里没问题」 */
+    .shard-health-alert {
+      margin: 0 0 12px;
+      padding: 12px 15px;
+      border-radius: 10px;
+      background: var(--critical-bg);
+      border: 1px solid var(--critical-border);
+      border-left: 4px solid var(--critical-strong);
+      color: var(--critical-text);
+      font-size: 13.5px;
+      line-height: 1.7;
+    }
+
+    .shard-health-alert strong { color: var(--critical-strong); }
+
+    .finding-desc {
+      font-size: 14px;
+      line-height: 1.65;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* finding 卡片正文的四行结构（问题 / 后果 / 怎么改 / 怎么验）。
+       用户反馈（build 532）"文案挤在一团，难以阅读"：此前正文是一整段
+       `原因：…影响：…` 靠 white-space:pre-wrap 原样糊上去，修复建议和测试
+       场景又被折叠藏起来。改成左标签 + 右正文的两列网格，每行一个语义单元，
+       段落之间有明确留白，长句由 Python 侧按句末标点拆成多个 <p>。 */
+    .finding-body {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      font-size: 14px;
+      line-height: 1.7;
+      color: var(--text);
+    }
+
+    .fb-row {
+      display: grid;
+      grid-template-columns: 68px minmax(0, 1fr);
+      gap: 2px 14px;
+      padding: 10px 0;
+      border-top: 1px dashed var(--border);
+    }
+
+    .fb-row:first-child {
+      border-top: none;
+      padding-top: 2px;
+    }
+
+    /* 重新设计：标签从"一段带颜色的纯文字"改成小色块标签（跟 sev-badge/
+       finding-cat 同一套视觉语言），扫一眼列表就能靠色块分辨这行是"问题"
+       还是"怎么改"，比单靠文字颜色更容易一眼分辨。 */
+    .fb-label {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1.6;
+      letter-spacing: 0.03em;
+      white-space: nowrap;
+      padding: 2px 8px;
+      border-radius: 6px;
+      margin-top: 1px;
+    }
+
+    .fb-problem .fb-label { color: var(--major-text); background: var(--major-bg); }
+    .fb-impact .fb-label { color: var(--critical-text); background: var(--critical-bg); }
+    .fb-fix .fb-label { color: var(--accent-dark); background: var(--accent-soft); }
+    .fb-test .fb-label { color: var(--info-text); background: var(--info-bg); }
+
+    .fb-text {
+      min-width: 0;
+      word-break: break-word;
+    }
+
+    .fb-text > p {
+      margin: 0 0 7px;
+    }
+
+    .fb-text > p:last-child {
+      margin-bottom: 0;
+    }
+
+    .fb-text .rt-list {
+      margin: 2px 0 6px;
+      padding-left: 20px;
+    }
+
+    .fb-text .rt-list li {
+      margin-bottom: 4px;
+    }
+
+    .fb-text .code-block {
+      margin: 8px 0 4px;
+      font-size: 12.5px;
+    }
+
+    .fb-text code {
+      background: var(--chip-bg);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+    }
+
+    /* 窄屏（Jenkins 里报告常挤在窗格里看）时标签落到正文上方，不再抢走
+       62px 宽度，避免正文被压成一列细条 */
+    @media (max-width: 720px) {
+      .fb-row {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 2px;
+      }
+    }
+
+    /* 证据代码块从固定 div 改成可折叠 details（默认展开）——一份报告里
+       十几张卡片各带 8-10 行代码，读者需要能收起来快速扫结论 */
+    details.finding-evidence > summary {
+      cursor: pointer;
+      list-style: none;
+    }
+
+    details.finding-evidence > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    details.finding-evidence > summary::before {
+      content: "▾ ";
+      color: var(--muted);
+    }
+
+    details.finding-evidence:not([open]) > summary::before {
+      content: "▸ ";
+    }
+
+    /* 证据代码块（2026-07-19 补）：evidence_quote 的稳定展示位置，不再依赖
+       模型是否顺手把代码写进 description 里；纯 CSS + Python 正则高亮，
+       不引外部 JS 库，内网报告零外部依赖风险。 */
+    .finding-evidence {
+      margin-top: 10px;
+    }
+
+    .finding-evidence .detail-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .code-block {
+      margin: 0;
+      padding: 12px 15px;
+      background: var(--code-bg);
+      color: #e6edf3;
+      border-radius: 9px;
+      overflow-x: auto;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+      line-height: 1.6;
+    }
+
+    .code-block code {
+      white-space: pre;
+      /* 2026-09-02 用户反馈：安全/权限折叠卡里"怎么改"给的整段修复示意代码
+         （``` 代码围栏渲染出来也是 <pre class="code-block"><code>）看不清——
+         根因是 .fb-text code（第 833 行，给"问题/后果/怎么改/怎么验"正文里
+         `existsActive` 这类行内代码片段配的浅灰底色）跟这里选择器优先级/
+         特异性相同，同一个 <code> 标签只要落在 .fb-text 范围内就会被套上
+         浅灰底，而 .code-annotation/.code-keyword 这套语法高亮配色是给
+         .code-block 本来的深色底（--code-bg）设计的，叠在浅灰底上对比度
+         塌陷，几乎看不见字。显式声明透明背景覆盖掉那条通用规则，让
+         .code-block 自己的深色底透出来。 */
+      background: transparent;
+    }
+
+    .code-comment { color: #8b949e; font-style: italic; }
+    .code-string { color: #a5d6ff; }
+    .code-annotation { color: #d2a8ff; }
+    .code-keyword { color: #ff7b72; font-weight: 600; }
+    .code-number { color: #79c0ff; }
+
+    /* 带上下文的证据代码块（逐行渲染，问题行整行高亮）*/
+    .code-row {
+      display: block;
+      padding: 0 6px;
+      border-left: 3px solid transparent;
+    }
+
+    .code-row-target {
+      background: rgba(255, 123, 114, 0.16);
+      border-left-color: #ff7b72;
+    }
+
+    .code-ln {
+      display: inline-block;
+      min-width: 2.5em;
+      margin-right: 12px;
+      color: #6e7681;
+      text-align: right;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    .finding-details {
+      margin-top: 12px;
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+      padding: 0;
+      background: #fafbfd;
+    }
+
+    .finding-details > summary {
+      cursor: pointer;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--heading);
+      list-style: none;
+    }
+
+    .finding-details > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .finding-details-body {
+      padding: 0 14px 14px;
+      border-top: 1px solid var(--border);
+    }
+
+    .detail-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin: 12px 0 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .finding-suggestion p,
+    .finding-test p {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.65;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .file-block {
+      margin: 14px 0 18px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: var(--shadow);
+    }
+
+    .file-block h3 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      color: var(--heading);
+      word-break: break-all;
+    }
+
+    table {
+      border-collapse: separate;
+      border-spacing: 0;
+      width: 100%;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+    }
+
+    th, td {
+      border-bottom: 1px solid var(--border);
+      padding: 10px;
+      vertical-align: top;
+      text-align: left;
+      font-size: 13px;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      background: #fafbfd;
+      color: var(--heading);
+      font-weight: 700;
+      z-index: 1;
+    }
+
+    tbody tr:nth-child(even) { background: #fafbfd; }
+    tbody tr:last-child td { border-bottom: none; }
+
+    .empty {
+      padding: 18px;
+      border: 1px dashed var(--border);
+      border-radius: 14px;
+      color: var(--muted);
+      background: #fafbfd;
+    }
+
+    @media (max-width: 900px) {
+      .hero h1 { font-size: 22px; }
+      .summary,
+      .file-block { padding: 12px; }
+      th, td { padding: 8px; font-size: 12px; }
+      .charts-row { flex-direction: column; }
+    }
+
+    /* ── 报告标签页 ──
+       重新设计：从"按钮选中变绿色渐变块"改成分段控件（segmented control）
+       的样式——浅灰底槽 + 选中项浮成白色药丸，更接近成熟工具（如 GitHub/
+       Linear）里的页签观感，也跟下面卡片的白底形成呼应。 */
+    .report-tabs {
+      display: inline-flex;
+      gap: 2px;
+      padding: 4px;
+      margin-bottom: 18px;
+      background: #e9ebf0;
+      border-radius: 12px;
+      flex-wrap: wrap;
+    }
+    .report-tabs button {
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 18px;
+      border-radius: 9px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 13.5px;
+      transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+    }
+    .report-tabs button:hover {
+      color: var(--heading);
+    }
+    .report-tabs button[aria-selected="true"] {
+      background: #ffffff;
+      color: var(--heading);
+      box-shadow: var(--shadow-sm);
+    }
+    .report-panel { display: none; }
+    .report-panel.is-active { display: block; }
+
+    /* ── 数据权限页（嵌入，与综合页隔离） ── */
+    .dp-shell {
+      font-family: "Avenir Next", "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif;
+      color: #1a2b22;
+      line-height: 1.6;
+    }
+
+    /* 重置全局 table 样式污染 */
+    .dp-shell table {
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+    }
+    .dp-shell th, .dp-shell td {
+      border: none !important;
+      border-bottom: 1px solid #edf2f7 !important;
+      background: transparent !important;
+    }
+
+    .dp-shell .dp-header {
+      position: relative;
+      background: linear-gradient(165deg, #0b1220 0%, #121a2c 55%, #0e2422 100%);
+      color: #f4f7fb;
+      padding: 26px 28px 24px;
+      border-radius: 18px;
+      margin-bottom: 24px;
+      box-shadow: var(--shadow-lg);
+      overflow: hidden;
+    }
+    .dp-shell .dp-header::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 3px;
+      background: linear-gradient(90deg, #14b8a6, #22d3ee 45%, #14b8a6 100%);
+    }
+    .dp-shell .dp-header h1 { font-size: 1.4rem; font-weight: 700; letter-spacing: .01em; margin: 0 0 6px; }
+    .dp-shell .dp-header .subtitle { margin: 0; color: #aab4c8; font-size: .9rem; }
+    .dp-shell .dp-header .meta-row { margin-top: 16px; display: flex; gap: 24px; flex-wrap: wrap; }
+    .dp-shell .dp-header .meta-item { font-size: .8rem; color: #8b95ab; }
+    .dp-shell .dp-header .meta-item strong { color: #8ce8d4; font-weight: 600; }
+
+    .dp-shell .dp-body { padding: 0 0 32px; }
+
+    /* ── dp-shell 内部组件（与 Python 生成的类名严格对齐） ── */
+
+    /* 统计卡片区（Python 生成 .summary-grid / .summary-card） */
+    .dp-shell .dp-stats { margin-bottom: 4px; }
+    .dp-shell .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+    .dp-shell .summary-card {
+      background: #fff;
+      border-radius: 14px;
+      padding: 18px 20px;
+      box-shadow: var(--shadow-sm);
+      border: 1px solid var(--border);
+      border-top: 3px solid transparent;
+    }
+    .dp-shell .summary-card.critical { border-top-color: var(--critical-strong); }
+    .dp-shell .summary-card.high     { border-top-color: var(--major-strong); }
+    .dp-shell .summary-card.medium   { border-top-color: var(--minor-strong); }
+    .dp-shell .summary-card.info     { border-top-color: var(--info-strong); }
+    .dp-shell .summary-card .count   { font-size: 2.1rem; font-weight: 800; line-height: 1; }
+    .dp-shell .summary-card.critical .count { color: var(--critical-text); }
+    .dp-shell .summary-card.high     .count { color: var(--major-text); }
+    .dp-shell .summary-card.medium   .count { color: var(--minor-text); }
+    .dp-shell .summary-card.info     .count { color: var(--info-text); }
+    .dp-shell .summary-card .label   { margin-top: 8px; font-size: .72rem; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .07em; }
+
+    /* 区块标题 */
+    .dp-shell .dp-section { margin-bottom: 24px; }
+    .dp-shell .dp-section-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--heading);
+      margin: 0 0 14px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* 角色定义盒（Python 生成 .role-box / .role-icon / .role-info） */
+    .dp-shell .dp-roles { display: flex; flex-direction: column; gap: 10px; }
+    .dp-shell .role-box {
+      background: #fff;
+      border-radius: 12px;
+      padding: 16px 20px;
+      box-shadow: 0 2px 10px rgba(17,51,38,.07);
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+    }
+    .dp-shell .role-box.muted {
+      background: #f8f9fb;
+      border: 1px solid var(--border);
+      box-shadow: none;
+    }
+    .dp-shell .role-icon { font-size: 1.8rem; line-height: 1; flex-shrink: 0; }
+    .dp-shell .role-info { flex: 1; min-width: 0; }
+    .dp-shell .role-info h3 { font-size: 1rem; font-weight: 700; color: var(--heading); margin: 0 0 4px; }
+    .dp-shell .role-info .role-md { font-size: .88rem; color: #4a5568; margin-top: 8px; line-height: 1.65; word-break: break-word; }
+    .dp-shell .role-info code { background: #edf2f7; padding: 1px 6px; border-radius: 4px; font-size: .85em; }
+
+    /* gate banner */
+    .dp-shell .dp-gate { margin-bottom: 20px; }
+
+    /* 审计表格包装（Python 生成 .table-wrap > table.dp-audit）
+       表头从深绿底改成跟报告其它表格（.ec-table）同一套浅底大写小标签，
+       整份报告的表格风格统一，不再是"深色表头 vs 浅色表头"两套语言。 */
+    .dp-shell .table-wrap {
+      overflow-x: auto;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow-sm);
+    }
+    .dp-shell table.dp-audit {
+      width: 100% !important;
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+      font-size: .84rem;
+    }
+    .dp-shell .dp-audit th {
+      background: #fafbfd !important;
+      color: var(--muted) !important;
+      padding: 11px 14px !important;
+      text-align: left !important;
+      font-size: .68rem !important;
+      font-weight: 700 !important;
+      text-transform: uppercase !important;
+      letter-spacing: .07em !important;
+      white-space: nowrap !important;
+      border-bottom: 1px solid var(--border) !important;
+      position: sticky;
+      top: 0;
+    }
+    .dp-shell .dp-audit td {
+      padding: 11px 14px !important;
+      border-bottom: 1px solid var(--border) !important;
+      vertical-align: top !important;
+      color: var(--text) !important;
+      background: transparent !important;
+    }
+    .dp-shell .dp-audit tr:last-child td { border-bottom: none !important; }
+    .dp-shell .dp-audit tr:hover td { background: #f8f9fb !important; }
+    .dp-shell .dp-audit tr.row-critical td { background: var(--critical-bg) !important; }
+    .dp-shell .dp-audit tr.row-critical:hover td { background: #fbdcda !important; }
+    .dp-shell .dp-audit tr.row-major td { background: var(--major-bg) !important; }
+    .dp-shell .dp-audit tr.row-major:hover td { background: #fbe4c4 !important; }
+
+    /* HTTP 方法 & 严重性徽标（Python 生成 .badge .badge-*） */
+    .dp-shell .badge {
+      display: inline-block; padding: 2px 9px; border-radius: 6px;
+      font-size: .72rem; font-weight: 700; letter-spacing: .04em; white-space: nowrap;
+    }
+    .dp-shell .badge-get    { background: var(--info-bg); color: var(--info-text); }
+    .dp-shell .badge-post   { background: var(--safe-bg); color: var(--safe-text); }
+    .dp-shell .badge-put    { background: var(--minor-bg); color: var(--minor-text); }
+    .dp-shell .badge-delete { background: var(--critical-bg); color: var(--critical-text); }
+    .dp-shell .badge-patch  { background: #f4f0fd; color: #6b46c1; }
+    .dp-shell .badge-critical { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .dp-shell .badge-high     { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .dp-shell .badge-medium   { background: var(--minor-bg); color: var(--minor-text); border: 1px solid var(--minor-border); }
+    .dp-shell .badge-info     { background: var(--info-bg); color: var(--info-text); border: 1px solid var(--info-border); }
+
+    /* 风险文字 */
+    .dp-shell .risk-zh { font-size: .82rem; color: var(--text); font-weight: 600; line-height: 1.4; }
+
+    /* Issue 列表（Python 生成 .issue-list） */
+    .dp-shell .issue-list { list-style: none !important; margin: 6px 0 0; padding: 0; }
+    .dp-shell .issue-list li { position: relative; padding: 3px 0 3px 18px; font-size: .84rem; color: #4a5568; line-height: 1.55; }
+    .dp-shell .issue-list li::before { content: "▸"; position: absolute; left: 2px; color: #e53e3e; }
+    .dp-shell .issue-list li strong { color: var(--heading); }
+    .dp-shell .issue-list code { background: #edf2f7; padding: 1px 5px; border-radius: 3px; font-size: .85em; }
+
+    /* 修复建议卡片（Python 生成 .fix-card） */
+    .dp-shell .fix-card {
+      background: #f0faf5;
+      border-left: 4px solid var(--accent);
+      border-radius: 0 10px 10px 0;
+      padding: 13px 16px;
+      margin-top: 10px;
+    }
+    .dp-shell .fix-card h4 { font-size: .84rem; font-weight: 700; color: var(--heading); margin: 0 0 6px; }
+    .dp-shell .fix-card p, .dp-shell .fix-card li { font-size: .83rem; color: #2d4a3d; line-height: 1.6; margin: 0; }
+    .dp-shell .fix-card ul, .dp-shell .fix-card ol { padding-left: 18px; margin: 6px 0; }
+    .dp-shell .fix-card code { background: #d4efe4; padding: 1px 5px; border-radius: 4px; font-size: .85em; }
+
+    /* 代码块（Python 生成 .code-block） */
+    .dp-shell .code-block {
+      background: var(--code-bg); color: #e2e8f0; border-radius: 9px;
+      padding: 12px 16px; margin-top: 8px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: .78rem; line-height: 1.55; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+    }
+
+    /* 端点详情折叠（Python 生成 details.issue-fold） */
+    .dp-shell details.issue-fold {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: var(--shadow-sm);
+      margin-bottom: 12px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .dp-shell details.issue-fold > summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 13px 16px;
+      font-weight: 600;
+      font-size: .9rem;
+      color: var(--heading);
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid transparent;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transition: background .15s;
+    }
+    .dp-shell details.issue-fold > summary::-webkit-details-marker { display: none; }
+    .dp-shell details.issue-fold > summary::before { content: "▸"; font-size: 11px; color: var(--accent); transition: transform .15s; }
+    .dp-shell details.issue-fold[open] > summary::before { transform: rotate(90deg); }
+    .dp-shell details.issue-fold[open] > summary { border-bottom-color: var(--border); background: var(--accent-soft); }
+    .dp-shell .issue-fold-body { padding: 16px 20px; font-size: .85rem; color: #4a5568; }
+    .dp-shell .issue-fold-body p { margin: 6px 0; line-height: 1.65; }
+    .dp-shell .issue-fold-body strong { color: var(--heading); }
+
+    /* dp-fold（端点详情另一种渲染，Python 生成 details.dp-fold） */
+    .dp-shell .dp-folds { display: flex; flex-direction: column; gap: 10px; }
+    .dp-shell .dp-fold {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
+    }
+    .dp-shell .dp-fold > summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 13px 16px;
+      font-weight: 600;
+      font-size: .9rem;
+      color: var(--heading);
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .dp-shell .dp-fold > summary::-webkit-details-marker { display: none; }
+    .dp-shell .dp-fold > summary::before { content: "▸"; font-size: 11px; color: var(--accent); transition: transform .15s; }
+    .dp-shell .dp-fold[open] > summary::before { transform: rotate(90deg); }
+    .dp-shell .dp-fold-body { padding: 16px; font-size: .85rem; color: #4a5568; }
+
+    /* issue list（dp-fold 内部用） */
+    .dp-shell .dp-issue-list { list-style: none; margin: 8px 0 0; padding: 0; }
+    .dp-shell .dp-issue-list li { position: relative; padding: 3px 0 3px 18px; font-size: .84rem; color: #4a5568; }
+    .dp-shell .dp-issue-list li::before { content: "▸"; position: absolute; left: 2px; color: #e53e3e; }
+
+    /* dp-fix（dp-fold 内部修复建议） */
+    .dp-shell .dp-fix {
+      background: #f0faf5;
+      border-left: 4px solid var(--accent);
+      border-radius: 0 10px 10px 0;
+      padding: 12px 16px;
+      margin-top: 10px;
+    }
+    .dp-shell .dp-fix h4 { font-size: .84rem; font-weight: 700; color: var(--heading); margin: 0 0 6px; }
+    .dp-shell .dp-fix p, .dp-shell .dp-fix li { font-size: .83rem; color: #2d4a3d; line-height: 1.6; margin: 0; }
+    .dp-shell .dp-fix code { background: #d4efe4; padding: 1px 5px; border-radius: 4px; font-size: .85em; }
+
+    /* dp-code（dp-fold 内部代码块） */
+    .dp-shell .dp-code {
+      background: var(--code-bg); color: #e2e8f0; border-radius: 9px;
+      padding: 12px 16px; margin-top: 8px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: .78rem; line-height: 1.55; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+    }
+
+    /* 存量越权风险区块（dp-shell 内，全文扫描）*/
+    .dp-shell .legacy-privilege-block {
+      background: var(--minor-bg);
+      border: 1px solid var(--minor-border);
+      border-left: 4px solid var(--minor-strong);
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin-bottom: 16px;
+    }
+    .dp-shell .legacy-privilege-block .lp-title { font-size: 14px; font-weight: 700; color: var(--minor-strong); margin: 0 0 4px; }
+    .dp-shell .legacy-privilege-block .lp-subtitle { font-size: 12px; color: var(--minor-text); margin: 0 0 14px; }
+
+    .dp-shell .dp-footer {
+      text-align: center; font-size: .78rem; color: #a0aec0;
+      margin-top: 36px; padding-top: 20px; border-top: 1px solid var(--border);
+    }
+
+    /* ── 综合审查 Tab 权限接口表（privilege_endpoints 模式，在 dp-shell 外） ── */
+    .perm-table-wrap {
+      overflow-x: auto;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow-sm);
+    }
+    .perm-table {
+      width: 100%;
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+      font-size: .84rem;
+    }
+    .perm-table th {
+      background: #fafbfd !important;
+      color: var(--muted) !important;
+      padding: 10px 14px !important;
+      text-align: left !important;
+      font-size: .68rem !important;
+      font-weight: 700 !important;
+      text-transform: uppercase !important;
+      letter-spacing: .07em !important;
+      white-space: nowrap !important;
+      border-bottom: 1px solid var(--border) !important;
+    }
+    .perm-table td {
+      padding: 10px 14px !important;
+      border-bottom: 1px solid var(--border) !important;
+      vertical-align: top !important;
+      color: var(--text) !important;
+      background: transparent !important;
+    }
+    .perm-table tr:last-child td { border-bottom: none !important; }
+    .perm-table tr:hover td { background: #f8f9fb !important; }
+    .api-permission-block { overflow-x: auto; }
+
+    /* 存量越权风险区块（综合审查 Tab，全文扫描） */
+    .legacy-privilege-block {
+      background: var(--minor-bg);
+      border: 1px solid var(--minor-border);
+      border-left: 4px solid var(--minor-strong);
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin-bottom: 16px;
+    }
+    .legacy-privilege-block .lp-title { font-size: 14px; font-weight: 700; color: var(--minor-strong); margin: 0 0 4px; }
+    .legacy-privilege-block .lp-subtitle { font-size: 12px; color: var(--minor-text); margin: 0 0 14px; }
+    /* 根因聚合卡片 */
+    .cluster-card { border-left: 4px solid #6366f1; }
+    .cluster-badge {
+      background: #6366f1; color: #fff;
+      font-size: 11px; padding: 2px 8px;
+      border-radius: 10px; margin-left: 8px;
+      font-weight: 600; letter-spacing: .02em;
+    }
+    .cluster-locations { margin: 8px 0 4px; }
+    .cluster-locations > summary {
+      cursor: pointer; color: #6366f1;
+      font-size: 13px; font-weight: 500;
+    }
+    .cluster-locations > summary:hover { text-decoration: underline; }
+    .loc-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+    .loc-table th, .loc-table td {
+      padding: 4px 8px; border: 1px solid #e5e7eb; text-align: left;
+    }
+    .loc-table th { background: #f9fafb; font-weight: 600; }
+    .loc-file { font-family: monospace; color: #374151; }
+    .loc-line { text-align: center; color: #6b7280; white-space: nowrap; }
+    .loc-snippet { color: #4b5563; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* ── Charts Row (并列布局) ── */
+    .charts-row {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    /* ── Chart Section ── */
+    .chart-section {
+      flex: 1 1 0;
+      min-width: 0;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .chart-container {
+      position: relative;
+      height: 260px;
+    }
+
+    /* ── Top 3 Criticals in Hero ── */
+    .top-criticals {
+      position: relative;
+      margin-top: 18px;
+      padding-top: 16px;
+      border-top: 1px solid rgba(255,255,255,0.12);
+    }
+
+    .top-criticals h3 {
+      margin: 0 0 10px;
+      font-size: 13px;
+      font-weight: 700;
+      color: #ff9d94;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .top-criticals ul {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .top-criticals li {
+      font-size: 13px;
+      color: #d6dcea;
+      line-height: 1.5;
+      padding: 9px 12px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.09);
+      border-left: 3px solid #f2645a;
+      border-radius: 0 8px 8px 0;
+    }
+
+    .top-criticals li strong {
+      color: #ffe1dc;
+      font-weight: 700;
+      display: block;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12px;
+    }
+
+    .top-criticals[hidden] { display: none !important; }
+
+    .top-criticals .tc-desc {
+      display: block;
+      margin-top: 3px;
+    }
+
+    .top-criticals .tc-source {
+      display: inline-block;
+      margin-bottom: 4px;
+      padding: 1px 7px;
+      border-radius: 5px;
+      background: rgba(255,255,255,0.14);
+      color: #f4f7fb;
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    /* ── Export Dropdown ── */
+    .export-dropdown {
+      position: relative;
+    }
+
+    .export-menu {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 4px);
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+      min-width: 160px;
+      z-index: 100;
+      overflow: hidden;
+    }
+
+    .export-menu a {
+      display: block;
+      padding: 10px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--heading);
+      text-decoration: none;
+      transition: background 0.12s;
+    }
+
+    .export-menu a:hover {
+      background: #eef5f1;
+    }
+
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <h1>AI Code Review 报告</h1>
+      <p class="hero-meta">服务: rps | 生成时间: 2026-11-05 17:56:24</p>
+      <div class="top-criticals" id="top-criticals" hidden>
+        <h3>最需要先看的问题（Critical）</h3>
+        <ul id="top-criticals-list"></ul>
+      </div>
+    </header>
+
+    <div class="report-tabs" role="tablist" aria-label="报告视图">
+      <button type="button" role="tab" id="tab-general" aria-controls="panel-general" aria-selected="true" onclick="switchReportTab('general')">综合审查</button>
+      <button type="button" role="tab" id="tab-dp" aria-controls="panel-dp" aria-selected="false" onclick="switchReportTab('dp')">权限与业务规则</button>
+    </div>
+
+    <div id="panel-general" class="report-panel is-active" role="tabpanel" aria-labelledby="tab-general">
+    <section class="summary">
+      <h2>总体结论</h2>
+      <div id="summary-text" class="summary-body summary-preformatted"><div class="summary-condensed"><p>本次变更未引入新的 HTTP Controller 或显式鉴权放行代码，未发现新增 SQL 注入、匿名放行或敏感信息明文泄露问题；但批量 job 的新并发处理方案存在明显的记录领取竞态和状态回退风险，可能导致重复处理下游业务。
+
+<strong>已审查无风险接口</strong>
+- LabelBatchUpdateJobExecutor.execute() | 无 HTTP Path | 仅为内部 job 编排入口，无 Controller 暴露，未见新增鉴权绕过代码。
+- RpsLabelBatchUpdateAsyncJob.executeJob() | 无 HTTP Path | XXL-Job 任务入口，不是业务 HTTP 接口，本次 diff 未出现匿名放行或权限削弱代码。
+- RpsLabelBatchUpdateShipmentJob.executeJob() | 无 HTTP Path | XXL-Job 任务入口，不是业务 HTTP 接口，本次 diff 未出现匿名放行或权限削弱代码。
+- LabelBatchUpdateServiceImpl.saveLabelBatchUpdateToPushLog() | 无 HTTP Path | Service 内部方法，无 Controller 调用，本次改动未新增对外访问面。
+- LabelBatchUpdateServiceImpl.fetchPendingBatchUpdate() | 无 HTTP Path | Service 内部方法，无 Controller 调用，本次改动未新增对外访问面。
+- LabelBatchUpdateServiceImpl.processPushLog() | 无 HTTP Path | Service 内部方法，无 Controller 调用，本次改动未新增对外访问面。
+- LabelBatch…</p><details class="summary-raw-details"><summary>展开全文</summary><pre class="summary-raw-pre">本次变更未引入新的 HTTP Controller 或显式鉴权放行代码，未发现新增 SQL 注入、匿名放行或敏感信息明文泄露问题；但批量 job 的新并发处理方案存在明显的记录领取竞态和状态回退风险，可能导致重复处理下游业务。
+
+<strong>已审查无风险接口</strong>
+- LabelBatchUpdateJobExecutor.execute() | 无 HTTP Path | 仅为内部 job 编排入口，无 Controller 暴露，未见新增鉴权绕过代码。
+- RpsLabelBatchUpdateAsyncJob.executeJob() | 无 HTTP Path | XXL-Job 任务入口，不是业务 HTTP 接口，本次 diff 未出现匿名放行或权限削弱代码。
+- RpsLabelBatchUpdateShipmentJob.executeJob() | 无 HTTP Path | XXL-Job 任务入口，不是业务 HTTP 接口，本次 diff 未出现匿名放行或权限削弱代码。
+- LabelBatchUpdateServiceImpl.saveLabelBatchUpdateToPushLog() | 无 HTTP Path | Service 内部方法，无 Controller 调用，本次改动未新增对外访问面。
+- LabelBatchUpdateServiceImpl.fetchPendingBatchUpdate() | 无 HTTP Path | Service 内部方法，无 Controller 调用，本次改动未新增对外访问面。
+- LabelBatchUpdateServiceImpl.processPushLog() | 无 HTTP Path | Service 内部方法，无 Controller 调用，本次改动未新增对外访问面。
+- LabelBatchUpdateServiceImpl.markPushLogSuccess() | 无 HTTP Path | Service 内部方法，无 Controller 调用，本次改动未新增对外访问面。
+- LabelBatchUpdateServiceImpl.executeLabelBatchUpdate() | 无 HTTP Path | Service 内部方法，无 Controller 调用；从提供上下文看仍保留 <code>orgId</code> 相关校验逻辑，未见本次 diff 削弱。
+- LabelBatchUpdateServiceImpl.pushToKafka() | 无 HTTP Path | Service 内部方法，无 Controller 调用，本次改动未新增对外访问面。
+- LabelBatchUpdateServiceImpl.processHandover() | 无 HTTP Path | 本次 diff 未改动其权限入口，且无 Controller 映射信息，未见新增匿名暴露。
+
+接口覆盖率：清单共 10 个接口，已审查 10 个，0 个存在权限风险，10 个无风险，0 个待确认</pre></details></div></div>
+      <div class="filter-row">
+        <span class="filter-label">点击筛选:</span>
+        <div class="chips">
+          <span class="chip critical filter-chip" data-filter="critical" onclick="filterBySeverity(this)">Critical: 1</span>
+          <span class="chip major filter-chip" data-filter="major" onclick="filterBySeverity(this)">Major: 3</span>
+          <span class="chip minor filter-chip" data-filter="minor" onclick="filterBySeverity(this)">Minor: 3</span>
+          <span class="chip info filter-chip" data-filter="info" onclick="filterBySeverity(this)">Info: 0</span>
+          <span class="chip">Total: 7</span>
+        </div>
+        <div class="chips-impact-note">牵连影响另有 27 条判定为安全，不计入以上统计</div>
+      </div>
+    </section>
+
+    <div class="charts-row">
+      <div class="chart-section" id="chart-section">
+        <h3 class="section-title">问题分布</h3>
+        <div class="chart-container">
+          <canvas id="categoryChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div id="filter-hint">
+      筛选中: <strong id="filter-hint-label"></strong>，仅显示对应问题
+      <span class="clear-filter" onclick="clearFilter()">清除筛选</span>
+    </div>
+
+    <div class="findings-toolbar" id="findings-toolbar" style="display: none;">
+      <!-- 筛选按钮已下线：与上方「总体结论」区的 filter-row（Critical/Major/Minor/Info 计数
+           chip）功能重复，且从未挂过点击事件，是从未生效的死代码（用户反馈"这个筛选多余了"）。
+           筛选统一走上方 filter-row 的 filterBySeverity()，这里只保留搜索 + 导出。 -->
+      <input type="text" class="findings-search" id="findings-search" placeholder="搜索文件/描述…">
+      <div class="export-dropdown">
+        <button class="toolbar-btn" id="export-btn">导出 ▼</button>
+        <div class="export-menu" id="export-menu" style="display:none;">
+          <a href="#" onclick="exportJira()">导出为 Jira</a>
+          <a href="#" onclick="exportExcel()">导出为 Excel</a>
+          <a href="#" onclick="exportCsv()">导出为 CSV</a>
+        </div>
+      </div>
+    </div>
+
+    
+<style>
+.impact-section { margin: 16px 0 24px; }
+.impact-section .section-title { font-size: 18px; font-weight: 700; margin-bottom: 10px; }
+/* 颜色直接写死（不用 var(--minor-*)）：既往回归测过"这份样式表里一次都不能
+   出现 --minor-bg 这个变量名"（NEEDS_HUMAN 不该复用 minor 琥珀色，见下方
+   impact-stat.impact-needs-human 的注释），这里的抽样提示条语义完全不同
+   （跟严重度无关，只是"这批数据是抽样的"），但同一份样式表里带上这个变量
+   名字本身就会让那条回归测试的"零出现"断言失去意义。 */
+.impact-sample-banner {
+  background: #fdf7e0; color: #8a6208;
+  border: 1px solid #f1e096;
+  border-radius: 8px; padding: 8px 14px; font-size: 13px; font-weight: 600;
+  margin-bottom: 10px;
+}
+.impact-stats-banner { margin-bottom: 10px; }
+.impact-stat {
+  display: inline-block; padding: 4px 11px; border-radius: 8px; font-size: 12px;
+  font-weight: 700; margin-right: 8px;
+}
+.impact-stat.impact-risk { background: var(--critical-bg, #fdeceb); color: var(--critical-text, #b3261e); }
+/* NEEDS_HUMAN 改用 info 蓝（原用 minor 琥珀色，与"一般问题"严重度语义撞车——
+   需人工核实 ≠ 一个确定的低危问题，是"不知道，人来判断"，语义上更接近
+   info 的"仅供参考/待确认"，用户反馈"两套配色打架"实测已改） */
+.impact-stat.impact-needs-human { background: var(--info-bg, #eaf1fd); color: var(--info-text, #23509c); }
+.impact-stat.impact-safe { background: var(--safe-bg, #e8f6ee); color: var(--safe-text, #1a7a4c); }
+.impact-stat.impact-total { background: var(--chip-bg, #eef0f5); color: var(--muted, #667085); }
+.impact-section-note {
+  font-size: 13px; color: #666; line-height: 1.75; margin: 0 0 12px;
+  padding: 11px 14px; background: #f7f9fa; border-radius: 8px;
+}
+.impact-section-note p { margin: 0 0 7px; }
+.impact-section-note p:last-child { margin-bottom: 0; }
+.impact-section-note strong { color: #333; }
+.impact-note-legend {
+  margin: 0 0 8px; padding-left: 18px; list-style: none;
+}
+.impact-note-legend li { margin-bottom: 3px; }
+.impact-note-legend li::before {
+  content: "·"; margin-right: 6px; color: #999; font-weight: 700;
+}
+.impact-ratio-alert {
+  background: var(--major-bg, #fdf1e3); color: var(--major-text, #a85311);
+  border: 1px solid var(--major-border, #f4d19d); border-radius: 8px; padding: 8px 14px;
+  font-size: 13px; margin-bottom: 10px;
+}
+.impact-group { margin-bottom: 22px; }
+.impact-group-title {
+  font-size: 16px; font-weight: 700; margin: 14px 0 10px; color: #333;
+  padding-bottom: 6px; border-bottom: 1px solid #e5e5e5;
+}
+.impact-empty { color: #666; font-size: 13px; padding: 8px 0; }
+/* 卡片间距加大 + 阴影，强化"一张卡是一个独立问题"的边界感（用户反馈①） */
+.impact-risk-list { display: flex; flex-direction: column; gap: 16px; }
+.impact-card {
+  border: 1px solid var(--border, #e3e6ec); border-left: 4px solid #ccc; border-radius: 12px;
+  padding: 14px 16px; background: #fff; margin-bottom: 16px;
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(16,24,40,.06));
+}
+.impact-card.impact-risk { border-left-color: var(--critical-strong, #d1291f); background: linear-gradient(90deg, var(--critical-bg, #fdeceb) 0%, #fff 14px); }
+.impact-card.impact-needs-human { border-left-color: var(--info-strong, #2f66c9); background: linear-gradient(90deg, var(--info-bg, #eaf1fd) 0%, #fff 14px); }
+.impact-card.impact-safe { border-left-color: var(--safe-text, #1a7a4c); background: linear-gradient(90deg, var(--safe-bg, #e8f6ee) 0%, #fff 14px); }
+.impact-card-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+  padding-bottom: 8px; border-bottom: 1px solid #f0f0f0;
+}
+.impact-badge {
+  font-size: 11.5px; font-weight: 800; padding: 4px 10px; border-radius: 7px;
+  text-transform: none; border: 1px solid transparent;
+}
+/* 加边框跟主报告 .sev-badge 视觉语言对齐（用户反馈"两种报告风格不统一"） */
+.impact-badge.impact-risk { background: var(--critical-bg, #fdeceb); color: var(--critical-text, #b3261e); border-color: var(--critical-border, #f3b7b2); }
+.impact-badge.impact-needs-human { background: var(--info-bg, #eaf1fd); color: var(--info-text, #23509c); border-color: var(--info-border, #c0d6f6); }
+.impact-badge.impact-safe { background: var(--safe-bg, #e8f6ee); color: var(--safe-text, #1a7a4c); border-color: var(--safe-border, #aee3c4); }
+.impact-index { font-size: 12px; color: #888; }
+.impact-source-tag { font-size: 12.5px; color: #555; background: #f2f2f2; border-radius: 4px; padding: 2px 7px; }
+/* 字段之间用细分隔线拉开节奏，避免"挤成一坨"（用户反馈①的卡内延伸） */
+.impact-field { margin: 0; padding: 8px 0; font-size: 14px; }
+.impact-field + .impact-field { border-top: 1px dashed #ececec; }
+.impact-field-label {
+  font-weight: 700; color: #555; font-size: 12px; margin-bottom: 4px;
+  text-transform: uppercase; letter-spacing: .02em;
+}
+.impact-field p { margin: 0; }
+/* “怎么办”做成醒目的行动召唤条，呼应主报告 .fix-card/.dp-fix 的视觉语言，
+   同时用底色块把它和上面的说明性文字区分开——减轻“每张卡都在念同一句话”
+   的观感（用户反馈④之一：内容本身仍是模板句，属内容生成侧，此处只做视觉区隔）*/
+.impact-action {
+  background: #f3faf7; border-left: 3px solid var(--accent, #0f766e);
+  border-radius: 0 8px 8px 0; padding: 8px 12px; color: #2d4a3d;
+}
+/* 代码上下文块：文件名/行号做成编辑器 tab 条，深色代码正文 + 高亮目标行，
+   解决用户反馈②（file:line 太不显眼）与③（无上下文、无高亮） */
+.impact-code-tab {
+  display: flex; align-items: baseline; gap: 10px; background: #1a2438;
+  color: #cbd5e0; font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12px; padding: 7px 13px; border-radius: 8px 8px 0 0; margin-top: 8px;
+}
+.impact-code-tab-path { font-weight: 600; color: #e2e8f0; word-break: break-all; }
+.impact-code-tab-line { color: #7dd3e8; white-space: nowrap; }
+.impact-code-body {
+  background: var(--code-bg, #10182b); border-radius: 0 0 8px 8px; padding: 7px 0;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12.5px; line-height: 1.65; overflow-x: auto;
+}
+.impact-code-line { display: flex; padding: 0 12px; white-space: pre; }
+.impact-code-no {
+  flex: 0 0 auto; width: 2.6em; text-align: right; margin-right: 12px;
+  color: #718096; user-select: none;
+}
+.impact-code-text { color: #e2e8f0; }
+.impact-code-line-hl {
+  background: rgba(214, 158, 46, .18); border-left: 3px solid #d69e2e;
+  padding-left: 9px; margin-left: -3px;
+}
+.impact-code-line-hl .impact-code-no { color: #f6c453; font-weight: 700; }
+.impact-code-line-hl .impact-code-text { color: #fdf6e3; }
+/* quote 单行降级展示（拿不到源文件时的兜底，见 render_impact_section.py 说明） */
+.impact-evidence {
+  background: var(--code-bg, #10182b); color: #e2e8f0; border-radius: 0 0 8px 8px;
+  padding: 9px 13px; font-size: 12.5px; overflow-x: auto; margin: 0;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+/* 折叠区统一加 ▸ 箭头指示，跟主报告其它折叠区（issue-fold/dp-fold）一致，
+   修掉「牵连影响」这节此前唯独没有展开箭头的不一致（用户反馈④之一） */
+.impact-needs-human-fold, .impact-merged-details { margin-top: 10px; }
+.impact-needs-human-fold summary, .impact-merged-details summary {
+  cursor: pointer; font-size: 13.5px; font-weight: 600; color: #555; padding: 6px 0;
+  list-style: none; display: flex; align-items: center; gap: 6px;
+}
+.impact-needs-human-fold summary::-webkit-details-marker,
+.impact-merged-details summary::-webkit-details-marker { display: none; }
+.impact-needs-human-fold summary::before,
+.impact-merged-details summary::before {
+  content: "▸"; font-size: 11px; color: var(--accent, #0f766e); transition: transform .15s;
+}
+.impact-needs-human-fold[open] > summary::before,
+.impact-merged-details[open] > summary::before { transform: rotate(90deg); }
+/* 判定为安全的调用点不再逐条/逐组展示（2026-09-02），.impact-safe-fold 这
+   个折叠 class 已经没有任何 HTML 元素在用，改用不带交互的 .impact-safe-note
+   脚注段落——下面这条规则保留，上面折叠相关的 .impact-safe-fold 选择器已
+   随之删除（P3，code-reviewer 复核指出的死 CSS）。 */
+.impact-safe-note { color: #777; font-size: 12.5px; }
+.impact-merged-row { border-top: 1px dashed #e2e2e2; padding: 10px 0; font-size: 14px; }
+.impact-merged-row-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+</style>
+<section class="impact-section"><h2 class="section-title">牵连影响</h2><div class="impact-section-note"><p><strong>这一节回答的问题：</strong>这次改动被别的代码调用的那些地方，会不会被改坏。跟上面「按文件的审查发现」（这次写的代码本身对不对）是两回事，<strong>两边的数字不能相加</strong>。</p><ul class="impact-note-legend"><li><strong>Critical</strong>＝建议关注，这个调用点可能被改坏了</li><li><strong>Major</strong>＝AI 拿不准，需要人看一眼</li><li><strong>Info</strong>＝已排查，确认没影响</li></ul><p><strong>这次的数字：</strong>一共挖到 27 个调用点，其中 0 个建议关注，来自 0 处真正被改动的方法或字段（同一处改动的每个调用方分开列）。</p></div><div class="impact-stats-banner"><span class="impact-stat impact-risk">Critical · 建议关注 0（0 处改动）</span><span class="impact-stat impact-needs-human">Major · 需人工核实 0（0 处改动）</span><span class="impact-stat impact-safe">Info · 已排查安全 27</span><span class="impact-stat impact-total">Total 27</span></div><div class="impact-empty">本次改动未挖出需要人工关注的牵连消费点。</div></section><div class="summary-shard" style="border-left-color:#c53030;background:#fff5f5;"><span style="font-size:14px;color:#c53030;">⚠ 本次未识别到对应需求文档（可能是需求还没入库，或分支名/diff 缺少可匹配的业务关键词）。下方所有 finding（含牵连影响）的风险判断均未经需求预期核对，可能把「需求本来就要改的代码」误判为风险，请人工结合实际需求复核。</span></div><h2 class="section-title subsection-title">按文件的审查发现</h2><details class="action-group action-group-fix_now" open="open" style="margin-bottom:14px;border:1px solid #c53030;border-radius:8px;"><summary style="cursor:pointer;font-weight:700;font-size:15px;color:#c53030;padding:8px 12px;list-style:none;">&#128308; 立即修代码 &middot; 3 个问题</summary><div style="padding:0 12px 8px;"><div class="findings-list-wrap"><details class="file-group findings-file-group" open="open" id="fg-304fae7b08ea" data-file-path="docs/plan-label-batch-update-split-job.md" data-short-name="plan-label-batch-update-split-job.md" data-worst-severity="critical"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-critical" aria-hidden="true"></span><span class="file-path-text">docs/plan-label-batch-update-split-job.md</span></span><span class="file-group-stats"><span class="stat-chip stat-critical">1 Critical</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-critical" data-severity="critical"><div class="finding-header"><span class="sev-badge critical">CRITICAL</span><span class="finding-line" title="行号">L1-249</span><span class="finding-cat finding-cat-requirement">需求未实现</span><span class="evidence-line-unverified-badge" style="color:#c62828;border:1px solid #c62828;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段附近 &#177;5 行内未找到 evidence_quote 摘抄的原文，行号未经核实，下方证据代码可能不是问题真正所在的位置，请人工核实">&#9888; 行号未验证</span></div><div class="finding-feature-highlight" style="background:#fff3e0;border-left:4px solid #e65100;padding:12px 14px;margin:10px 0;border-radius:0 4px 4px 0;"><div class="detail-label" style="color:#e65100;font-weight:600;margin-bottom:4px;">未实现的功能</div><div style="font-size:15px;font-weight:600;">提供旧任务停用与遗留 `PROCESSING` 记录重置为 `PENDING` 的可执行切换交付物</div></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>MR 描述和方案文档都把上线切换步骤写成验收内容：旧任务必须先停掉，再启用两个新任务，并把遗留 <code>PROCESSING</code> 记录重置为 <code>PENDING</code>。</p><p>但本次 diff 只新增了两个新 Job 和新执行逻辑，没有任何代码、脚本或配置变更去停用旧任务，也没有提供重置 <code>PROCESSING</code> 记录的实现证据。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>如果按当前改动直接上线，旧 <code>CommonPushLogJob</code> 仍可能继续消费旧 <code>push_code</code> 数据，而历史 <code>PROCESSING</code> 记录也不会被自动恢复，导致切换步骤依赖人工额外操作；</p><p>一旦漏做，可能出现旧新任务并存或遗留记录长期不再被处理。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>把上线切换要求落实为可执行交付物：至少补充停用旧任务和重置 <code>PROCESSING</code> 为 <code>PENDING</code> 的脚本/配置/操作清单，并在代码仓库中随本次改动一并提交。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>准备一批 <code>pl_rps_label_batch_update</code> 数据，其中包含旧 <code>push_code</code> 的 <code>PENDING</code> 记录和若干 <code>PROCESSING</code> 记录；</p><p>按仓库内提供的切换方案执行一次，验证旧任务不会再消费、两个新任务可正常接管，且原 <code>PROCESSING</code> 记录会被恢复为 <code>PENDING</code> 后重新处理。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row code-row-target"><span class="code-ln">  1</span># 批量更新推送拆分独立 Job 方案</span><span class="code-row code-row-target"><span class="code-ln">  2</span></span><span class="code-row code-row-target"><span class="code-ln">  3</span>## 背景</span><span class="code-row code-row-target"><span class="code-ln">  4</span></span><span class="code-row code-row-target"><span class="code-ln">  5</span>`pl_rps_label_batch_update` 这张推送表里混着两类业务：</span><span class="code-row code-row-target"><span class="code-ln">  6</span></span><span class="code-row code-row-target"><span class="code-ln">  7</span>- **异步批量更新**：只改 label 字段，量大、可容忍延迟</span><span class="code-row code-row-target"><span class="code-ln">  8</span>- **Shipment 创建**：同步创建 shipment，链路重、对时延敏感</span><span class="code-row code-row-target"><span class="code-ln">  9</span></span><span class="code-row code-row-target"><span class="code-ln"> 10</span>两者靠请求体里的 `enableShipment` 区分，而这个字段**只存在于 `business_data` JSON 里**，</span><span class="code-row code-row-target"><span class="code-ln"> 11</span>导致下游 job 的 SQL 无法把两类数据分开捞，只能挤在同一个 job 里跑同一套 limit / 频率 / 分片配置。</span><span class="code-row code-row-target"><span class="code-ln"> 12</span>旺季需要对 Shipment 单独降频或扩分片时没有调节手段。</span><span class="code-row code-row-target"><span class="code-ln"> 13</span></span><span class="code-row code-row-target"><span class="code-ln"> 14</span>此外当前是逐条串行处理，单轮耗时随 limit 线性增长，没有提速手段。</span><span class="code-row code-row-target"><span class="code-ln"> 15</span></span><span class="code-row code-row-target"><span class="code-ln"> 16</span>## 现状</span><span class="code-row code-row-target"><span class="code-ln"> 17</span></span><span class="code-row code-row-target"><span class="code-ln"> 18</span>### 写入</span><span class="code-row code-row-target"><span class="code-ln"> 19</span></span><span class="code-row code-row-target"><span class="code-ln"> 20</span>三个调用点，都走 `LabelBatchUpdateService.saveLabelBatchUpdateToPushLog(dto, businessNo, orgId)`：</span><span class="code-row code-row-target"><span class="code-ln"> 21</span></span><span class="code-row code-row-target"><span class="code-ln"> 22</span>| 调用点 | `enableShipment` 来源 |</span><span class="code-row code-row-target"><span class="code-ln"> 23</span>|---|---|</span><span class="code-row code-row-target"><span class="code-ln"> 24</span>| `LabelBatchUpdateServiceImpl.processHandover` | `HandoverForm.enableShipment`；Temu 路径 `TemuToHandoverConverter:<span class="code-number">76</span>` 固定传 `TRUE` |</span><span class="code-row code-row-target"><span class="code-ln"> 25</span>| `TikTokService:<span class="code-number">180</span>` | 未设置，为 `<span class="code-keyword">null</span>` |</span><span class="code-row code-row-target"><span class="code-ln"> 26</span>| `TikTokService:<span class="code-number">732</span>` | 未设置，为 `<span class="code-keyword">null</span>` |</span><span class="code-row code-row-target"><span class="code-ln"> 27</span></span><span class="code-row code-row-target"><span class="code-ln"> 28</span>`orgId` 已经是形参但完全没被使用。</span><span class="code-row code-row-target"><span class="code-ln"> 29</span></span><span class="code-row code-row-target"><span class="code-ln"> 30</span>### 读取</span><span class="code-row code-row-target"><span class="code-ln"> 31</span></span><span class="code-row code-row-target"><span class="code-ln"> 32</span>走通用框架 `CommonPushLogJob` → `CommonPushLogServiceImpl.process()`，`JdbcTemplate` 裸拼 SQL。</span><span class="code-row code-row-target"><span class="code-ln"> 33</span>过滤维度写死在 `CommonPushLogServiceImpl:<span class="code-number">38</span>-<span class="code-number">42</span>`，只有 `push_code` / `status` / `try_times` /</span><span class="code-row code-row-target"><span class="code-ln"> 34</span>`remark` / `created_at` / `MOD(id, n)` 六个，没有扩展点。</span><span class="code-row code-row-target"><span class="code-ln"> 35</span></span><span class="code-row code-row-target"><span class="code-ln"> 36</span>这段代码被 POS / TRK / DMS / RPS 约 <span class="code-number">30</span> 个推送类型共用，为 RPS 一个需求去改它不合适。</span><span class="code-row code-row-target"><span class="code-ln"> 37</span></span><span class="code-row code-row-target"><span class="code-ln"> 38</span>## 方案</span><span class="code-row code-row-target"><span class="code-ln"> 39</span></span><span class="code-row code-row-target"><span class="code-ln"> 40</span>**让 `pl_rps_label_batch_update` 脱离通用推送框架**，改为专属 Entity + Dao + 两个独立 Job，</span><span class="code-row code-row-target"><span class="code-ln"> 41</span>并在 job 内部用专属线程池分批并发处理。</span><span class="code-row code-row-target"><span class="code-ln"> 42</span></span><span class="code-row code-row-target"><span class="code-ln"> 43</span>`CommonPushLogService` / `CommonPushLogDto` / `PushLogTypeEnum` **一行不改**。</span><span class="code-row code-row-target"><span class="code-ln"> 44</span></span><span class="code-row code-row-target"><span class="code-ln"> 45</span>### <span class="code-number">1</span>. 表结构：不动</span><span class="code-row code-row-target"><span class="code-ln"> 46</span></span><span class="code-row code-row-target"><span class="code-ln"> 47</span>区分维度复用现有列，**不加列、不加索引、无 DDL**：</span><span class="code-row code-row-target"><span class="code-ln"> 48</span></span><span class="code-row code-row-target"><span class="code-ln"> 49</span>| 维度 | 落在哪 | 说明 |</span><span class="code-row code-row-target"><span class="code-ln"> 50</span>|---|---|---|</span><span class="code-row code-row-target"><span class="code-ln"> 51</span>| 是否创建 shipment | `push_code` | 异步 = `RPS_LABEL_BATCH_UPDATE`（不变），shipment = `RPS_LABEL_BATCH_UPDATE_SHIPMENT` |</span><span class="code-row code-row-target"><span class="code-ln"> 52</span>| 客户账号 | `remark` | 裸的 orgId 字符串，**仅供人工排查**，不参与任何 job 过滤 |</span><span class="code-row code-row-target"><span class="code-ln"> 53</span></span><span class="code-row code-row-target"><span class="code-ln"> 54</span>两条理由：</span><span class="code-row code-row-target"><span class="code-ln"> 55</span></span><span class="code-row code-row-target"><span class="code-ln"> 56</span>- 现有索引 `idx_pl_rps_label_batch_update_push_code_status (push_code, status)` 正好覆盖新查询</span><span class="code-row code-row-target"><span class="code-ln"> 57</span>  `where push_code = ? and status = ? and try_times &lt; ? limit ?`，`try_times` 回表过滤即可，表量级 <span class="code-number">1</span> 万行。</span><span class="code-row code-row-target"><span class="code-ln"> 58</span>- 异步那半继续沿用原 code，**存量行天然命中**，不需要任何回填或 NULL 兼容逻辑；</span><span class="code-row code-row-target"><span class="code-ln"> 59</span>  老 job 在切换前最后一刻都还能正常处理存量。</span><span class="code-row code-row-target"><span class="code-ln"> 60</span></span><span class="code-row code-row-target"><span class="code-ln"> 61</span>`push_code` 的新值**不加进 `PushLogTypeEnum`**，定义成常量即可——新 job 不走 `CommonPushLogService`，</span><span class="code-row code-row-target"><span class="code-ln"> 62</span>加枚举条目只会多出 `beanName` 之类的无用参数。`fetchSize` / `maxTryTimes` 继续复用现有的</span><span class="code-row code-row-target"><span class="code-ln"> 63</span>`PushLogTypeEnum.RPS_LABEL_BATCH_UPDATE`（<span class="code-number">200</span> / <span class="code-number">3</span>）作为代码侧默认值。</span><span class="code-row code-row-target"><span class="code-ln"> 64</span></span><span class="code-row code-row-target"><span class="code-ln"> 65</span>&gt; 老 job 不会误扫新 code：`CommonPushLogServiceImpl:<span class="code-number">100</span>` 的 pushCode 取自 job 参数指定的枚举，</span><span class="code-row code-row-target"><span class="code-ln"> 66</span>&gt; SQL 写死 `push_code = <span class="code-string">'RPS_LABEL_BATCH_UPDATE'</span>`，不遍历枚举。</span><span class="code-row code-row-target"><span class="code-ln"> 67</span></span><span class="code-row code-row-target"><span class="code-ln"> 68</span>### <span class="code-number">2</span>. 写入侧</span><span class="code-row code-row-target"><span class="code-ln"> 69</span></span><span class="code-row code-row-target"><span class="code-ln"> 70</span>`saveLabelBatchUpdateToPushLog` 里自己存一条记录，不再调 `commonPushLogService.savePushLog`：</span><span class="code-row code-row-target"><span class="code-ln"> 71</span></span><span class="code-row code-row-target"><span class="code-ln"> 72</span>```</span><span class="code-row code-row-target"><span class="code-ln"> 73</span>push_code = Boolean.TRUE.equals(dto.getEnableShipment())</span><span class="code-row code-row-target"><span class="code-ln"> 74</span>          ? <span class="code-string">"RPS_LABEL_BATCH_UPDATE_SHIPMENT"</span></span><span class="code-row code-row-target"><span class="code-ln"> 75</span>          : <span class="code-string">"RPS_LABEL_BATCH_UPDATE"</span></span><span class="code-row code-row-target"><span class="code-ln"> 76</span>remark   = String.valueOf(orgId)</span><span class="code-row code-row-target"><span class="code-ln"> 77</span>status   = PENDING</span><span class="code-row code-row-target"><span class="code-ln"> 78</span>```</span><span class="code-row code-row-target"><span class="code-ln"> 79</span></span><span class="code-row code-row-target"><span class="code-ln"> 80</span>按现状只有 Handover 链路会产生 shipment code。</span><span class="code-row code-row-target"><span class="code-ln"> 81</span></span><span class="code-row code-row-target"><span class="code-ln"> 82</span>### <span class="code-number">3</span>. Entity 与 Dao</span><span class="code-row code-row-target"><span class="code-ln"> 83</span></span><span class="code-row code-row-target"><span class="code-ln"> 84</span>`RpsLabelBatchUpdatePushLog`（`rps-service` 的 `entity/`）继承 `BaseEntity`</span><span class="code-row code-row-target"><span class="code-ln"> 85</span>（提供 `id` / `created_at` / `updated_at`），映射剩余列：</span><span class="code-row code-row-target"><span class="code-ln"> 86</span>`business_no`、`business_data`、`business_type`、`push_code`、`receive_project_code`、</span><span class="code-row code-row-target"><span class="code-ln"> 87</span>`status`、`remark`、`try_times`、`process_info`。</span><span class="code-row code-row-target"><span class="code-ln"> 88</span></span><span class="code-row code-row-target"><span class="code-ln"> 89</span>**不含 `is_shipment` / `org_id` 字段**（表里没这两列）。</span><span class="code-row code-row-target"><span class="code-ln"> 90</span></span><span class="code-row code-row-target"><span class="code-ln"> 91</span>`RpsLabelBatchUpdatePushLogDao` 提供三个方法，两个 job 共用：</span><span class="code-row code-row-target"><span class="code-ln"> 92</span></span><span class="code-row code-row-target"><span class="code-ln"> 93</span>| 方法 | 用途 |</span><span class="code-row code-row-target"><span class="code-ln"> 94</span>|---|---|</span><span class="code-row code-row-target"><span class="code-ln"> 95</span>| `findPending(pushCode, status, maxTryTimes, fetchSize)` | 捞待处理，`push_code` 作参数传入 |</span><span class="code-row code-row-target"><span class="code-ln"> 96</span>| `updateStatusByIds(status, updatedAt, ids)` | 批量置 `SUCCESS` |</span><span class="code-row code-row-target"><span class="code-ln"> 97</span>| `updateStatusAndInfoAndTryTimesById(status, info, updatedAt, id)` | 单条回退 `PENDING` 并 `try_times + <span class="code-number">1</span>` |</span><span class="code-row code-row-target"><span class="code-ln"> 98</span></span><span class="code-row code-row-target"><span class="code-ln"> 99</span>### <span class="code-number">4</span>. 状态机：不写 PROCESSING</span><span class="code-row code-row-target"><span class="code-ln">100</span></span><span class="code-row code-row-target"><span class="code-ln">101</span>```</span><span class="code-row code-row-target"><span class="code-ln">102</span>捞取 PENDING (push_code = ?, try_times &lt; <span class="code-number">3</span>, limit fetchSize)</span><span class="code-row code-row-target"><span class="code-ln">103</span>  → 切成 shardQty 份，提交线程池并发处理</span><span class="code-row code-row-target"><span class="code-ln">104</span>  → 每条 executeLabelBatchUpdate</span><span class="code-row code-row-target"><span class="code-ln">105</span>      成功 → 收集 id，批次结束后批量置 SUCCESS</span><span class="code-row code-row-target"><span class="code-ln">106</span>      失败 → 保持 PENDING，try_times + <span class="code-number">1</span>，process_info 记错误（截断 <span class="code-number">2550</span>）</span><span class="code-row code-row-target"><span class="code-ln">107</span>  → 全部批次完成后 job 线程才返回成功</span><span class="code-row code-row-target"><span class="code-ln">108</span>```</span><span class="code-row code-row-target"><span class="code-ln">109</span></span><span class="code-row code-row-target"><span class="code-ln">110</span>**不设置 `PROCESSING` 中间态。** 前提是 XXL-Job 配「单机串行」且没有其它读方，</span><span class="code-row code-row-target"><span class="code-ln">111</span>此时 PROCESSING 不提供任何互斥价值，反而制造「JVM 崩溃 / job 被超时 kill 后记录永久卡死、</span><span class="code-row code-row-target"><span class="code-ln">112</span>两个 `findPending` 都捞不到」的坑。不写之后，崩溃的记录仍是 PENDING，下一轮自动重捞。</span><span class="code-row code-row-target"><span class="code-ln">113</span></span><span class="code-row code-row-target"><span class="code-ln">114</span>成功侧用批量 UPDATE（<span class="code-number">500</span> 条 <span class="code-number">2</span> 批 = <span class="code-number">2</span> 次 UPDATE，而非 <span class="code-number">500</span> 次）；</span><span class="code-row code-row-target"><span class="code-ln">115</span>失败侧必须逐条，因为 `process_info` 各不相同。</span><span class="code-row code-row-target"><span class="code-ln">116</span></span><span class="code-row code-row-target"><span class="code-ln">117</span>`RPS_LABEL_BATCH_UPDATE` 原配置 `failure = <span class="code-keyword">false</span>`、`maxTryTimes = <span class="code-number">3</span>`、`fetchSize = <span class="code-number">200</span>`，新实现保持一致。</span><span class="code-row code-row-target"><span class="code-ln">118</span></span><span class="code-row code-row-target"><span class="code-ln">119</span>### <span class="code-number">5</span>. 两个 Job 与并发</span><span class="code-row code-row-target"><span class="code-ln">120</span></span><span class="code-row code-row-target"><span class="code-ln">121</span>| Handler | `push_code` 过滤值 |</span><span class="code-row code-row-target"><span class="code-ln">122</span>|---|---|</span><span class="code-row code-row-target"><span class="code-ln">123</span>| `rpsLabelBatchUpdateAsyncJob` | `RPS_LABEL_BATCH_UPDATE` |</span><span class="code-row code-row-target"><span class="code-ln">124</span>| `rpsLabelBatchUpdateShipmentJob` | `RPS_LABEL_BATCH_UPDATE_SHIPMENT` |</span><span class="code-row code-row-target"><span class="code-ln">125</span></span><span class="code-row code-row-target"><span class="code-ln">126</span>**并发编排放在 rps-job**，service 只负责「捞一批」和「处理一条」：</span><span class="code-row code-row-target"><span class="code-ln">127</span></span><span class="code-row code-row-target"><span class="code-ln">128</span>| 层 | 职责 |</span><span class="code-row code-row-target"><span class="code-ln">129</span>|---|---|</span><span class="code-row code-row-target"><span class="code-ln">130</span>| `LabelBatchUpdateService` | `fetchPendingBatchUpdate(pushCode, fetchSize)` / `processPushLog(pushLog)` / `markPushLogSuccess(ids)` |</span><span class="code-row code-row-target"><span class="code-ln">131</span>| `LabelBatchUpdateJobExecutor`（rps-job，新增） | 切片 + 提交线程池 + 等待，两个 job 共用 |</span><span class="code-row code-row-target"><span class="code-ln">132</span>| 两个 `<span class="code-annotation">@XxlJob</span>` handler | 解析参数后调 executor，各自传自己的 `push_code` |</span><span class="code-row code-row-target"><span class="code-ln">133</span></span><span class="code-row code-row-target"><span class="code-ln">134</span>这样线程池 Bean 定义在 `rps-job/config/ThreadPoolConfig`，rps-api 完全看不到它。</span><span class="code-row code-row-target"><span class="code-ln">135</span>如果把池放 rps-service，rps-api 会因为加载 `LabelBatchUpdateServiceImpl` 而需要这个 Bean，</span><span class="code-row code-row-target"><span class="code-ln">136</span>虽然 `ThreadPoolExecutor` 核心线程是懒创建、不会真起线程，但多一个无用 Bean 没必要。</span><span class="code-row code-row-target"><span class="code-ln">137</span></span><span class="code-row code-row-target"><span class="code-ln">138</span>**job 参数用 `JobParamDto`**（已有的纯 POJO），**字段全部复用，不新增**。</span><span class="code-row code-row-target"><span class="code-ln">139</span>不使用 `ScheduledTask`——它是映射 `rps_scheduled_task` 的 `<span class="code-annotation">@Entity</span>`，加字段要动表。</span><span class="code-row code-row-target"><span class="code-ln">140</span></span><span class="code-row code-row-target"><span class="code-ln">141</span>```</span><span class="code-row code-row-target"><span class="code-ln">142</span>fetchSize  单轮捞取总条数，空或 &lt;= <span class="code-number">0</span> 时取 PushLogTypeEnum 默认值 <span class="code-number">200</span></span><span class="code-row code-row-target"><span class="code-ln">143</span>shardQty   切几份，空或 &lt;= <span class="code-number">1</span> 时退化为 job 线程单线程处理（默认行为）</span><span class="code-row code-row-target"><span class="code-ln">144</span>```</span><span class="code-row code-row-target"><span class="code-ln">145</span></span><span class="code-row code-row-target"><span class="code-ln">146</span>`shardQty` 在别的 job 里是 SQL 层 `MOD(id, n) = shardCurrentNum` 的分片参数，</span><span class="code-row code-row-target"><span class="code-ln">147</span>那套做法要开多个 job 任务、查询频率翻倍，且分片边界配错就会重复处理。</span><span class="code-row code-row-target"><span class="code-ln">148</span>这两个新 job 不做 SQL 分片，`shardCurrentNum` 不使用，`shardQty` 改为表示**捞取之后在内存里切几份**，</span><span class="code-row code-row-target"><span class="code-ln">149</span>语义差异在 `LabelBatchUpdateJobExecutor` 的类注释里标明。</span><span class="code-row code-row-target"><span class="code-ln">150</span></span><span class="code-row code-row-target"><span class="code-ln">151</span>切片用 `ListUtil.splitListByLen(list, ceil(size / shardQty))`，顺序切片。</span><span class="code-row code-row-target"><span class="code-ln">152</span></span><span class="code-row code-row-target"><span class="code-ln">153</span>**线程池**：两个 job 共用 `labelBatchUpdatePool`，`core = max = <span class="code-number">8</span>`、队列 <span class="code-number">100</span>、`CallerRunsPolicy`</span><span class="code-row code-row-target"><span class="code-ln">154</span>（队列满了让 job 线程自己跑，不丢任务）。实际并发 = `min(shardQty, 池内可用线程)`，</span><span class="code-row code-row-target"><span class="code-ln">155</span>**池大小固定，`shardQty` 只决定切片粒度**——否则线上会出现「调了 shardQty 没提速」。</span><span class="code-row code-row-target"><span class="code-ln">156</span></span><span class="code-row code-row-target"><span class="code-ln">157</span>初期规划：limit <span class="code-number">500</span> / shardQty <span class="code-number">2</span>，两个 job 同时跑共 <span class="code-number">4</span> 个任务，池留一倍余量。</span><span class="code-row code-row-target"><span class="code-ln">158</span></span><span class="code-row code-row-target"><span class="code-ln">159</span>池参数在 Nacos 的 rps-job 配置里（代码里有默认值，不配也能跑）：</span><span class="code-row code-row-target"><span class="code-ln">160</span></span><span class="code-row code-row-target"><span class="code-ln">161</span>```yaml</span><span class="code-row code-row-target"><span class="code-ln">162</span>threadPool:</span><span class="code-row code-row-target"><span class="code-ln">163</span>  labelBatchUpdatePool:</span><span class="code-row code-row-target"><span class="code-ln">164</span>    coreSize: <span class="code-number">8</span>                        # 默认 <span class="code-number">8</span></span><span class="code-row code-row-target"><span class="code-ln">165</span>    maxSize: <span class="code-number">8</span>                         # 默认 <span class="code-number">8</span>，与 core 相等时 keepAliveTime 不起作用</span><span class="code-row code-row-target"><span class="code-ln">166</span>    keepAliveTime: <span class="code-number">60</span>                  # 分钟，默认 <span class="code-number">60</span></span><span class="code-row code-row-target"><span class="code-ln">167</span>    queueSize: <span class="code-number">100</span>                     # 默认 <span class="code-number">100</span></span><span class="code-row code-row-target"><span class="code-ln">168</span>    threadName: labelBatchUpdate-pool- # 默认同左</span><span class="code-row code-row-target"><span class="code-ln">169</span>```</span><span class="code-row code-row-target"><span class="code-ln">170</span></span><span class="code-row code-row-target"><span class="code-ln">171</span>`<span class="code-annotation">@Value</span>` 只在启动时注入一次，**改完 Nacos 要重启 rps-job 才生效**，推送配置不会动已创建的线程池。</span><span class="code-row code-row-target"><span class="code-ln">172</span>要调并发优先改 job 参数的 `shardQty`（控制台改完下一轮即生效），池的 <span class="code-number">8</span> 只是上限。</span><span class="code-row code-row-target"><span class="code-ln">173</span></span><span class="code-row code-row-target"><span class="code-ln">174</span>**等待**：`labelBatchUpdatePool.invokeAll(tasks, <span class="code-number">10</span>, MINUTES)`，超时由 job 捕获后 `handleFail`。</span><span class="code-row code-row-target"><span class="code-ln">175</span>不带超时的话，`posApi` 一旦 hang 住，job 线程永久挂起、后续调度被串行策略静默丢弃，</span><span class="code-row code-row-target"><span class="code-ln">176</span>控制台看不到任何报错。</span><span class="code-row code-row-target"><span class="code-ln">177</span></span><span class="code-row code-row-target"><span class="code-ln">178</span>**超时必须连子线程一起停**：job 线程一返回，串行策略就放下一轮进来，`findPending` 会把仍是</span><span class="code-row code-row-target"><span class="code-ln">179</span>PENDING、但正被上一轮残留线程处理的记录再捞一次 → 重复推 POS。</span><span class="code-row code-row-target"><span class="code-ln">180</span>这里不能用 `CompletableFuture.allOf(...).get(timeout)` —— `CompletableFuture.cancel(<span class="code-keyword">true</span>)` 的</span><span class="code-row code-row-target"><span class="code-ln">181</span>`mayInterruptIfRunning` 在 JDK 实现里**完全无效**，超时只是调用方不等了，任务照跑。</span><span class="code-row code-row-target"><span class="code-ln">182</span>改用 `ExecutorService.invokeAll(timeout)`：超时后它对未完成的 `FutureTask` 调 `cancel(<span class="code-keyword">true</span>)`，</span><span class="code-row code-row-target"><span class="code-ln">183</span>排队未启动的切片直接不跑，运行中的切片收到真中断。切片循环每条记录前检查中断标记后 `break`，</span><span class="code-row code-row-target"><span class="code-ln">184</span>所以最坏情况每个线程只会多跑完手上那一条。</span><span class="code-row code-row-target"><span class="code-ln">185</span></span><span class="code-row code-row-target"><span class="code-ln">186</span>&gt; 中断打不断已经发出去的 HTTP（socket read 不响应 interrupt），所以 `posApi` 的出站超时仍要配好，</span><span class="code-row code-row-target"><span class="code-ln">187</span>&gt; 让 <span class="code-number">10</span> 分钟这条路基本不触发。</span><span class="code-row code-row-target"><span class="code-ln">188</span>&gt;</span><span class="code-row code-row-target"><span class="code-ln">189</span>&gt; 切片被中断时要在 `<span class="code-keyword">finally</span>` 里把已成功的 id 回写 SUCCESS，否则这批已推成功的记录还是 PENDING、</span><span class="code-row code-row-target"><span class="code-ln">190</span>&gt; 下一轮重复推。回写前先 `Thread.interrupted()` 清标记（带着中断标记取 Hikari 连接会失败），写完恢复。</span><span class="code-row code-row-target"><span class="code-ln">191</span></span><span class="code-row code-row-target"><span class="code-ln">192</span>每个切片跑完把本片的成功 id 交回 `markPushLogSuccess` 批量置 SUCCESS，避免逐条 UPDATE。</span><span class="code-row code-row-target"><span class="code-ln">193</span></span><span class="code-row code-row-target"><span class="code-ln">194</span>### <span class="code-number">6</span>. 已知取舍</span><span class="code-row code-row-target"><span class="code-ln">195</span></span><span class="code-row code-row-target"><span class="code-ln">196</span>- **同轮撞同一 trackingNumber**：一条 push log 内部是一个运单 list，难按单号拆，顺序切片后</span><span class="code-row code-row-target"><span class="code-ln">197</span>  两条含相同运单的记录可能并发写同一行 label，表现为 last-write-wins 顺序不确定 + 行锁竞争。</span><span class="code-row code-row-target"><span class="code-ln">198</span>  limit <span class="code-number">500</span> / shardQty <span class="code-number">2</span> 时概率低，**本期不处理**。</span><span class="code-row code-row-target"><span class="code-ln">199</span>- **子线程里 `XxlJobHelper.log` 不可靠**：它依赖 ThreadLocal，池化线程拿不到正确上下文。</span><span class="code-row code-row-target"><span class="code-ln">200</span>  批次内部一律用 `log.info/error`，只在 job 主线程用 `XxlJobHelper.log` 打汇总。</span><span class="code-row code-row-target"><span class="code-ln">201</span>- **DB 连接**：并发 N 至少占 N 个 Hikari 连接，`maximum-pool-size` 在 Nacos，上线前确认够用。</span><span class="code-row code-row-target"><span class="code-ln">202</span>- **下游 QPS 放大**：一条 push log 内部已按 <span class="code-number">500</span> 切片打 `posApi.exchangeLabelUpdate` + 逐条 Kafka，</span><span class="code-row code-row-target"><span class="code-ln">203</span>  并发 N 就是对 POS 压力 ×N。提速上限取决于 POS 承受能力，不是把 `shardQty` 调大就行。</span><span class="code-row code-row-target"><span class="code-ln">204</span></span><span class="code-row code-row-target"><span class="code-ln">205</span>## 影响面</span><span class="code-row code-row-target"><span class="code-ln">206</span></span><span class="code-row code-row-target"><span class="code-ln">207</span>| 范围 | 是否改动 |</span><span class="code-row code-row-target"><span class="code-ln">208</span>|---|---|</span><span class="code-row code-row-target"><span class="code-ln">209</span>| 表结构 | **不改**，无 DDL |</span><span class="code-row code-row-target"><span class="code-ln">210</span>| `rps-common` / `rps-common-service` 通用推送框架 | 不改 |</span><span class="code-row code-row-target"><span class="code-ln">211</span>| 其它 <span class="code-number">30</span> 个推送类型 | 不受影响 |</span><span class="code-row code-row-target"><span class="code-ln">212</span>| `PushLogTypeEnum.RPS_LABEL_BATCH_UPDATE` 枚举项 | 保留，作为 `business_type` / 默认 `fetchSize` / `maxTryTimes` 的来源，但不再被 `CommonPushLogJob` 使用 |</span><span class="code-row code-row-target"><span class="code-ln">213</span>| `JobParamDto` | **不改**，复用 `fetchSize` / `shardQty` |</span><span class="code-row code-row-target"><span class="code-ln">214</span>| `rps-job/config/ThreadPoolConfig` | 新增 `labelBatchUpdatePool` Bean |</span><span class="code-row code-row-target"><span class="code-ln">215</span>| Nacos rps-job 配置 | 可选新增 `threadPool.labelBatchUpdatePool.coreSize` / `queueSize`，不配走代码默认 <span class="code-number">8</span> / <span class="code-number">100</span> |</span><span class="code-row code-row-target"><span class="code-ln">216</span>| rps-api | 不受影响，看不到线程池 |</span><span class="code-row code-row-target"><span class="code-ln">217</span>| POS 侧接口 | 不改，`enableShipment` 仍原样透传 |</span><span class="code-row code-row-target"><span class="code-ln">218</span></span><span class="code-row code-row-target"><span class="code-ln">219</span>## 上线顺序</span><span class="code-row code-row-target"><span class="code-ln">220</span></span><span class="code-row code-row-target"><span class="code-ln">221</span>```</span><span class="code-row code-row-target"><span class="code-ln">222</span><span class="code-number">1</span>. 部署 rps-job，XXL-Job 控制台新建两个任务，保持停用状态</span><span class="code-row code-row-target"><span class="code-ln">223</span><span class="code-number">2</span>. 部署 rps-api（写入侧开始分 push_code）</span><span class="code-row code-row-target"><span class="code-ln">224</span><span class="code-number">3</span>. 停掉原 commonPushLogJob 中 RPS_LABEL_BATCH_UPDATE 的任务实例</span><span class="code-row code-row-target"><span class="code-ln">225</span><span class="code-number">4</span>. 启用两个新任务</span><span class="code-row code-row-target"><span class="code-ln">226</span><span class="code-number">5</span>. 把残留的 PROCESSING 行置回 PENDING</span><span class="code-row code-row-target"><span class="code-ln">227</span>```</span><span class="code-row code-row-target"><span class="code-ln">228</span></span><span class="code-row code-row-target"><span class="code-ln">229</span>&gt; **[MUST] 第 <span class="code-number">3</span> 步先于第 <span class="code-number">4</span> 步**，不要新旧并行验证。</span><span class="code-row code-row-target"><span class="code-ln">230</span>&gt;</span><span class="code-row code-row-target"><span class="code-ln">231</span>&gt; **[MUST] 第 <span class="code-number">5</span> 步不能漏。** 老 job 会写 `PROCESSING`（`CommonPushLogServiceImpl:<span class="code-number">134</span>`），</span><span class="code-row code-row-target"><span class="code-ln">232</span>&gt; 新 job 既不写也不读这个状态，停老 job 时卡在 PROCESSING 的行不手工捞回来就永远没人处理：</span><span class="code-row code-row-target"><span class="code-ln">233</span>&gt;</span><span class="code-row code-row-target"><span class="code-ln">234</span>&gt; ```sql</span><span class="code-row code-row-target"><span class="code-ln">235</span>&gt; UPDATE pl_rps_label_batch_update SET status = <span class="code-string">'PENDING'</span></span><span class="code-row code-row-target"><span class="code-ln">236</span>&gt; WHERE status = <span class="code-string">'PROCESSING'</span>;</span><span class="code-row code-row-target"><span class="code-ln">237</span>&gt; ```</span><span class="code-row code-row-target"><span class="code-ln">238</span></span><span class="code-row code-row-target"><span class="code-ln">239</span>两个新任务的 XXL-Job 配置要求：</span><span class="code-row code-row-target"><span class="code-ln">240</span></span><span class="code-row code-row-target"><span class="code-ln">241</span>- 阻塞处理策略：**单机串行**（代码层面已无互斥，正确性完全依赖这一项）</span><span class="code-row code-row-target"><span class="code-ln">242</span>- 路由策略：固定到单台（第一个 / 一致性 HASH），或确认执行器只有一个实例</span><span class="code-row code-row-target"><span class="code-ln">243</span>- 任务超时时间：显著大于代码侧的 <span class="code-number">10</span> 分钟等待上限</span><span class="code-row code-row-target"><span class="code-ln">244</span></span><span class="code-row code-row-target"><span class="code-ln">245</span>## 待确认</span><span class="code-row code-row-target"><span class="code-ln">246</span></span><span class="code-row code-row-target"><span class="code-ln">247</span>- 两个 job 的 cron、`fetchSize`、`shardQty` 初始值（代码默认 <span class="code-number">200</span> / <span class="code-number">1</span>，控制台覆盖）</span><span class="code-row code-row-target"><span class="code-ln">248</span>- `pl_rps_label_batch_update` 是否已在 `TableClearJob` 的清理规则内</span><span class="code-row code-row-target"><span class="code-ln">249</span>- `try_times` 撞到上限的记录会静默停在 PENDING，监控告警是否另开工单</span></code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-6500cac44cff" data-file-path="rps-service/src/main/java/io/speedx/rps/service/service/impl/LabelBatchUpdateServiceImpl.java" data-short-name="LabelBatchUpdateServiceImpl.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">rps-service/src/main/java/io/speedx/rps/service/service/impl/LabelBatchUpdateServiceImpl.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">2 Major</span></span><span class="file-group-count">2 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L106-107</span><span class="finding-cat finding-cat-requirement">需求矛盾</span><span class="evidence-line-corrected-badge" style="color:#1565c0;border:1px solid #1565c0;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段与 evidence_quote 实际所在行不一致，已按 evidence_quote 自动纠正高亮位置">&#128260; 行号已纠正</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>需求文档《docs/plan-label-batch-update-split-job.md》在“### 2. 写入侧”明确写了 <code>remark   = String.valueOf(orgId)</code>，且在“### 1. 表结构：不动”里说明 <code>remark</code> 保存“裸的 orgId 字符串”。</p><p>当前实现却把 <code>orgId == null</code> 的场景写成 <code>null</code>，没有按文档约定落成 <code>String.valueOf(orgId)</code> 的结果。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>当调用方传入 <code>orgId</code> 为 <code>null</code> 时，这批记录的 <code>remark</code> 不再符合方案文档定义的落库格式，后续人工排查将看不到文档约定的统一占位值，实际落库结果与本次设计说明不一致。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>将 <code>saveLabelBatchUpdateToPushLog</code> 中 <code>remark</code> 的赋值改为严格遵循方案文档约定的 <code>String.valueOf(orgId)</code>，或同步更新方案文档把 <code>orgId == null</code> 的落库规则写清楚并与代码保持一致。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>补一条写入侧测试：构造 <code>orgId == null</code> 的 <code>saveLabelBatchUpdateToPushLog</code> 调用，校验保存出的 <code>RpsLabelBatchUpdatePushLog.remark</code> 是否与方案文档约定一致；</p><p>再对比 <code>orgId == 1L</code> 的场景，确认两种输入都按同一规则落库。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">103</span>                .businessType(PushLogTypeEnum.RPS_LABEL_BATCH_UPDATE.getBusinessType().name())</span><span class="code-row"><span class="code-ln">104</span>                .pushCode(Boolean.TRUE.equals(rpsBatchUpdateLabelDto.getEnableShipment())</span><span class="code-row"><span class="code-ln">105</span>                        ? SHIPMENT_PUSH_CODE : ASYNC_PUSH_CODE)</span><span class="code-row"><span class="code-ln">106</span>                .receiveProjectCode(PushLogTypeEnum.RPS_LABEL_BATCH_UPDATE.getReceiveProjectCode().name())</span><span class="code-row"><span class="code-ln">107</span>                .status(ProcessStatusEnum.PENDING)</span><span class="code-row code-row-target"><span class="code-ln">108</span>                .remark(orgId == <span class="code-keyword">null</span> ? <span class="code-keyword">null</span> : String.valueOf(orgId))</span><span class="code-row code-row-target"><span class="code-ln">109</span>                .build();</span><span class="code-row"><span class="code-ln">110</span>        rpsLabelBatchUpdatePushLogDao.save(pushLog);</span><span class="code-row"><span class="code-ln">111</span>    }</span><span class="code-row"><span class="code-ln">112</span></span><span class="code-row"><span class="code-ln">113</span>    <span class="code-annotation">@Override</span></span><span class="code-row"><span class="code-ln">114</span>    <span class="code-keyword">public</span> List&lt;RpsLabelBatchUpdatePushLog&gt; fetchPendingBatchUpdate(String pushCode, Integer fetchSize) {</span></code></pre></details></div><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L130-131</span><span class="finding-cat">数据一致性</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>LabelBatchUpdateServiceImpl.processPushLog</code> 在捕获异常后，无条件把当前记录重新写回 <code>ProcessStatusEnum.PENDING</code> 并累加 <code>try_times</code>，但更新 SQL 只按 <code>id</code> 命中，没有附带当前状态条件，也没有校验该记录是否已被其他并发执行实例更新为 <code>SUCCESS</code>。</p><p>在本次改动的并发模型下，另一条线程可能已经成功处理并通过 <code>markPushLogSuccess</code> 把同一条记录置为 <code>SUCCESS</code>，随后这个失败线程仍会把它覆盖回 <code>PENDING</code>。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>同一条已经成功处理的 <code>pl_rps_label_batch_update</code> 记录会被失败分支回滚成 <code>PENDING</code>，导致下一轮 job 再次重捞并重复处理，形成“成功后又变回待处理”的状态倒退。</p><p>该问题会直接放大重复推送、重复创建 shipment 和状态错乱风险。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>把 <code>updateStatusAndInfoAndTryTimesById</code> 改成带状态前置条件的 compare-and-set 更新，例如仅允许从领取态或 <code>PENDING</code> 的特定版本更新；</p><p>如果继续沿用当前表结构，至少在 SQL 中增加 <code>and status = ?</code> 条件，并让 <code>LabelBatchUpdateJobExecutor.execute</code> 先把记录原子领取到独占状态后再处理，避免成功状态被失败线程覆盖。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>构造同一条 <code>RpsLabelBatchUpdatePushLog</code> 被两个执行实例同时处理：第一个执行实例让 <code>processPushLog</code> 成功并调用 <code>markPushLogSuccess</code>，第二个执行实例稍后抛出异常进入 <code>updateStatusAndInfoAndTryTimesById</code>。</p><p>验证当前实现下数据库最终状态会从 <code>SUCCESS</code> 被覆盖回 <code>PENDING</code>；修复后应保持 <code>SUCCESS</code> 不被失败分支回退。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">125</span>            executeLabelBatchUpdate(JSONUtil.toBean(pushLog.getBusinessData(), RpsBatchUpdateLabelDto.<span class="code-keyword">class</span>));</span><span class="code-row"><span class="code-ln">126</span>            <span class="code-keyword">return</span> <span class="code-keyword">true</span>;</span><span class="code-row"><span class="code-ln">127</span>        } <span class="code-keyword">catch</span> (Exception e) {</span><span class="code-row"><span class="code-ln">128</span>            log.error(<span class="code-string">"label batch update push log process error, id:{}, businessNo:{}"</span>,</span><span class="code-row"><span class="code-ln">129</span>                    pushLog.getId(), pushLog.getBusinessNo(), e);</span><span class="code-row code-row-target"><span class="code-ln">130</span>            rpsLabelBatchUpdatePushLogDao.updateStatusAndInfoAndTryTimesById(ProcessStatusEnum.PENDING.name(),</span><span class="code-row code-row-target"><span class="code-ln">131</span>                    StringUtils.left(e.getMessage(), PROCESS_INFO_MAX_LENGTH), <span class="code-keyword">new</span> Date(), pushLog.getId());</span><span class="code-row"><span class="code-ln">132</span>            <span class="code-keyword">return</span> <span class="code-keyword">false</span>;</span><span class="code-row"><span class="code-ln">133</span>        }</span><span class="code-row"><span class="code-ln">134</span>    }</span><span class="code-row"><span class="code-ln">135</span></span><span class="code-row"><span class="code-ln">136</span>    <span class="code-annotation">@Override</span></span></code></pre></details></div></div></details></div></div></details><details class="action-group action-group-pm_decision" style="margin-bottom:14px;border:1px solid #b7791f;border-radius:8px;"><summary style="cursor:pointer;font-weight:700;font-size:15px;color:#b7791f;padding:8px 12px;list-style:none;">&#128993; 待确认 / 需人工拍板 &middot; 1 个问题</summary><div style="padding:0 12px 8px;"><div class="findings-list-wrap"><details class="file-group findings-file-group" open="open" id="fg-d5d70e61d511" data-file-path="rps-job/src/main/java/io/speedx/rps/job/handler/LabelBatchUpdateJobExecutor.java" data-short-name="LabelBatchUpdateJobExecutor.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">rps-job/src/main/java/io/speedx/rps/job/handler/LabelBatchUpdateJobExecutor.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L45</span><span class="finding-cat">并发安全</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>LabelBatchUpdateJobExecutor.execute</code> 在第 45 行先通过 <code>labelBatchUpdateService.fetchPendingBatchUpdate(pushCode, jobParam.getFetchSize())</code> 查询 <code>PENDING</code> 记录，但本次改动明确没有在捞取后把这些记录更新为占用态，后续真正的状态更新要等到 <code>processSlice</code> 结束后才批量调用 <code>markPushLogSuccess</code>。</p><p>这意味着两个 <code>RpsLabelBatchUpdateAsyncJob</code> 实例、两个 <code>RpsLabelBatchUpdateShipmentJob</code> 实例，或同一 job 被重复触发时，都可能同时捞到同一批 <code>pl_rps_label_batch_update</code> 记录并并发执行 <code>processPushLog</code>。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>一旦 XXL-Job 的“单机串行配置”失效、误配为并行、发生重试重入，或者多节点同时执行同一个 job，同一条 <code>businessData</code> 会被重复处理，可能重复调用 <code>executeLabelBatchUpdate</code>，进而重复更新标签、重复创建 shipment 或重复向下游推送，属于典型的并发竞态和幂等缺失风险。</p><p><strong>⚠️ 需求核对提示：</strong> 该 finding 指出的具体文案/取值（<code>pl_rps_label_batch_update</code>）已逐字出现在本次需求原文中，可能是需求明确要求的行为，而非开发自行引入的缺陷。</p><p>是否需要调整须与需求方确认，不建议直接按「立即修代码」处理。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>在 <code>fetchPendingBatchUpdate</code> 对应的领取流程里增加数据库级互斥，避免仅依赖调度配置。可执行做法是：先把待处理记录原子更新为独占状态，再只处理本次成功占用的记录；</p><p>或者使用 <code>select ... for update skip locked</code> / 带条件的 <code>update ... where status = &#x27;PENDING&#x27; limit ...</code> 领取批次。</p><p>至少要让 <code>LabelBatchUpdateJobExecutor.execute</code> 在进入 <code>processSlice</code> 前拿到“已被当前执行实例独占”的记录集合。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>准备一条 <code>pl_rps_label_batch_update</code> 中 <code>status=PENDING</code> 的记录，使用两个并发线程同时调用 <code>LabelBatchUpdateJobExecutor.execute(LabelBatchUpdateService.ASYNC_PUSH_CODE, jobParam)</code>，并让 <code>labelBatchUpdateService.processPushLog</code> 内部增加可观察副作用。</p><p>验证当前实现下同一条记录会被两个执行实例同时处理；修复后应只有一个执行实例能领取并处理该记录。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">40</span>    <span class="code-annotation">@Qualifier</span>(<span class="code-string">"labelBatchUpdatePool"</span>)</span><span class="code-row"><span class="code-ln">41</span>    <span class="code-keyword">private</span> ExecutorService labelBatchUpdatePool;</span><span class="code-row"><span class="code-ln">42</span></span><span class="code-row"><span class="code-ln">43</span>    <span class="code-keyword">public</span> <span class="code-keyword">void</span> execute(String pushCode, JobParamDto jobParam) <span class="code-keyword">throws</span> Exception {</span><span class="code-row"><span class="code-ln">44</span>        List&lt;RpsLabelBatchUpdatePushLog&gt; pushLogs =</span><span class="code-row code-row-target"><span class="code-ln">45</span>                labelBatchUpdateService.fetchPendingBatchUpdate(pushCode, jobParam.getFetchSize());</span><span class="code-row"><span class="code-ln">46</span>        <span class="code-keyword">if</span> (CollectionUtil.isEmpty(pushLogs)) {</span><span class="code-row"><span class="code-ln">47</span>            <span class="code-keyword">return</span>;</span><span class="code-row"><span class="code-ln">48</span>        }</span><span class="code-row"><span class="code-ln">49</span></span><span class="code-row"><span class="code-ln">50</span>        Integer shardQty = jobParam.getShardQty();</span></code></pre></details></div></div></details></div></div></details><details class="action-group action-group-optional" style="margin-bottom:14px;border:1px solid #2f855a;border-radius:8px;"><summary style="cursor:pointer;font-weight:700;font-size:15px;color:#2f855a;padding:8px 12px;list-style:none;">&#128994; 可选优化 &middot; 3 个问题</summary><div style="padding:0 12px 8px;"><div class="findings-list-wrap"><details class="file-group findings-file-group" id="fg-1b282499789f" data-file-path="rps-job/src/main/java/io/speedx/rps/job/config/ThreadPoolConfig.java" data-short-name="ThreadPoolConfig.java" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">rps-job/src/main/java/io/speedx/rps/job/config/ThreadPoolConfig.java</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L73</span><span class="finding-cat">性能隐患</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 TX-006 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 TX-006</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [TX-006] 线程池未显式指定拒绝策略 命中了这行代码：<code>return new ThreadPoolExecutor(</code>。这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「线程池未显式指定拒绝策略」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">68</span>    <span class="code-annotation">@Bean</span>(<span class="code-string">"labelBatchUpdatePool"</span>)</span><span class="code-row"><span class="code-ln">69</span>    <span class="code-keyword">public</span> ExecutorService labelBatchUpdatePool(){</span><span class="code-row"><span class="code-ln">70</span>        log.info(<span class="code-string">"coreSize:{},maxSize:{},keepAliveTime:{},queueSize:{},threadName:{},labelBatchUpdatePool init"</span>,</span><span class="code-row"><span class="code-ln">71</span>                labelBatchUpdateCoreSize, labelBatchUpdateMaxSize, labelBatchUpdateKeepAliveTime,</span><span class="code-row"><span class="code-ln">72</span>                labelBatchUpdateQueueSize, labelBatchUpdateThreadName);</span><span class="code-row code-row-target"><span class="code-ln">73</span>        <span class="code-keyword">return</span> <span class="code-keyword">new</span> ThreadPoolExecutor(</span><span class="code-row"><span class="code-ln">74</span>                labelBatchUpdateCoreSize,</span><span class="code-row"><span class="code-ln">75</span>                labelBatchUpdateMaxSize,</span><span class="code-row"><span class="code-ln">76</span>                labelBatchUpdateKeepAliveTime,</span><span class="code-row"><span class="code-ln">77</span>                TimeUnit.MINUTES,</span><span class="code-row"><span class="code-ln">78</span>                <span class="code-keyword">new</span> LinkedBlockingDeque&lt;&gt;(labelBatchUpdateQueueSize),</span></code></pre></details></div></div></details><details class="file-group findings-file-group" id="fg-d5d70e61d511" data-file-path="rps-job/src/main/java/io/speedx/rps/job/handler/LabelBatchUpdateJobExecutor.java" data-short-name="LabelBatchUpdateJobExecutor.java" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">rps-job/src/main/java/io/speedx/rps/job/handler/LabelBatchUpdateJobExecutor.java</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L81</span><span class="finding-cat">日志规范</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 LOG-002 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 LOG-002</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [LOG-002] 循环体内直接打印INFO/WARN日志 命中了这行代码：<code>for (RpsLabelBatchUpdatePushLog pushLog : slice) {</code>。</p><p>这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「循环体内直接打印INFO/WARN日志」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">76</span>     */</span><span class="code-row"><span class="code-ln">77</span>    <span class="code-keyword">private</span> <span class="code-keyword">void</span> processSlice(List&lt;RpsLabelBatchUpdatePushLog&gt; slice) {</span><span class="code-row"><span class="code-ln">78</span>        List&lt;Long&gt; successIds = <span class="code-keyword">new</span> ArrayList&lt;&gt;();</span><span class="code-row"><span class="code-ln">79</span>        int processed = <span class="code-number">0</span>;</span><span class="code-row"><span class="code-ln">80</span>        <span class="code-keyword">try</span> {</span><span class="code-row code-row-target"><span class="code-ln">81</span>            <span class="code-keyword">for</span> (RpsLabelBatchUpdatePushLog pushLog : slice) {</span><span class="code-row"><span class="code-ln">82</span>                <span class="code-keyword">if</span> (Thread.currentThread().isInterrupted()) {</span><span class="code-row"><span class="code-ln">83</span>                    log.warn(<span class="code-string">"label batch update slice interrupted, processed:{}, total:{}"</span>, processed, slice.size());</span><span class="code-row"><span class="code-ln">84</span>                    break;</span><span class="code-row"><span class="code-ln">85</span>                }</span><span class="code-row"><span class="code-ln">86</span>                processed++;</span></code></pre></details></div></div></details><details class="file-group findings-file-group" id="fg-b5035cca40f7" data-file-path="rps-service/src/main/java/io/speedx/rps/service/dao/RpsLabelBatchUpdatePushLogDao.java" data-short-name="RpsLabelBatchUpdatePushLogDao.java" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">rps-service/src/main/java/io/speedx/rps/service/dao/RpsLabelBatchUpdatePushLogDao.java</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">2 处影响（1 个根因）</span></summary><div class="file-group-body"><div class="finding-card cluster-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-cat">并发安全</span><span class="cluster-badge">根因 · 2 处影响</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 TX-002 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 TX-002</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [TX-002] @Transactional未指定rollbackFor 命中了这行代码：<code>@Transactional</code>。这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「@Transactional未指定rollbackFor」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">16</span>    <span class="code-annotation">@Query</span>(value = <span class="code-string">"select * from pl_rps_label_batch_update where push_code = ?1 and status = ?2 "</span></span><span class="code-row"><span class="code-ln">17</span>            + <span class="code-string">"and try_times &lt; ?3 limit ?4"</span>, nativeQuery = <span class="code-keyword">true</span>)</span><span class="code-row"><span class="code-ln">18</span>    List&lt;RpsLabelBatchUpdatePushLog&gt; findPending(String pushCode, String status, Integer maxTryTimes, Integer fetchSize);</span><span class="code-row"><span class="code-ln">19</span></span><span class="code-row"><span class="code-ln">20</span>    <span class="code-annotation">@Modifying</span></span><span class="code-row code-row-target"><span class="code-ln">21</span>    <span class="code-annotation">@Transactional</span></span><span class="code-row"><span class="code-ln">22</span>    <span class="code-annotation">@Query</span>(value = <span class="code-string">"update pl_rps_label_batch_update set status = ?1, updated_at = ?2 where id in ?3"</span>, nativeQuery = <span class="code-keyword">true</span>)</span><span class="code-row"><span class="code-ln">23</span>    int updateStatusByIds(String status, Date updatedAt, List&lt;Long&gt; ids);</span><span class="code-row"><span class="code-ln">24</span></span><span class="code-row"><span class="code-ln">25</span>    <span class="code-annotation">@Modifying</span></span><span class="code-row"><span class="code-ln">26</span>    <span class="code-annotation">@Transactional</span></span></code></pre></details><details class="cluster-locations"><summary>展开查看全部 2 处影响位置</summary><table class="loc-table"><thead><tr><th>文件</th><th>行</th><th>问题摘要</th></tr></thead><tbody><tr><td class="loc-file">rps-service/src/main/java/io/speedx/rps/service/dao/RpsLabelBatchUpdatePushLogDao.java</td><td class="loc-line">21</td><td class="loc-snippet">固定规则 [TX-002] @Transactional未指定rollbackFor 命中了这行代码：`@Transactional`。</td></tr><tr><td class="loc-file">rps-service/src/main/java/io/speedx/rps/service/dao/RpsLabelBatchUpdatePushLogDao.java</td><td class="loc-line">26</td><td class="loc-snippet">固定规则 [TX-002] @Transactional未指定rollbackFor 命中了这行代码：`@Transactional`。</td></tr></tbody></table></details></div></div></details></div></div></details>
+    </div>
+
+    <div id="panel-dp" class="report-panel" role="tabpanel" aria-labelledby="tab-dp">
+      <div class="dp-shell"><div class="dp-header">
+  <h1>数据权限分析报告</h1>
+  <p class="subtitle">AI Code Review · 接口级别数据权限审计</p>
+  <div class="meta-row"><div class="meta-item">项目 <strong>rps</strong></div><div class="meta-item">涉及接口路径（自动汇总） <strong>服务 rps · 本次无可聚合路径的权限类接口（请检查 path_pattern）</strong></div><div class="meta-item">报告日期 <strong>2026-11-05 17:56:24</strong></div><div class="meta-item">涉及角色标签 <strong>见 role_data / findings</strong></div></div>
+</div>
+
+<div class="dp-body">
+
+  <div class="dp-stats">
+    
+  <div class="summary-grid">
+    <div class="summary-card critical"><div class="count">0</div><div class="label">Critical</div></div>
+    <div class="summary-card high"><div class="count">0</div><div class="label">Major</div></div>
+    <div class="summary-card medium"><div class="count">0</div><div class="label">Minor</div></div>
+    <div class="summary-card info"><div class="count">0</div><div class="label">Info</div></div>
+  </div>
+  <p style="margin:8px 0 0;font-size:.8rem;color:#718096;">Total 0 条权限类问题 · 涉及 0 个接口（已解析路径）</p>
+
+  </div>
+
+  <div class="dp-section">
+    <div class="dp-section-title">角色权限定义</div>
+    <div class="dp-roles"><div class="role-box"><div class="role-icon">&#128100;</div><div class="role-info"><h3>项目级环境事实（审查时须知）</h3><div class="role-md">- <strong>driver</strong>：司机；仅自身用户与当前路线/包裹相关数据。<br/>
+- <strong>driver-leader / fleet leader</strong>：车队队长；仅本 <code>fleetId</code> 范围内数据。<br/>
+- <strong>operator / dispatcher</strong>：运营/调度；按 <code>facilityCode</code>、DSP 等约定收敛列表与详情。<br/>
+- <strong>admin</strong>：管理员；可访问全量（若代码中另有细分需写明）。<br/>
+<br/>
+<br/>
+- 管理端接口通常需 <code>@PreAuthorize</code> 或项目统一 <code>AuthUtil</code> 校验。<br/>
+- 列表/导出须注入当前用户的数据范围（如 <code>fleetId</code>、<code>dspId</code>），禁止仅靠前端传参筛选。<br/>
+<br/>
+<br/>
+- 运行时配置以 Nacos 配置中心为准，本地 application.yml 的开关值不代表生产实际值。<br/>
+- 各服务大量使用自带池化的 starter（IBM MQ / Druid / Lettuce / Kafka）；自定义 @Primary 基础设施 Bean 会使 starter 自动装配让位，池化/缓存包装随之失效。<br/>
+- 海关链路（ACAS/AMS/ABI）存在 MAWB→数千小包的批量放大特征（一次 MAWB 级操作可触发 4000+ 次逐条发送），发送路径上任何 per-call 开销都会被放大三个数量级。</div></div></div></div>
+  </div>
+
+  <div class="dp-gate"></div>
+
+  <div class="dp-section">
+    <div class="dp-section-title">接口权限审计总览</div>
+    <div class="empty">暂无可解析路径的「权限与访问控制」条目；请检查 path_pattern 与 HTTP 清单。</div>
+  </div>
+
+  
+
+  <div class="dp-section">
+    <div class="dp-section-title">端点详情</div>
+    <div class="dp-folds"></div>
+  </div>
+
+  
+
+  
+
+  <div class="dp-footer"><p>本报告由 AI Code Review 生成（data_permission 模式）。权限类 finding 涉及文件：<strong>（无）</strong></p><p style="margin-top:4px;">生成时间：2026-11-05 17:56:24 · 项目：rps</p></div>
+
+</div>
+</div>
+    </div>
+  </div>
+  <script>
+    function escHtml(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function formatSummaryInner(rawBlock) {
+      var lines = rawBlock.split(/\r?\n/);
+      var html = '';
+      var listType = null;
+
+      function closeList() {
+        if (listType) { html += '</' + listType + '>'; listType = null; }
+      }
+
+      function renderInline(text) {
+        var st = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        st = st.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        st = st.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+        return st;
+      }
+
+      lines.forEach(function(line) {
+        var trimmed = line.trim();
+        if (!trimmed) { closeList(); return; }
+
+        if (/^#{1,3}\s+/.test(trimmed)) {
+          closeList();
+          var title = trimmed.replace(/^#{1,3}\s+/, '');
+          html += '<p class="summary-section-title">' + renderInline(title) + '</p>';
+          return;
+        }
+
+        if (/^\*\*[^*]+\*\*[：:。]?$/.test(trimmed)) {
+          closeList();
+          var title2 = trimmed.replace(/^\*\*|\*\*[：:。]?$/g, '');
+          html += '<p class="summary-section-title">' + renderInline(title2) + '</p>';
+          return;
+        }
+
+        if (/^[【「『].*[】」』]$/.test(trimmed) ||
+            (trimmed.length <= 30 && /[：:]$/.test(trimmed) && !/^\d/.test(trimmed))) {
+          closeList();
+          var title3 = trimmed.replace(/^[【「『]|[】」』]$/g, '').replace(/[：:]$/, '');
+          html += '<p class="summary-section-title">' + renderInline(title3) + '</p>';
+          return;
+        }
+
+        if (/^[-*]\s+/.test(trimmed)) {
+          if (listType !== 'ul') { closeList(); html += '<ul>'; listType = 'ul'; }
+          var content = trimmed.replace(/^[-*]\s+/, '');
+          html += '<li>' + renderInline(content) + '</li>';
+          return;
+        }
+
+        if (/^[\(（]?\d+[\)）.\、]\s*/.test(trimmed)) {
+          if (listType !== 'ol') { closeList(); html += '<ol>'; listType = 'ol'; }
+          var content2 = trimmed.replace(/^[\(（]?\d+[\)）.\、]\s*/, '');
+          html += '<li>' + renderInline(content2) + '</li>';
+          return;
+        }
+
+        closeList();
+        if (trimmed.length > 280 && /[。！？][\s\u3000]/.test(trimmed)) {
+          var chunks = trimmed.split(/(?<=[。！？])[\s\u3000]+/).filter(function (c) { return c.trim(); });
+          if (chunks.length > 1) {
+            chunks.forEach(function (c) {
+              html += '<p>' + renderInline(c.trim()) + '</p>';
+            });
+            return;
+          }
+        }
+        html += '<p>' + renderInline(trimmed) + '</p>';
+      });
+
+      closeList();
+      return html;
+    }
+
+    function formatSummary() {
+      var el = document.getElementById('summary-text');
+      if (!el) return;
+      if (el.classList.contains('summary-preformatted')) return;
+      var raw = el.textContent || '';
+      raw = raw.replace(/\s+(?=本分片)/g, '\n---SHARD---\n');
+      var shards = raw.split(/\n---SHARD---\n/).map(function(s) { return s.trim(); }).filter(Boolean);
+      if (!shards.length) shards = [raw.trim()].filter(Boolean);
+
+      if (shards.length <= 1) {
+        var inner = formatSummaryInner(shards[0] || '');
+        if (inner) el.innerHTML = inner;
+        return;
+      }
+
+      var htmlShards = [];
+      for (var i = 0; i < shards.length; i++) {
+        var blockHtml = formatSummaryInner(shards[i]);
+        if (blockHtml) htmlShards.push('<div class="summary-shard">' + blockHtml + '</div>');
+      }
+      var head = htmlShards.slice(0, 3).join('');
+      var tail = htmlShards.slice(3).join('');
+      var moreBtn = '';
+      if (tail) {
+        moreBtn = '<button type="button" class="summary-toggle" id="summary-toggle-btn" aria-expanded="false">展开全部分片结论 (' + (htmlShards.length - 3) + ')</button>';
+      }
+      el.innerHTML = '<div class="summary-shards-wrap">' + head +
+        (tail ? '<div class="summary-more" id="summary-more-block" hidden>' + tail + '</div>' : '') +
+        moreBtn + '</div>';
+
+      var btn = document.getElementById('summary-toggle-btn');
+      var more = document.getElementById('summary-more-block');
+      if (btn && more) {
+        btn.addEventListener('click', function() {
+          var ex = btn.getAttribute('aria-expanded') === 'true';
+          more.hidden = ex;
+          btn.setAttribute('aria-expanded', ex ? 'false' : 'true');
+          btn.textContent = ex
+            ? ('展开全部分片结论 (' + (htmlShards.length - 3) + ')')
+            : '收起分片结论';
+        });
+      }
+    }
+
+    function switchReportTab(which) {
+      var panels = ['panel-general', 'panel-dp'];
+      var tabs = ['tab-general', 'tab-dp'];
+      var activePanel = which === 'dp' ? 'panel-dp' : 'panel-general';
+      var activeTab = which === 'dp' ? 'tab-dp' : 'tab-general';
+      panels.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) { el.classList.toggle('is-active', id === activePanel); }
+      });
+      tabs.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) { el.setAttribute('aria-selected', id === activeTab ? 'true' : 'false'); }
+      });
+    }
+
+    var activeFilter = null;
+
+    function getSearchQuery() {
+      var inp = document.getElementById('findings-search');
+      return inp ? String(inp.value || '').trim().toLowerCase() : '';
+    }
+
+    function applyFindingsFilter() {
+      var hint = document.getElementById('filter-hint');
+      var hintLabel = document.getElementById('filter-hint-label');
+
+      if (activeFilter) {
+        hintLabel.textContent = activeFilter.toUpperCase();
+        hint.style.display = 'block';
+      } else {
+        hint.style.display = 'none';
+      }
+
+      var q = getSearchQuery();
+
+      document.querySelectorAll('.findings-file-group').forEach(function(group) {
+        var visible = 0;
+        group.querySelectorAll('.finding-card').forEach(function(card) {
+          var sev = card.getAttribute('data-severity') || 'info';
+          var sevOk = !activeFilter || sev === activeFilter;
+          var textOk = !q || card.textContent.toLowerCase().indexOf(q) !== -1;
+          var show = sevOk && textOk;
+          card.style.display = show ? '' : 'none';
+          if (show) visible++;
+        });
+        group.style.display = visible === 0 ? 'none' : '';
+        // 任务115续作：finding 现在可能嵌套在 <details class="action-group"> 里，
+        // 该祖先关闭时子元素无论 style.display 如何都不会渲染，命中过滤结果时须一并展开。
+        if (visible > 0) {
+          var actionGroup = group.closest('.action-group');
+          if (actionGroup) actionGroup.open = true;
+        }
+      });
+
+      document.querySelectorAll('.file-block').forEach(function(block) {
+        if (block.classList.contains('findings-file-group')) return;
+        var rows = block.querySelectorAll('tbody tr');
+        if (!rows.length) return;
+        var vis = 0;
+        rows.forEach(function(row) {
+          if (!activeFilter || row.querySelector('.chip.' + activeFilter)) {
+            row.style.display = '';
+            vis++;
+          } else {
+            row.style.display = 'none';
+          }
+        });
+        block.style.display = vis === 0 ? 'none' : '';
+      });
+
+      // 顶部 Critical/Major 计数把「牵连影响」的 RISK/NEEDS_HUMAN 也并了进去
+      // （用户拍板口径），但这些卡片不是 .finding-card，之前点 Critical 只会
+      // 过滤上面两段、对牵连影响毫无反应，数字和实际看到的东西对不上
+      // （build TEST_pus-exchange-api/222 反馈）。按同一套口径把牵连影响的卡
+      // 也纳入过滤：RISK 对应 critical，NEEDS_HUMAN 对应 major；筛 minor/info
+      // 时牵连影响没有对应桶，全部隐藏是符合口径的。
+      var impactLevelMap = { critical: 'RISK', major: 'NEEDS_HUMAN' };
+      document.querySelectorAll('.impact-card[data-impact-level]').forEach(function(card) {
+        var level = card.getAttribute('data-impact-level');
+        var show = !activeFilter || impactLevelMap[activeFilter] === level;
+        card.style.display = show ? '' : 'none';
+        if (show && activeFilter) {
+          var d = card.closest('details');
+          if (d) d.open = true;
+        }
+      });
+    }
+
+    function filterBySeverity(chip) {
+      var filter = chip.dataset.filter;
+      if (activeFilter === filter) {
+        clearFilter();
+        return;
+      }
+      activeFilter = filter;
+      document.querySelectorAll('.filter-chip').forEach(function(c) {
+        if (c.dataset.filter === filter) {
+          c.classList.add('active');
+          c.classList.remove('dimmed');
+        } else {
+          c.classList.remove('active');
+          c.classList.add('dimmed');
+        }
+      });
+      applyFindingsFilter();
+    }
+
+    function clearFilter() {
+      activeFilter = null;
+      document.querySelectorAll('.filter-chip').forEach(function(c) {
+        c.classList.remove('active', 'dimmed');
+      });
+      applyFindingsFilter();
+    }
+
+    function initFindingsToolbar() {
+      var tb = document.getElementById('findings-toolbar');
+      if (!tb) return;
+      var groups = document.querySelectorAll('#panel-general .findings-file-group');
+      tb.style.display = groups.length ? '' : 'none';
+    }
+
+    (function () {
+      var chips = document.querySelectorAll('table .chip');
+      for (var i = 0; i < chips.length; i++) {
+        chips[i].textContent = chips[i].textContent.toUpperCase();
+      }
+
+      formatSummary();
+
+      initFindingsToolbar();
+
+      var ex = document.getElementById('expand-all-files');
+      var cl = document.getElementById('collapse-all-files');
+      if (ex) ex.addEventListener('click', function() {
+        document.querySelectorAll('.findings-file-group').forEach(function(d) { d.open = true; });
+        document.querySelectorAll('.action-group').forEach(function(d) { d.open = true; });
+      });
+      if (cl) cl.addEventListener('click', function() {
+        document.querySelectorAll('.findings-file-group').forEach(function(d) { d.open = false; });
+        document.querySelectorAll('.action-group').forEach(function(d) { d.open = false; });
+      });
+
+      var search = document.getElementById('findings-search');
+      if (search) {
+        search.addEventListener('input', function() { applyFindingsFilter(); });
+      }
+    })();
+
+    // Chart.js initialization
+    function renderCategoryChart(categoryData) {
+      var ctx = document.getElementById('categoryChart');
+      if (!ctx) return;
+      ctx = ctx.getContext('2d');
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: Object.keys(categoryData),
+          datasets: [{
+            label: '问题数量',
+            data: Object.values(categoryData),
+            // 跟报告主色（teal 系）协调的低饱和度调色板，替换 Chart.js 默认的
+            // 高饱和度七彩配色（用户反馈报告"不好看"，实测截图确认默认色彩
+            // 花哨刺眼、跟品牌色不搭）；18 色覆盖 VALID_CATEGORIES 全量枚举，
+            // 保证再多分类同时出现也不会因为数组不够长而退化成无色
+            backgroundColor: [
+              '#0f766e', '#b5651d', '#4a6fa5', '#8e6c96',
+              '#6b8f71', '#b58a3d', '#b56576', '#5c7a89',
+              '#3d8a8a', '#a3703f', '#5f7a9d', '#7a6b9d',
+              '#7fa17f', '#c29b5c', '#9d6b7a', '#6b8a9d',
+              '#8a9d6b', '#9d7a5f'
+            ]
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: true } }
+        }
+      });
+    }
+
+    // 这个短列表只是一句话摘要，不值得把 markdown 代码块渲染进一个 <li> 里——
+    // 直接去掉标记符本身，露出裸文本即可（跟 _render_markdown_lite 的完整
+    // 渲染不同，这里要的是"别露出字面 ** 和 ``` "，不是"渲染出富文本"）
+    function stripMdLite(text) {
+      return (text || '')
+        .replace(/```[a-zA-Z]*\n?/g, '')
+        .replace(/```/g, '')
+        .replace(/\*\*([^*]+)\*\*/g, '$1')
+        .replace(/`([^`]+)`/g, '$1');
+    }
+
+    function renderTopCriticals(topCriticals) {
+      var list = document.getElementById('top-criticals-list');
+      var box = document.getElementById('top-criticals');
+      if (!list) return;
+      // 一条都没有时整块收起，不留「标题 + 暂无 Critical 问题」空框占首屏
+      if (!topCriticals || !topCriticals.length) {
+        if (box) box.hidden = true;
+        list.innerHTML = '';
+        return;
+      }
+      if (box) box.hidden = false;
+      list.innerHTML = topCriticals.map(function(c) {
+        var desc = stripMdLite(c.description || '');
+        if (desc.length > 120) desc = desc.substring(0, 120) + '…';
+        // source 只有牵连影响条目才带：不标来源的话，读者会把"改动波及到的
+        // 其他调用点"当成"这段代码本身写错了"，两者要采取的动作不一样
+        var tag = c.source
+          ? '<span class="tc-source">' + escHtml(c.source) + '</span>'
+          : '';
+        return '<li>' + tag + '<strong>' + escHtml(c.file + (c.line ? ':' + c.line : '')) +
+               '</strong><span class="tc-desc">' + escHtml(desc) + '</span></li>';
+      }).join('');
+    }
+
+    // Export stubs (implemented in Task 5)
+    function exportJira() { alert('导出为 Jira 功能待实现'); }
+    function exportExcel() { alert('导出为 Excel 功能待实现'); }
+    function exportCsv() { alert('导出为 CSV 功能待实现'); }
+
+    // Inject summary data (Task 5)
+    if (typeof renderCategoryChart === 'function') renderCategoryChart({"\u5e76\u53d1\u5b89\u5168": 2, "\u65e5\u5fd7\u89c4\u8303": 1, "\u9700\u6c42\u77db\u76fe": 1, "\u6570\u636e\u4e00\u81f4\u6027": 1, "\u6027\u80fd\u9690\u60a3": 1, "\u9700\u6c42\u672a\u5b9e\u73b0": 1});
+if (typeof renderTopCriticals === 'function') renderTopCriticals([{"file": "docs/plan-label-batch-update-split-job.md", "line": "1-249", "severity": "critical", "category": "需求未实现", "description": "原因：MR 描述和方案文档都把上线切换步骤写成验收内容：旧任务必须先停掉，再启用两个新任务，并把遗留 `PROCESSING` 记录重置为 `PENDING`。但本次 diff 只新增了两个新 Job 和新执行逻辑，没有任何代码、脚本或配置变更去停用旧任务，也没有提供重置 `PROCESSING` 记录的实现证据。影响：如果按当前改动直接上线，旧 `CommonPushLogJob` 仍可能继续消费旧 `push_code` 数据，而历史 `PROCESSING` 记录也不会被自动恢复，导致切换步骤依赖人工额外操作；一旦漏做，可能出现旧新任务并存或遗留记录长期不再被处理。", "suggestion": "把上线切换要求落实为可执行交付物：至少补充停用旧任务和重置 `PROCESSING` 为 `PENDING` 的脚本/配置/操作清单，并在代码仓库中随本次改动一并提交。", "test_scenario": "准备一批 `pl_rps_label_batch_update` 数据，其中包含旧 `push_code` 的 `PENDING` 记录和若干 `PROCESSING` 记录；按仓库内提供的切换方案执行一次，验证旧任务不会再消费、两个新任务可正常接管，且原 `PROCESSING` 记录会被恢复为 `PENDING` 后重新处理。", "http_method": "", "path_pattern": "", "permission_tags": [], "java_entry_method": "", "expected_permission": "", "actual_behavior": "", "evidence_refs": [], "risk_label_zh": "", "evidence_quote": "+ * 记录不设置 PROCESSING 中间态，互斥完全依赖 XXL-Job 的单机串行配置；", "requirement_ref": "需求文档 docs/plan-label-batch-update-split-job.md · rollout order（以及 MR 描述中 “the old task must be stopped before the new ones are enabled, and leftover PROCESSING rows must be reset to PENDING”）", "unimplemented_feature": "提供旧任务停用与遗留 `PROCESSING` 记录重置为 `PENDING` 的可执行切换交付物", "deviation_rationale_check": "", "_line_unverified": true}]);
+
+    // Export dropdown toggle
+    (function() {
+      var btn = document.getElementById('export-btn');
+      var menu = document.getElementById('export-menu');
+      if (!btn || !menu) return;
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var shown = menu.style.display === 'block';
+        menu.style.display = shown ? 'none' : 'block';
+      });
+      document.addEventListener('click', function() {
+        menu.style.display = 'none';
+      });
+    })();
+  </script>
+</body>
+</html>
