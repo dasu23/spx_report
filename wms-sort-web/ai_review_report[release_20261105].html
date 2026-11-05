@@ -1,0 +1,2313 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Code Review Report</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      /* 重新设计（用户反馈"前端样式不好看"）：底色/正文/次要文字/边框/标题
+         此前全部带一层绿色调（跟 --accent 撞在一起，显得到处都是同一种绿），
+         改成中性板岩灰基调 + 一个teal 强调色，层次更清楚，也更耐看。 */
+      --bg: #f3f4f7;
+      --card: #ffffff;
+      --text: #1c2333;
+      --muted: #667085;
+      --border: #e3e6ec;
+      --heading: #0f1420;
+      --accent: #0f766e;
+      --accent-dark: #0b5850;
+      --accent-soft: #e6f4f2;
+
+      --critical-bg: #fdeceb;
+      --critical-text: #b3261e;
+      --critical-border: #f3b7b2;
+      --critical-strong: #d1291f;
+
+      --major-bg: #fdf1e3;
+      --major-text: #a85311;
+      --major-border: #f4d19d;
+      --major-strong: #d5720f;
+
+      --minor-bg: #fdf7e0;
+      --minor-text: #8a6208;
+      --minor-border: #f1e096;
+      --minor-strong: #a37d0a;
+
+      --info-bg: #eaf1fd;
+      --info-text: #23509c;
+      --info-border: #c0d6f6;
+      --info-strong: #2f66c9;
+
+      --safe-bg: #e8f6ee;
+      --safe-text: #1a7a4c;
+      --safe-border: #aee3c4;
+
+      --chip-bg: #eef0f5;
+      --code-bg: #10182b;
+      --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+      --shadow: 0 8px 24px rgba(16, 24, 40, 0.08);
+      --shadow-lg: 0 20px 44px rgba(16, 24, 40, 0.14);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans SC", Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .page {
+      max-width: 1180px;
+      margin: 28px auto 48px;
+      padding: 0 20px;
+    }
+
+    /* 重新设计：原来是一大片高饱和绿色渐变斜切块，视觉上很"闹"；
+       改成深板岩底色 + 顶部一条细 teal 强调线，克制一些，也更像专业
+       研发工具的报告头，而不是营销落地页banner。 */
+    .hero {
+      position: relative;
+      background: linear-gradient(165deg, #0b1220 0%, #121a2c 55%, #0e2422 100%);
+      color: #f4f7fb;
+      border-radius: 18px;
+      padding: 26px 28px 24px;
+      box-shadow: var(--shadow-lg);
+      margin-bottom: 18px;
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 3px;
+      background: linear-gradient(90deg, #14b8a6, #22d3ee 45%, #14b8a6 100%);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -60px;
+      top: -60px;
+      width: 220px;
+      height: 220px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(20, 184, 166, 0.22), transparent 70%);
+      pointer-events: none;
+    }
+
+    .hero h1 {
+      margin: 0 0 10px;
+      font-size: 24px;
+      font-weight: 700;
+      line-height: 1.25;
+      letter-spacing: 0.1px;
+    }
+
+    .hero-meta {
+      margin: 0;
+      font-size: 13.5px;
+      color: #aab4c8;
+      letter-spacing: 0.01em;
+    }
+
+    .summary {
+      background: var(--card);
+      padding: 16px 18px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      margin-bottom: 20px;
+    }
+
+    .summary h2,
+    .section-title {
+      margin: 0 0 12px;
+      font-size: 18px;
+      color: var(--heading);
+    }
+
+    .subsection-title {
+      margin-top: 28px;
+    }
+
+    .api-permission-block code {
+      font-size: 12px;
+      word-break: break-all;
+    }
+
+    .api-surface-sub {
+      margin: 18px 0 8px;
+      font-size: 16px;
+      color: var(--heading);
+    }
+
+    .inferred-hint {
+      margin: 0 0 12px;
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    /* 总体结论正文区 */
+    .summary-body {
+      margin: 0 0 16px;
+      font-size: 14px;
+      color: var(--text);
+      line-height: 1.75;
+    }
+
+    .summary-body p {
+      margin: 0 0 10px;
+    }
+
+    .summary-body p:last-child {
+      margin-bottom: 0;
+    }
+
+    .summary-body ol,
+    .summary-body ul {
+      margin: 4px 0 12px;
+      padding-left: 22px;
+    }
+
+    .summary-body ol li,
+    .summary-body ul li {
+      margin-bottom: 6px;
+      line-height: 1.65;
+    }
+
+    .summary-body .summary-section-title {
+      font-weight: 700;
+      color: var(--heading);
+      margin: 16px 0 6px;
+      font-size: 13px;
+      letter-spacing: 0.3px;
+      padding-left: 8px;
+      border-left: 3px solid var(--accent);
+    }
+
+    .summary-body .summary-section-title:first-child {
+      margin-top: 0;
+    }
+
+    .summary-body strong {
+      color: var(--heading);
+      font-weight: 700;
+    }
+
+    /* 严重级别筛选区 */
+    .filter-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-top: 6px;
+    }
+
+    .filter-label {
+      font-size: 12px;
+      color: var(--muted);
+      margin-right: 2px;
+    }
+
+    .chips-impact-note {
+      width: 100%;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 5px 13px;
+      border-radius: 9px;
+      font-size: 12.5px;
+      font-weight: 700;
+      background: var(--chip-bg);
+      color: var(--heading);
+      border: 1px solid transparent;
+    }
+
+    .filter-chip {
+      cursor: pointer;
+      transition: transform 0.12s, box-shadow 0.12s, opacity 0.12s;
+      user-select: none;
+    }
+
+    .filter-chip:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 3px 8px rgba(0,0,0,0.12);
+    }
+
+    .filter-chip.active {
+      box-shadow: 0 0 0 2.5px currentColor;
+      transform: translateY(-1px);
+    }
+
+    .filter-chip.dimmed {
+      opacity: 0.4;
+    }
+
+    .critical { background: var(--critical-bg); color: var(--critical-text); border-color: var(--critical-border); }
+    .major { background: var(--major-bg); color: var(--major-text); border-color: var(--major-border); }
+    .minor { background: var(--minor-bg); color: var(--minor-text); border-color: var(--minor-border); }
+    .info { background: var(--info-bg); color: var(--info-text); border-color: var(--info-border); }
+
+    /* 筛选状态提示条 */
+    #filter-hint {
+      display: none;
+      margin: -10px 0 14px;
+      padding: 8px 14px;
+      background: var(--accent-soft);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    #filter-hint .clear-filter {
+      margin-left: 8px;
+      color: var(--accent);
+      cursor: pointer;
+      font-weight: 600;
+      text-decoration: underline;
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    /* 工具栏：搜索 + 展开折叠 */
+    .findings-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+      padding: 12px 14px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+    }
+
+    .findings-search {
+      flex: 1 1 220px;
+      min-width: 0;
+      padding: 10px 14px;
+      font: inherit;
+      font-size: 14px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+      color: var(--text);
+    }
+
+    .findings-search:focus {
+      outline: none;
+      box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.35);
+      border-color: var(--accent);
+    }
+
+    .findings-toolbar-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .toolbar-btn {
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--chip-bg);
+      color: var(--heading);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .toolbar-btn:hover {
+      background: #e3e6ec;
+    }
+
+    /* 文件 TOC */
+    .findings-toc {
+      margin-bottom: 16px;
+      padding: 10px 12px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+    }
+
+    .toc-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 8px;
+      letter-spacing: 0.04em;
+    }
+
+    .toc-pill-wrap {
+      display: flex;
+      flex-wrap: nowrap;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .toc-pill {
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      text-decoration: none;
+      color: var(--heading);
+      background: var(--chip-bg);
+      border: 1px solid var(--border);
+      transition: transform 0.12s, box-shadow 0.12s;
+    }
+
+    .toc-pill:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+
+    .toc-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .toc-dot.sev-critical { background: var(--critical-text); }
+    .toc-dot.sev-major { background: var(--major-text); }
+    .toc-dot.sev-minor { background: var(--minor-text); }
+    .toc-dot.sev-info { background: var(--info-text); }
+
+    /* 总体结论：多分片 */
+    .summary-shards-wrap {
+      margin-bottom: 4px;
+    }
+
+    .summary-shard {
+      margin-bottom: 14px;
+      padding: 12px 14px;
+      background: #fafbfd;
+      border-radius: 10px;
+      border-left: 4px solid var(--accent);
+    }
+
+    .summary-shard:last-of-type {
+      margin-bottom: 10px;
+    }
+
+    .summary-more[hidden] {
+      display: none !important;
+    }
+
+    .summary-toggle {
+      display: inline-block;
+      margin-top: 4px;
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 16px;
+      border-radius: 8px;
+      border: 1px solid var(--accent);
+      background: #fff;
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .summary-toggle:hover {
+      background: #eef8f5;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details {
+      margin-top: 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0 12px 10px;
+      background: #fafbfc;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details summary {
+      cursor: pointer;
+      padding: 10px 0;
+      font-weight: 600;
+      color: var(--accent);
+      list-style: none;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .summary-raw-pre {
+      margin: 0;
+      max-height: 420px;
+      overflow: auto;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* 按文件 findings：可折叠组 + 卡片 */
+    .findings-list-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    details.file-group.findings-file-group {
+      margin: 0;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .file-group-summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 14px;
+      padding: 14px 16px;
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .file-group-summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .file-group-title {
+      display: inline-flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 14px;
+      color: var(--heading);
+      flex: 1 1 200px;
+      min-width: 0;
+    }
+
+    .file-path-text {
+      word-break: break-all;
+      line-height: 1.45;
+    }
+
+    .sev-indicator {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      margin-top: 4px;
+    }
+
+    .sev-indicator.sev-critical { background: var(--critical-text); box-shadow: 0 0 0 2px var(--critical-bg); }
+    .sev-indicator.sev-major { background: var(--major-text); box-shadow: 0 0 0 2px var(--major-bg); }
+    .sev-indicator.sev-minor { background: var(--minor-text); box-shadow: 0 0 0 2px var(--minor-bg); }
+    .sev-indicator.sev-info { background: var(--info-text); box-shadow: 0 0 0 2px var(--info-bg); }
+
+    .file-group-stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .stat-chip {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 999px;
+    }
+
+    .stat-chip.stat-critical { background: var(--critical-bg); color: var(--critical-text); }
+    .stat-chip.stat-major { background: var(--major-bg); color: var(--major-text); }
+    .stat-chip.stat-minor { background: var(--minor-bg); color: var(--minor-text); }
+    .stat-chip.stat-info { background: var(--info-bg); color: var(--info-text); }
+
+    .file-group-count {
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .file-group-body {
+      padding: 12px 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .finding-card {
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: #fff;
+      padding: 15px 17px;
+      border-left-width: 4px;
+      border-left-style: solid;
+      box-shadow: var(--shadow-sm);
+      transition: box-shadow 0.15s;
+    }
+
+    .finding-card:hover { box-shadow: var(--shadow); }
+
+    .finding-card.severity-critical { border-left-color: var(--critical-strong); background: linear-gradient(90deg, var(--critical-bg) 0%, #fff 14px); }
+    .finding-card.severity-major { border-left-color: var(--major-strong); background: linear-gradient(90deg, var(--major-bg) 0%, #fff 14px); }
+    .finding-card.severity-minor { border-left-color: var(--minor-strong); background: linear-gradient(90deg, var(--minor-bg) 0%, #fff 14px); }
+    .finding-card.severity-info { border-left-color: var(--info-strong); background: linear-gradient(90deg, var(--info-bg) 0%, #fff 14px); }
+
+    .finding-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .sev-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 4px 12px;
+      border-radius: 7px;
+      font-size: 11.5px;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .sev-badge.critical { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .sev-badge.major { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .sev-badge.minor { background: var(--minor-bg); color: var(--minor-text); border: 1px solid var(--minor-border); }
+    .sev-badge.info { background: var(--info-bg); color: var(--info-text); border: 1px solid var(--info-border); }
+
+    .finding-line {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      background: var(--chip-bg);
+      padding: 4px 8px;
+      border-radius: 6px;
+    }
+
+    .finding-cat {
+      font-size: 12.5px;
+      font-weight: 700;
+      color: var(--accent-dark);
+      background: var(--accent-soft);
+      padding: 3px 9px;
+      border-radius: 6px;
+    }
+
+    /* 需求对账三类（需求未实现/需求矛盾/需求外动作）用色块徽章而非纯文字，
+       跟严重级别徽章一样醒目——用户反馈普通文字分类容易在列表里被漏看，
+       尤其"需求未实现"现在总是 Critical。*/
+    .finding-cat-requirement {
+      background: var(--critical-bg);
+      color: var(--critical-text);
+      border: 1px solid var(--critical-border);
+      border-radius: 6px;
+      padding: 3px 10px;
+    }
+
+    /* ── 接口审查覆盖清单 ── */
+    .endpoint-coverage {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px 18px;
+      box-shadow: var(--shadow);
+      margin-bottom: 20px;
+    }
+
+    .ec-note {
+      margin: 0 0 10px;
+      font-size: 13px;
+      line-height: 1.7;
+      color: var(--muted);
+    }
+
+    .ec-note-warn {
+      padding: 9px 12px;
+      border-radius: 8px;
+      background: var(--major-bg);
+      border-left: 4px solid var(--major-strong);
+      color: var(--major-text);
+    }
+
+    .ec-note-warn strong { color: var(--major-strong); }
+
+    .ec-table-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid var(--border); }
+
+    .ec-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .ec-table th {
+      text-align: left;
+      padding: 9px 12px;
+      background: #fafbfd;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .ec-table td {
+      padding: 10px 12px;
+      border-top: 1px solid var(--border);
+      vertical-align: top;
+      line-height: 1.65;
+    }
+
+    .ec-table tbody tr:first-child td { border-top: none; }
+
+    .ec-table .ec-method,
+    .ec-table .ec-verdict { white-space: nowrap; }
+
+    .ec-table .ec-path code {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+      word-break: break-all;
+    }
+
+    .ec-table .ec-reason { color: var(--muted); }
+
+    .ec-badge {
+      display: inline-block;
+      padding: 2px 9px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .ec-badge.ec-risk { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .ec-badge.ec-pending { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .ec-badge.ec-safe { background: var(--safe-bg); color: var(--safe-text); border: 1px solid var(--safe-border); }
+
+    tr.ec-risk td { background: #fffbfa; }
+    tr.ec-pending td { background: #fffdf9; }
+
+    /* 分片没审成时的披露条：必须比正文更抢眼，否则读者会把
+       「报告里没写」误当成「这里没问题」 */
+    .shard-health-alert {
+      margin: 0 0 12px;
+      padding: 12px 15px;
+      border-radius: 10px;
+      background: var(--critical-bg);
+      border: 1px solid var(--critical-border);
+      border-left: 4px solid var(--critical-strong);
+      color: var(--critical-text);
+      font-size: 13.5px;
+      line-height: 1.7;
+    }
+
+    .shard-health-alert strong { color: var(--critical-strong); }
+
+    .finding-desc {
+      font-size: 14px;
+      line-height: 1.65;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* finding 卡片正文的四行结构（问题 / 后果 / 怎么改 / 怎么验）。
+       用户反馈（build 532）"文案挤在一团，难以阅读"：此前正文是一整段
+       `原因：…影响：…` 靠 white-space:pre-wrap 原样糊上去，修复建议和测试
+       场景又被折叠藏起来。改成左标签 + 右正文的两列网格，每行一个语义单元，
+       段落之间有明确留白，长句由 Python 侧按句末标点拆成多个 <p>。 */
+    .finding-body {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      font-size: 14px;
+      line-height: 1.7;
+      color: var(--text);
+    }
+
+    .fb-row {
+      display: grid;
+      grid-template-columns: 68px minmax(0, 1fr);
+      gap: 2px 14px;
+      padding: 10px 0;
+      border-top: 1px dashed var(--border);
+    }
+
+    .fb-row:first-child {
+      border-top: none;
+      padding-top: 2px;
+    }
+
+    /* 重新设计：标签从"一段带颜色的纯文字"改成小色块标签（跟 sev-badge/
+       finding-cat 同一套视觉语言），扫一眼列表就能靠色块分辨这行是"问题"
+       还是"怎么改"，比单靠文字颜色更容易一眼分辨。 */
+    .fb-label {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1.6;
+      letter-spacing: 0.03em;
+      white-space: nowrap;
+      padding: 2px 8px;
+      border-radius: 6px;
+      margin-top: 1px;
+    }
+
+    .fb-problem .fb-label { color: var(--major-text); background: var(--major-bg); }
+    .fb-impact .fb-label { color: var(--critical-text); background: var(--critical-bg); }
+    .fb-fix .fb-label { color: var(--accent-dark); background: var(--accent-soft); }
+    .fb-test .fb-label { color: var(--info-text); background: var(--info-bg); }
+
+    .fb-text {
+      min-width: 0;
+      word-break: break-word;
+    }
+
+    .fb-text > p {
+      margin: 0 0 7px;
+    }
+
+    .fb-text > p:last-child {
+      margin-bottom: 0;
+    }
+
+    .fb-text .rt-list {
+      margin: 2px 0 6px;
+      padding-left: 20px;
+    }
+
+    .fb-text .rt-list li {
+      margin-bottom: 4px;
+    }
+
+    .fb-text .code-block {
+      margin: 8px 0 4px;
+      font-size: 12.5px;
+    }
+
+    .fb-text code {
+      background: var(--chip-bg);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+    }
+
+    /* 窄屏（Jenkins 里报告常挤在窗格里看）时标签落到正文上方，不再抢走
+       62px 宽度，避免正文被压成一列细条 */
+    @media (max-width: 720px) {
+      .fb-row {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 2px;
+      }
+    }
+
+    /* 证据代码块从固定 div 改成可折叠 details（默认展开）——一份报告里
+       十几张卡片各带 8-10 行代码，读者需要能收起来快速扫结论 */
+    details.finding-evidence > summary {
+      cursor: pointer;
+      list-style: none;
+    }
+
+    details.finding-evidence > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    details.finding-evidence > summary::before {
+      content: "▾ ";
+      color: var(--muted);
+    }
+
+    details.finding-evidence:not([open]) > summary::before {
+      content: "▸ ";
+    }
+
+    /* 证据代码块（2026-07-19 补）：evidence_quote 的稳定展示位置，不再依赖
+       模型是否顺手把代码写进 description 里；纯 CSS + Python 正则高亮，
+       不引外部 JS 库，内网报告零外部依赖风险。 */
+    .finding-evidence {
+      margin-top: 10px;
+    }
+
+    .finding-evidence .detail-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .code-block {
+      margin: 0;
+      padding: 12px 15px;
+      background: var(--code-bg);
+      color: #e6edf3;
+      border-radius: 9px;
+      overflow-x: auto;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+      line-height: 1.6;
+    }
+
+    .code-block code {
+      white-space: pre;
+      /* 2026-09-02 用户反馈：安全/权限折叠卡里"怎么改"给的整段修复示意代码
+         （``` 代码围栏渲染出来也是 <pre class="code-block"><code>）看不清——
+         根因是 .fb-text code（第 833 行，给"问题/后果/怎么改/怎么验"正文里
+         `existsActive` 这类行内代码片段配的浅灰底色）跟这里选择器优先级/
+         特异性相同，同一个 <code> 标签只要落在 .fb-text 范围内就会被套上
+         浅灰底，而 .code-annotation/.code-keyword 这套语法高亮配色是给
+         .code-block 本来的深色底（--code-bg）设计的，叠在浅灰底上对比度
+         塌陷，几乎看不见字。显式声明透明背景覆盖掉那条通用规则，让
+         .code-block 自己的深色底透出来。 */
+      background: transparent;
+    }
+
+    .code-comment { color: #8b949e; font-style: italic; }
+    .code-string { color: #a5d6ff; }
+    .code-annotation { color: #d2a8ff; }
+    .code-keyword { color: #ff7b72; font-weight: 600; }
+    .code-number { color: #79c0ff; }
+
+    /* 带上下文的证据代码块（逐行渲染，问题行整行高亮）*/
+    .code-row {
+      display: block;
+      padding: 0 6px;
+      border-left: 3px solid transparent;
+    }
+
+    .code-row-target {
+      background: rgba(255, 123, 114, 0.16);
+      border-left-color: #ff7b72;
+    }
+
+    .code-ln {
+      display: inline-block;
+      min-width: 2.5em;
+      margin-right: 12px;
+      color: #6e7681;
+      text-align: right;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    .finding-details {
+      margin-top: 12px;
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+      padding: 0;
+      background: #fafbfd;
+    }
+
+    .finding-details > summary {
+      cursor: pointer;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--heading);
+      list-style: none;
+    }
+
+    .finding-details > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .finding-details-body {
+      padding: 0 14px 14px;
+      border-top: 1px solid var(--border);
+    }
+
+    .detail-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin: 12px 0 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .finding-suggestion p,
+    .finding-test p {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.65;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .file-block {
+      margin: 14px 0 18px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: var(--shadow);
+    }
+
+    .file-block h3 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      color: var(--heading);
+      word-break: break-all;
+    }
+
+    table {
+      border-collapse: separate;
+      border-spacing: 0;
+      width: 100%;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+    }
+
+    th, td {
+      border-bottom: 1px solid var(--border);
+      padding: 10px;
+      vertical-align: top;
+      text-align: left;
+      font-size: 13px;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      background: #fafbfd;
+      color: var(--heading);
+      font-weight: 700;
+      z-index: 1;
+    }
+
+    tbody tr:nth-child(even) { background: #fafbfd; }
+    tbody tr:last-child td { border-bottom: none; }
+
+    .empty {
+      padding: 18px;
+      border: 1px dashed var(--border);
+      border-radius: 14px;
+      color: var(--muted);
+      background: #fafbfd;
+    }
+
+    @media (max-width: 900px) {
+      .hero h1 { font-size: 22px; }
+      .summary,
+      .file-block { padding: 12px; }
+      th, td { padding: 8px; font-size: 12px; }
+      .charts-row { flex-direction: column; }
+    }
+
+    /* ── 报告标签页 ──
+       重新设计：从"按钮选中变绿色渐变块"改成分段控件（segmented control）
+       的样式——浅灰底槽 + 选中项浮成白色药丸，更接近成熟工具（如 GitHub/
+       Linear）里的页签观感，也跟下面卡片的白底形成呼应。 */
+    .report-tabs {
+      display: inline-flex;
+      gap: 2px;
+      padding: 4px;
+      margin-bottom: 18px;
+      background: #e9ebf0;
+      border-radius: 12px;
+      flex-wrap: wrap;
+    }
+    .report-tabs button {
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 18px;
+      border-radius: 9px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 13.5px;
+      transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+    }
+    .report-tabs button:hover {
+      color: var(--heading);
+    }
+    .report-tabs button[aria-selected="true"] {
+      background: #ffffff;
+      color: var(--heading);
+      box-shadow: var(--shadow-sm);
+    }
+    .report-panel { display: none; }
+    .report-panel.is-active { display: block; }
+
+    /* ── 数据权限页（嵌入，与综合页隔离） ── */
+    .dp-shell {
+      font-family: "Avenir Next", "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif;
+      color: #1a2b22;
+      line-height: 1.6;
+    }
+
+    /* 重置全局 table 样式污染 */
+    .dp-shell table {
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+    }
+    .dp-shell th, .dp-shell td {
+      border: none !important;
+      border-bottom: 1px solid #edf2f7 !important;
+      background: transparent !important;
+    }
+
+    .dp-shell .dp-header {
+      position: relative;
+      background: linear-gradient(165deg, #0b1220 0%, #121a2c 55%, #0e2422 100%);
+      color: #f4f7fb;
+      padding: 26px 28px 24px;
+      border-radius: 18px;
+      margin-bottom: 24px;
+      box-shadow: var(--shadow-lg);
+      overflow: hidden;
+    }
+    .dp-shell .dp-header::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 3px;
+      background: linear-gradient(90deg, #14b8a6, #22d3ee 45%, #14b8a6 100%);
+    }
+    .dp-shell .dp-header h1 { font-size: 1.4rem; font-weight: 700; letter-spacing: .01em; margin: 0 0 6px; }
+    .dp-shell .dp-header .subtitle { margin: 0; color: #aab4c8; font-size: .9rem; }
+    .dp-shell .dp-header .meta-row { margin-top: 16px; display: flex; gap: 24px; flex-wrap: wrap; }
+    .dp-shell .dp-header .meta-item { font-size: .8rem; color: #8b95ab; }
+    .dp-shell .dp-header .meta-item strong { color: #8ce8d4; font-weight: 600; }
+
+    .dp-shell .dp-body { padding: 0 0 32px; }
+
+    /* ── dp-shell 内部组件（与 Python 生成的类名严格对齐） ── */
+
+    /* 统计卡片区（Python 生成 .summary-grid / .summary-card） */
+    .dp-shell .dp-stats { margin-bottom: 4px; }
+    .dp-shell .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+    .dp-shell .summary-card {
+      background: #fff;
+      border-radius: 14px;
+      padding: 18px 20px;
+      box-shadow: var(--shadow-sm);
+      border: 1px solid var(--border);
+      border-top: 3px solid transparent;
+    }
+    .dp-shell .summary-card.critical { border-top-color: var(--critical-strong); }
+    .dp-shell .summary-card.high     { border-top-color: var(--major-strong); }
+    .dp-shell .summary-card.medium   { border-top-color: var(--minor-strong); }
+    .dp-shell .summary-card.info     { border-top-color: var(--info-strong); }
+    .dp-shell .summary-card .count   { font-size: 2.1rem; font-weight: 800; line-height: 1; }
+    .dp-shell .summary-card.critical .count { color: var(--critical-text); }
+    .dp-shell .summary-card.high     .count { color: var(--major-text); }
+    .dp-shell .summary-card.medium   .count { color: var(--minor-text); }
+    .dp-shell .summary-card.info     .count { color: var(--info-text); }
+    .dp-shell .summary-card .label   { margin-top: 8px; font-size: .72rem; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .07em; }
+
+    /* 区块标题 */
+    .dp-shell .dp-section { margin-bottom: 24px; }
+    .dp-shell .dp-section-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--heading);
+      margin: 0 0 14px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* 角色定义盒（Python 生成 .role-box / .role-icon / .role-info） */
+    .dp-shell .dp-roles { display: flex; flex-direction: column; gap: 10px; }
+    .dp-shell .role-box {
+      background: #fff;
+      border-radius: 12px;
+      padding: 16px 20px;
+      box-shadow: 0 2px 10px rgba(17,51,38,.07);
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+    }
+    .dp-shell .role-box.muted {
+      background: #f8f9fb;
+      border: 1px solid var(--border);
+      box-shadow: none;
+    }
+    .dp-shell .role-icon { font-size: 1.8rem; line-height: 1; flex-shrink: 0; }
+    .dp-shell .role-info { flex: 1; min-width: 0; }
+    .dp-shell .role-info h3 { font-size: 1rem; font-weight: 700; color: var(--heading); margin: 0 0 4px; }
+    .dp-shell .role-info .role-md { font-size: .88rem; color: #4a5568; margin-top: 8px; line-height: 1.65; word-break: break-word; }
+    .dp-shell .role-info code { background: #edf2f7; padding: 1px 6px; border-radius: 4px; font-size: .85em; }
+
+    /* gate banner */
+    .dp-shell .dp-gate { margin-bottom: 20px; }
+
+    /* 审计表格包装（Python 生成 .table-wrap > table.dp-audit）
+       表头从深绿底改成跟报告其它表格（.ec-table）同一套浅底大写小标签，
+       整份报告的表格风格统一，不再是"深色表头 vs 浅色表头"两套语言。 */
+    .dp-shell .table-wrap {
+      overflow-x: auto;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow-sm);
+    }
+    .dp-shell table.dp-audit {
+      width: 100% !important;
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+      font-size: .84rem;
+    }
+    .dp-shell .dp-audit th {
+      background: #fafbfd !important;
+      color: var(--muted) !important;
+      padding: 11px 14px !important;
+      text-align: left !important;
+      font-size: .68rem !important;
+      font-weight: 700 !important;
+      text-transform: uppercase !important;
+      letter-spacing: .07em !important;
+      white-space: nowrap !important;
+      border-bottom: 1px solid var(--border) !important;
+      position: sticky;
+      top: 0;
+    }
+    .dp-shell .dp-audit td {
+      padding: 11px 14px !important;
+      border-bottom: 1px solid var(--border) !important;
+      vertical-align: top !important;
+      color: var(--text) !important;
+      background: transparent !important;
+    }
+    .dp-shell .dp-audit tr:last-child td { border-bottom: none !important; }
+    .dp-shell .dp-audit tr:hover td { background: #f8f9fb !important; }
+    .dp-shell .dp-audit tr.row-critical td { background: var(--critical-bg) !important; }
+    .dp-shell .dp-audit tr.row-critical:hover td { background: #fbdcda !important; }
+    .dp-shell .dp-audit tr.row-major td { background: var(--major-bg) !important; }
+    .dp-shell .dp-audit tr.row-major:hover td { background: #fbe4c4 !important; }
+
+    /* HTTP 方法 & 严重性徽标（Python 生成 .badge .badge-*） */
+    .dp-shell .badge {
+      display: inline-block; padding: 2px 9px; border-radius: 6px;
+      font-size: .72rem; font-weight: 700; letter-spacing: .04em; white-space: nowrap;
+    }
+    .dp-shell .badge-get    { background: var(--info-bg); color: var(--info-text); }
+    .dp-shell .badge-post   { background: var(--safe-bg); color: var(--safe-text); }
+    .dp-shell .badge-put    { background: var(--minor-bg); color: var(--minor-text); }
+    .dp-shell .badge-delete { background: var(--critical-bg); color: var(--critical-text); }
+    .dp-shell .badge-patch  { background: #f4f0fd; color: #6b46c1; }
+    .dp-shell .badge-critical { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .dp-shell .badge-high     { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .dp-shell .badge-medium   { background: var(--minor-bg); color: var(--minor-text); border: 1px solid var(--minor-border); }
+    .dp-shell .badge-info     { background: var(--info-bg); color: var(--info-text); border: 1px solid var(--info-border); }
+
+    /* 风险文字 */
+    .dp-shell .risk-zh { font-size: .82rem; color: var(--text); font-weight: 600; line-height: 1.4; }
+
+    /* Issue 列表（Python 生成 .issue-list） */
+    .dp-shell .issue-list { list-style: none !important; margin: 6px 0 0; padding: 0; }
+    .dp-shell .issue-list li { position: relative; padding: 3px 0 3px 18px; font-size: .84rem; color: #4a5568; line-height: 1.55; }
+    .dp-shell .issue-list li::before { content: "▸"; position: absolute; left: 2px; color: #e53e3e; }
+    .dp-shell .issue-list li strong { color: var(--heading); }
+    .dp-shell .issue-list code { background: #edf2f7; padding: 1px 5px; border-radius: 3px; font-size: .85em; }
+
+    /* 修复建议卡片（Python 生成 .fix-card） */
+    .dp-shell .fix-card {
+      background: #f0faf5;
+      border-left: 4px solid var(--accent);
+      border-radius: 0 10px 10px 0;
+      padding: 13px 16px;
+      margin-top: 10px;
+    }
+    .dp-shell .fix-card h4 { font-size: .84rem; font-weight: 700; color: var(--heading); margin: 0 0 6px; }
+    .dp-shell .fix-card p, .dp-shell .fix-card li { font-size: .83rem; color: #2d4a3d; line-height: 1.6; margin: 0; }
+    .dp-shell .fix-card ul, .dp-shell .fix-card ol { padding-left: 18px; margin: 6px 0; }
+    .dp-shell .fix-card code { background: #d4efe4; padding: 1px 5px; border-radius: 4px; font-size: .85em; }
+
+    /* 代码块（Python 生成 .code-block） */
+    .dp-shell .code-block {
+      background: var(--code-bg); color: #e2e8f0; border-radius: 9px;
+      padding: 12px 16px; margin-top: 8px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: .78rem; line-height: 1.55; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+    }
+
+    /* 端点详情折叠（Python 生成 details.issue-fold） */
+    .dp-shell details.issue-fold {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: var(--shadow-sm);
+      margin-bottom: 12px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .dp-shell details.issue-fold > summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 13px 16px;
+      font-weight: 600;
+      font-size: .9rem;
+      color: var(--heading);
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid transparent;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transition: background .15s;
+    }
+    .dp-shell details.issue-fold > summary::-webkit-details-marker { display: none; }
+    .dp-shell details.issue-fold > summary::before { content: "▸"; font-size: 11px; color: var(--accent); transition: transform .15s; }
+    .dp-shell details.issue-fold[open] > summary::before { transform: rotate(90deg); }
+    .dp-shell details.issue-fold[open] > summary { border-bottom-color: var(--border); background: var(--accent-soft); }
+    .dp-shell .issue-fold-body { padding: 16px 20px; font-size: .85rem; color: #4a5568; }
+    .dp-shell .issue-fold-body p { margin: 6px 0; line-height: 1.65; }
+    .dp-shell .issue-fold-body strong { color: var(--heading); }
+
+    /* dp-fold（端点详情另一种渲染，Python 生成 details.dp-fold） */
+    .dp-shell .dp-folds { display: flex; flex-direction: column; gap: 10px; }
+    .dp-shell .dp-fold {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
+    }
+    .dp-shell .dp-fold > summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 13px 16px;
+      font-weight: 600;
+      font-size: .9rem;
+      color: var(--heading);
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .dp-shell .dp-fold > summary::-webkit-details-marker { display: none; }
+    .dp-shell .dp-fold > summary::before { content: "▸"; font-size: 11px; color: var(--accent); transition: transform .15s; }
+    .dp-shell .dp-fold[open] > summary::before { transform: rotate(90deg); }
+    .dp-shell .dp-fold-body { padding: 16px; font-size: .85rem; color: #4a5568; }
+
+    /* issue list（dp-fold 内部用） */
+    .dp-shell .dp-issue-list { list-style: none; margin: 8px 0 0; padding: 0; }
+    .dp-shell .dp-issue-list li { position: relative; padding: 3px 0 3px 18px; font-size: .84rem; color: #4a5568; }
+    .dp-shell .dp-issue-list li::before { content: "▸"; position: absolute; left: 2px; color: #e53e3e; }
+
+    /* dp-fix（dp-fold 内部修复建议） */
+    .dp-shell .dp-fix {
+      background: #f0faf5;
+      border-left: 4px solid var(--accent);
+      border-radius: 0 10px 10px 0;
+      padding: 12px 16px;
+      margin-top: 10px;
+    }
+    .dp-shell .dp-fix h4 { font-size: .84rem; font-weight: 700; color: var(--heading); margin: 0 0 6px; }
+    .dp-shell .dp-fix p, .dp-shell .dp-fix li { font-size: .83rem; color: #2d4a3d; line-height: 1.6; margin: 0; }
+    .dp-shell .dp-fix code { background: #d4efe4; padding: 1px 5px; border-radius: 4px; font-size: .85em; }
+
+    /* dp-code（dp-fold 内部代码块） */
+    .dp-shell .dp-code {
+      background: var(--code-bg); color: #e2e8f0; border-radius: 9px;
+      padding: 12px 16px; margin-top: 8px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: .78rem; line-height: 1.55; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+    }
+
+    /* 存量越权风险区块（dp-shell 内，全文扫描）*/
+    .dp-shell .legacy-privilege-block {
+      background: var(--minor-bg);
+      border: 1px solid var(--minor-border);
+      border-left: 4px solid var(--minor-strong);
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin-bottom: 16px;
+    }
+    .dp-shell .legacy-privilege-block .lp-title { font-size: 14px; font-weight: 700; color: var(--minor-strong); margin: 0 0 4px; }
+    .dp-shell .legacy-privilege-block .lp-subtitle { font-size: 12px; color: var(--minor-text); margin: 0 0 14px; }
+
+    .dp-shell .dp-footer {
+      text-align: center; font-size: .78rem; color: #a0aec0;
+      margin-top: 36px; padding-top: 20px; border-top: 1px solid var(--border);
+    }
+
+    /* ── 综合审查 Tab 权限接口表（privilege_endpoints 模式，在 dp-shell 外） ── */
+    .perm-table-wrap {
+      overflow-x: auto;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow-sm);
+    }
+    .perm-table {
+      width: 100%;
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+      font-size: .84rem;
+    }
+    .perm-table th {
+      background: #fafbfd !important;
+      color: var(--muted) !important;
+      padding: 10px 14px !important;
+      text-align: left !important;
+      font-size: .68rem !important;
+      font-weight: 700 !important;
+      text-transform: uppercase !important;
+      letter-spacing: .07em !important;
+      white-space: nowrap !important;
+      border-bottom: 1px solid var(--border) !important;
+    }
+    .perm-table td {
+      padding: 10px 14px !important;
+      border-bottom: 1px solid var(--border) !important;
+      vertical-align: top !important;
+      color: var(--text) !important;
+      background: transparent !important;
+    }
+    .perm-table tr:last-child td { border-bottom: none !important; }
+    .perm-table tr:hover td { background: #f8f9fb !important; }
+    .api-permission-block { overflow-x: auto; }
+
+    /* 存量越权风险区块（综合审查 Tab，全文扫描） */
+    .legacy-privilege-block {
+      background: var(--minor-bg);
+      border: 1px solid var(--minor-border);
+      border-left: 4px solid var(--minor-strong);
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin-bottom: 16px;
+    }
+    .legacy-privilege-block .lp-title { font-size: 14px; font-weight: 700; color: var(--minor-strong); margin: 0 0 4px; }
+    .legacy-privilege-block .lp-subtitle { font-size: 12px; color: var(--minor-text); margin: 0 0 14px; }
+    /* 根因聚合卡片 */
+    .cluster-card { border-left: 4px solid #6366f1; }
+    .cluster-badge {
+      background: #6366f1; color: #fff;
+      font-size: 11px; padding: 2px 8px;
+      border-radius: 10px; margin-left: 8px;
+      font-weight: 600; letter-spacing: .02em;
+    }
+    .cluster-locations { margin: 8px 0 4px; }
+    .cluster-locations > summary {
+      cursor: pointer; color: #6366f1;
+      font-size: 13px; font-weight: 500;
+    }
+    .cluster-locations > summary:hover { text-decoration: underline; }
+    .loc-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+    .loc-table th, .loc-table td {
+      padding: 4px 8px; border: 1px solid #e5e7eb; text-align: left;
+    }
+    .loc-table th { background: #f9fafb; font-weight: 600; }
+    .loc-file { font-family: monospace; color: #374151; }
+    .loc-line { text-align: center; color: #6b7280; white-space: nowrap; }
+    .loc-snippet { color: #4b5563; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* ── Charts Row (并列布局) ── */
+    .charts-row {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    /* ── Chart Section ── */
+    .chart-section {
+      flex: 1 1 0;
+      min-width: 0;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .chart-container {
+      position: relative;
+      height: 260px;
+    }
+
+    /* ── Top 3 Criticals in Hero ── */
+    .top-criticals {
+      position: relative;
+      margin-top: 18px;
+      padding-top: 16px;
+      border-top: 1px solid rgba(255,255,255,0.12);
+    }
+
+    .top-criticals h3 {
+      margin: 0 0 10px;
+      font-size: 13px;
+      font-weight: 700;
+      color: #ff9d94;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .top-criticals ul {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .top-criticals li {
+      font-size: 13px;
+      color: #d6dcea;
+      line-height: 1.5;
+      padding: 9px 12px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.09);
+      border-left: 3px solid #f2645a;
+      border-radius: 0 8px 8px 0;
+    }
+
+    .top-criticals li strong {
+      color: #ffe1dc;
+      font-weight: 700;
+      display: block;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12px;
+    }
+
+    .top-criticals[hidden] { display: none !important; }
+
+    .top-criticals .tc-desc {
+      display: block;
+      margin-top: 3px;
+    }
+
+    .top-criticals .tc-source {
+      display: inline-block;
+      margin-bottom: 4px;
+      padding: 1px 7px;
+      border-radius: 5px;
+      background: rgba(255,255,255,0.14);
+      color: #f4f7fb;
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    /* ── Export Dropdown ── */
+    .export-dropdown {
+      position: relative;
+    }
+
+    .export-menu {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 4px);
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+      min-width: 160px;
+      z-index: 100;
+      overflow: hidden;
+    }
+
+    .export-menu a {
+      display: block;
+      padding: 10px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--heading);
+      text-decoration: none;
+      transition: background 0.12s;
+    }
+
+    .export-menu a:hover {
+      background: #eef5f1;
+    }
+
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <h1>AI Code Review 报告</h1>
+      <p class="hero-meta">服务: wms-sort-web | 生成时间: 2026-11-05 11:16:51</p>
+      <div class="top-criticals" id="top-criticals" hidden>
+        <h3>最需要先看的问题（Critical）</h3>
+        <ul id="top-criticals-list"></ul>
+      </div>
+    </header>
+
+    <div class="report-tabs" role="tablist" aria-label="报告视图">
+      <button type="button" role="tab" id="tab-general" aria-controls="panel-general" aria-selected="true" onclick="switchReportTab('general')">综合审查</button>
+      <button type="button" role="tab" id="tab-dp" aria-controls="panel-dp" aria-selected="false" onclick="switchReportTab('dp')">权限与业务规则</button>
+    </div>
+
+    <div id="panel-general" class="report-panel is-active" role="tabpanel" aria-labelledby="tab-general">
+    <section class="summary">
+      <h2>总体结论</h2>
+      <div id="summary-text" class="summary-body summary-preformatted"><div class="shard-health-alert">⚠ 这份报告不完整：本次把改动切成 24 段分别审查，其中 6 段代码没审成（第 1、12、17、18、19、20 段）。这些内容不会出现在下面任何一处，<strong>不能把「报告里没写」当成「这里没问题」</strong>——请重跑本次审查，或对这部分人工过一遍。</div><div class="summary-condensed"><p>合并 <strong>24</strong> 个分片审查，共 <strong>20</strong> 条发现 （Critical 6 · Major 9 · Minor 4 · Info 1）。</p><p>其中 Critical 6 条、Major 3 条来自「牵连影响」（改动波及到的其他调用点），在下方「牵连影响」一节展开。</p><p>逐条明细见下方「按文件的审查发现」；接口与数据权限维度见顶部「权限与业务规则」页签。</p><details class="summary-raw-details"><summary>展开各分片原文结论</summary><pre class="summary-raw-pre"><strong>分片 1</strong>
+
+Combined review failed, skipped.
+
+<strong>分片 2</strong>
+
+本分片 diff 仅包含两个枚举层面的变更：删除 <code>ParcelStatusEnum.isExceptionReportable()</code> 与新增 <code>TaskTypeEnum.DISPATCH_EXPORT</code>。基于当前可见新增/修改行，未发现可直接落在这些 <code>+</code> 行上的安全、权限、并发、SQL、异常处理或兼容性问题。
+
+权限审查说明：本分片新增行未出现 HTTP 映射、鉴权注解、数据范围过滤或安全放行配置，且全局端点清单中与本分片相关的方法实现不在本次 diff 片段内，无法仅凭这两个枚举新增/修改行断言权限被削弱；因此本次无新增权限风险结论。
+
+<strong>分片 3</strong>
+
+本分片 diff 仅涉及 <code>ParcelQueryCriteria.java</code> 删除字段与 <code>ScanRecordCursor.java</code> 注释调整；新增/修改行未引入可见的安全风险、鉴权放行、SQL 拼接、异常吞没或并发问题。全局端点清单中与本分片相关的方法未出现新的 HTTP 映射或权限控制变更；由于本次 diff 不包含任何 <code>@GetMapping</code>/<code>@PostMapping</code>/安全配置改动，可判断为无新增权限风险。
+
+<strong>分片 4</strong>
+
+本分片 diff 仅在 Repository 层新增/修改了注释、import 和 <code>TaskRepository.findSameSubmissions(...)</code> 查询定义；未出现新增 HTTP 映射、鉴权放行配置、匿名注解、SQL 拼接、外部调用、日志泄露或前端安全面变更。结合给出的调用链，<code>findSameSubmissions(...)</code> 仍按 <code>facilityCode</code> 与 <code>createdBy</code> 约束查询范围，当前 diff 未见新增权限削弱或可直接落地的安全缺陷。
+
+<strong>分片 5</strong>
+
+本分片仅看到 <code>backend/wms-sort-facade-impl/src/main/java/io/speedx/wmssort/facade/impl/advice/AuditLogAspect.java</code> 的增量，变更主要是补充 <code>ResponseEntity</code> 结果判定、<code>AuditAction#skipErrorCodes</code> 跳过审计以及提取 <code>auditAction(pjp)</code> 复用。按当前 diff 可见内容，未发现新增的越权放行、敏感数据暴露、SQL 拼接、异常吞没返回默认值或其他可直接落到新增行上的安全问题。
+
+HTTP 入口清单（方法 + 路径）：本分片 diff 未出现 <code>@GetMapping</code>、<code>@PostMapping</code>、<code>@PutMapping</code>、<code>@DeleteMapping</code>、<code>@PatchMapping</code> 或带路径的 <code>@RequestMapping</code> 新增/修改，因此无需要逐条列出的新增 HTTP 入口；全局端点清单中提到的 Facade 入口实现未在本分片 diff 内发生可见权限变更，基于本次增量无法断言其权限行为被削弱，当前可见范围内无新增权限风险。
+
+<strong>分片 6</strong>
+
+本分片提供的 diff 仅包含 <code>backend/wms-sort-facade-impl/src/main/java/io/speedx/wmssort/facade/impl/excel/DispatchExcelRow.java</code> 与 <code>backend/wms-sort-facade-impl/src/main/java/io/speedx/wmssort/facade/impl/excel/ParcelExceptionExcelRow.java</code> 两个文件的删除，没有任何 <code>+</code> 开头的新增/修改行。按审查约束只能分析新增/修改行，因此本分片无可归属到新增代码的安全 finding；同时本分片 diff 中未出现 HTTP 映射新增或鉴权变更，无法据此断言新增权限风险。
+
+<strong>分片 7</strong>
+
+本分片仅看到 <code>backend/wms-sort-facade-impl/src/main/java/io/speedx/wmssort/facade/impl/mapper/TaskDtoMapper.java</code> 新增一个 <code>Task</code> 到 <code>TaskSubmissionResponse</code> 的 MapStruct 映射方法，变更本身未引入可确认的安全、权限、异常处理或 API 契约风险。全局端点清单中虽列出多个 Facade/Service 入口，但这些入口的实现与鉴权逻辑均不在本次 diff 内，且本分片新增代码不涉及 HTTP 映射、放行注解、鉴权配置或数据范围过滤，因此本次审查结论为无新增安全风险。
+
+<strong>分片 8</strong>
+
+本分片新增/修改的 3 个后端任务参数与提交辅助类未引入可见的 SQL 拼接、匿名放行、鉴权开关关闭、外部调用超时缺失、敏感日志或明显的空指针/并发安全问题。结合给出的调用链上下文，本次 diff 主要是导出任务参数组装与重复提交提示封装，未出现可直接从新增行确认的权限削弱或数据越权逻辑。
+
+<strong>分片 9</strong>
+
+本分片可见 diff 仅在 <code>backend/wms-sort-facade/src/main/java/io/speedx/wmssort/facade/annotation/AuditAction.java</code> 为注解新增 <code>skipErrorCodes()</code> 元数据定义，未出现新的 HTTP 映射、鉴权放行、外部调用、持久化写入或前端渲染逻辑。基于当前提供的新增行，未发现可直接落在 diff 新增/修改行上的安全问题；同时本分片未出现 <code>@GetMapping</code>/<code>@PostMapping</code> 等 HTTP 入口，故无新增 HTTP 入口需要逐项权限判定。
+
+<strong>分片 10</strong>
+
+本分片未发现新增匿名放行、permitAll、鉴权开关关闭等直接权限面削弱代码。主要风险集中在 <code>DispatchExportRequest</code> 新增的导出选择语义：<code>shipmentOrderIds</code> 分支缺少输入规模边界，且文档语义允许绕过 <code>30-day cap</code>，容易把导出接口变成高负载和大范围历史数据导出的入口。
+
+<strong>分片 11</strong>
+
+本分片 diff 仅包含 1 处字段移除和 1 个 Repository 接口删除，未新增 HTTP 入口、鉴权放行、外部调用、SQL 拼接或其他可从新增/修改行直接确认的安全问题。全局端点清单中与本分片相关的方法未在本 diff 中出现新增/修改的权限逻辑，因此本次无法从变更本身断言权限削弱；就已给出的新增/修改行看，无新增权限风险。
+
+<strong>分片 12</strong>
+
+Combined review failed, skipped.
+
+<strong>分片 13</strong>
+
+本分片仅看到 <code>SortingCallbackReplayJob</code> 的调度回放逻辑变更，未出现新增 HTTP 映射、鉴权注解或放行配置，因此无新增权限风险可直接从 diff 断言。主要问题是删除了 <code>trans_exception</code> 自动重放分支，导致失败消息恢复链路被削弱；另有一处日志字符串拼接的轻微规范/性能问题。
+
+<strong>分片 14</strong>
+
+本分片 diff 仅新增 <code>SortDashboardProperties</code> 配置类，未引入 HTTP 入口、鉴权放行、外部调用、SQL、日志或可见的权限/数据范围变更；从当前新增行看无新增安全风险。HTTP 入口清单：本分片 diff 中未出现 <code>@GetMapping</code>、<code>@PostMapping</code>、<code>@PutMapping</code>、<code>@DeleteMapping</code>、<code>@PatchMapping</code> 或带路径的 <code>@RequestMapping</code>，因此无新增可审查的 HTTP 映射。
+
+<strong>分片 15</strong>
+
+本分片 diff 仅涉及注释文案调整、<code>TransExceptionCallbackSender.java</code> 删除以及 <code>TtStatusCode.TRANS_EXCEPTION</code> 常量删除；新增/修改行中未引入可确认的安全、权限、并发、SQL、异常处理或 API 暴露风险。HTTP 入口清单中列出的 Facade/Service 方法均未在本分片 diff 的新增/修改行内出现鉴权放宽、匿名放行、路径暴露或数据范围变更，因此本次无法从这些变更断言新增权限问题。
+
+<strong>分片 16</strong>
+
+本分片仅涉及 <code>TrackingCallbackRequest</code> 的 DTO 契约变更，未出现新增 HTTP 映射、鉴权放行或权限控制代码，因此无新增权限风险。发现 1 个 major 级问题：删除 <code>reasonCode</code> 可能破坏 TT 异常回传的外部 API 契约，建议补充契约测试并确认 <code>trans_exception</code> 调用链已同步收敛。
+
+<strong>分片 17</strong>
+
+Combined review failed, skipped.
+
+<strong>分片 18</strong>
+
+Combined review failed, skipped.
+
+<strong>分片 19</strong>
+
+Combined review failed, skipped.
+
+<strong>分片 20</strong>
+
+Combined review failed, skipped.
+
+<strong>分片 21</strong>
+
+本分片可见的新增/修改行主要是 i18n 文案与两条 SQL migration。未发现新增匿名放行、鉴权削弱、SQL 拼接、全表无条件更新删除、敏感日志或其他可从当前 diff 直接确认的安全问题。HTTP 入口清单中列出的 Facade/Service 在本分片未给出新增映射注解或权限变更代码，因此本次无法从 diff 断言其权限实现是否变化；就当前可见新增行而言，无新增权限风险。
+
+<strong>分片 22</strong>
+
+本分片新增/修改的前端导出逻辑主要是把同步下载改为异步任务提交、补充重复导出确认，以及把窗口上限校验下沉到后端返回错误消息；就当前 diff 可见代码看，未发现新增的 XSS、鉴权绕过、敏感信息暴露、命令/SQL 注入或 Token 携带缺失问题。涉及的 API 调用仍统一走 <code>request</code>/<code>requestHeaders</code> 或既有 <code>/api</code> 代理模式，当前分片内也未出现新的匿名放行、permitAll、mock 登录开关关闭等安全面变更。
+
+<strong>分片 23</strong>
+
+发现 1 个安全相关问题：<code>sorting/stats</code> 页面移除了前端时间窗上限校验，导致超大范围统计/导出请求可被直接提交到后端，存在资源滥用与拒绝服务放大风险。其余本分片新增代码未发现新增匿名放行、permitAll、鉴权开关关闭或明显的前端敏感数据暴露问题；本分片 diff 中也未出现可识别的 <code>@GetMapping</code>/<code>@PostMapping</code> 等 HTTP 映射，因此无可列出的 HTTP 入口清单。
+
+<strong>分片 24</strong>
+
+本分片 diff 仅涉及 JPA 实体字段删除、实体删除以及为 <code>ParcelExceptionOrder</code> 新增 <code>@DynamicUpdate</code>，未出现新增 HTTP 映射、鉴权放行、外部调用、SQL 拼接、日志泄露或前端安全面变更。就当前可见新增/修改行而言，<code>@DynamicUpdate</code> 还是在缓解并发覆盖风险，未发现需要报告的新增安全问题。
+
+HTTP 入口清单（方法 + 路径）：本分片 diff 中未出现 <code>@GetMapping</code>、<code>@PostMapping</code>、<code>@PutMapping</code>、<code>@DeleteMapping</code>、<code>@PatchMapping</code> 或带路径的 <code>@RequestMapping</code> 新增/修改，因此无可在本分片内逐项断言的新增 HTTP 入口。</pre></details></div></div>
+      <div class="filter-row">
+        <span class="filter-label">点击筛选:</span>
+        <div class="chips">
+          <span class="chip critical filter-chip" data-filter="critical" onclick="filterBySeverity(this)">Critical: 6</span>
+          <span class="chip major filter-chip" data-filter="major" onclick="filterBySeverity(this)">Major: 9</span>
+          <span class="chip minor filter-chip" data-filter="minor" onclick="filterBySeverity(this)">Minor: 4</span>
+          <span class="chip info filter-chip" data-filter="info" onclick="filterBySeverity(this)">Info: 1</span>
+          <span class="chip">Total: 20</span>
+        </div>
+        <div class="chips-impact-note">牵连影响另有 108 条判定为安全，不计入以上统计</div>
+      </div>
+    </section>
+
+    <div class="charts-row">
+      <div class="chart-section" id="chart-section">
+        <h3 class="section-title">问题分布</h3>
+        <div class="chart-container">
+          <canvas id="categoryChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div id="filter-hint">
+      筛选中: <strong id="filter-hint-label"></strong>，仅显示对应问题
+      <span class="clear-filter" onclick="clearFilter()">清除筛选</span>
+    </div>
+
+    <div class="findings-toolbar" id="findings-toolbar" style="display: none;">
+      <!-- 筛选按钮已下线：与上方「总体结论」区的 filter-row（Critical/Major/Minor/Info 计数
+           chip）功能重复，且从未挂过点击事件，是从未生效的死代码（用户反馈"这个筛选多余了"）。
+           筛选统一走上方 filter-row 的 filterBySeverity()，这里只保留搜索 + 导出。 -->
+      <input type="text" class="findings-search" id="findings-search" placeholder="搜索文件/描述…">
+      <div class="export-dropdown">
+        <button class="toolbar-btn" id="export-btn">导出 ▼</button>
+        <div class="export-menu" id="export-menu" style="display:none;">
+          <a href="#" onclick="exportJira()">导出为 Jira</a>
+          <a href="#" onclick="exportExcel()">导出为 Excel</a>
+          <a href="#" onclick="exportCsv()">导出为 CSV</a>
+        </div>
+      </div>
+    </div>
+
+    
+<style>
+.impact-section { margin: 16px 0 24px; }
+.impact-section .section-title { font-size: 18px; font-weight: 700; margin-bottom: 10px; }
+/* 颜色直接写死（不用 var(--minor-*)）：既往回归测过"这份样式表里一次都不能
+   出现 --minor-bg 这个变量名"（NEEDS_HUMAN 不该复用 minor 琥珀色，见下方
+   impact-stat.impact-needs-human 的注释），这里的抽样提示条语义完全不同
+   （跟严重度无关，只是"这批数据是抽样的"），但同一份样式表里带上这个变量
+   名字本身就会让那条回归测试的"零出现"断言失去意义。 */
+.impact-sample-banner {
+  background: #fdf7e0; color: #8a6208;
+  border: 1px solid #f1e096;
+  border-radius: 8px; padding: 8px 14px; font-size: 13px; font-weight: 600;
+  margin-bottom: 10px;
+}
+.impact-stats-banner { margin-bottom: 10px; }
+.impact-stat {
+  display: inline-block; padding: 4px 11px; border-radius: 8px; font-size: 12px;
+  font-weight: 700; margin-right: 8px;
+}
+.impact-stat.impact-risk { background: var(--critical-bg, #fdeceb); color: var(--critical-text, #b3261e); }
+/* NEEDS_HUMAN 改用 info 蓝（原用 minor 琥珀色，与"一般问题"严重度语义撞车——
+   需人工核实 ≠ 一个确定的低危问题，是"不知道，人来判断"，语义上更接近
+   info 的"仅供参考/待确认"，用户反馈"两套配色打架"实测已改） */
+.impact-stat.impact-needs-human { background: var(--info-bg, #eaf1fd); color: var(--info-text, #23509c); }
+.impact-stat.impact-safe { background: var(--safe-bg, #e8f6ee); color: var(--safe-text, #1a7a4c); }
+.impact-stat.impact-total { background: var(--chip-bg, #eef0f5); color: var(--muted, #667085); }
+.impact-section-note {
+  font-size: 13px; color: #666; line-height: 1.75; margin: 0 0 12px;
+  padding: 11px 14px; background: #f7f9fa; border-radius: 8px;
+}
+.impact-section-note p { margin: 0 0 7px; }
+.impact-section-note p:last-child { margin-bottom: 0; }
+.impact-section-note strong { color: #333; }
+.impact-note-legend {
+  margin: 0 0 8px; padding-left: 18px; list-style: none;
+}
+.impact-note-legend li { margin-bottom: 3px; }
+.impact-note-legend li::before {
+  content: "·"; margin-right: 6px; color: #999; font-weight: 700;
+}
+.impact-ratio-alert {
+  background: var(--major-bg, #fdf1e3); color: var(--major-text, #a85311);
+  border: 1px solid var(--major-border, #f4d19d); border-radius: 8px; padding: 8px 14px;
+  font-size: 13px; margin-bottom: 10px;
+}
+.impact-group { margin-bottom: 22px; }
+.impact-group-title {
+  font-size: 16px; font-weight: 700; margin: 14px 0 10px; color: #333;
+  padding-bottom: 6px; border-bottom: 1px solid #e5e5e5;
+}
+.impact-empty { color: #666; font-size: 13px; padding: 8px 0; }
+/* 卡片间距加大 + 阴影，强化"一张卡是一个独立问题"的边界感（用户反馈①） */
+.impact-risk-list { display: flex; flex-direction: column; gap: 16px; }
+.impact-card {
+  border: 1px solid var(--border, #e3e6ec); border-left: 4px solid #ccc; border-radius: 12px;
+  padding: 14px 16px; background: #fff; margin-bottom: 16px;
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(16,24,40,.06));
+}
+.impact-card.impact-risk { border-left-color: var(--critical-strong, #d1291f); background: linear-gradient(90deg, var(--critical-bg, #fdeceb) 0%, #fff 14px); }
+.impact-card.impact-needs-human { border-left-color: var(--info-strong, #2f66c9); background: linear-gradient(90deg, var(--info-bg, #eaf1fd) 0%, #fff 14px); }
+.impact-card.impact-safe { border-left-color: var(--safe-text, #1a7a4c); background: linear-gradient(90deg, var(--safe-bg, #e8f6ee) 0%, #fff 14px); }
+.impact-card-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+  padding-bottom: 8px; border-bottom: 1px solid #f0f0f0;
+}
+.impact-badge {
+  font-size: 11.5px; font-weight: 800; padding: 4px 10px; border-radius: 7px;
+  text-transform: none; border: 1px solid transparent;
+}
+/* 加边框跟主报告 .sev-badge 视觉语言对齐（用户反馈"两种报告风格不统一"） */
+.impact-badge.impact-risk { background: var(--critical-bg, #fdeceb); color: var(--critical-text, #b3261e); border-color: var(--critical-border, #f3b7b2); }
+.impact-badge.impact-needs-human { background: var(--info-bg, #eaf1fd); color: var(--info-text, #23509c); border-color: var(--info-border, #c0d6f6); }
+.impact-badge.impact-safe { background: var(--safe-bg, #e8f6ee); color: var(--safe-text, #1a7a4c); border-color: var(--safe-border, #aee3c4); }
+.impact-index { font-size: 12px; color: #888; }
+.impact-source-tag { font-size: 12.5px; color: #555; background: #f2f2f2; border-radius: 4px; padding: 2px 7px; }
+/* 字段之间用细分隔线拉开节奏，避免"挤成一坨"（用户反馈①的卡内延伸） */
+.impact-field { margin: 0; padding: 8px 0; font-size: 14px; }
+.impact-field + .impact-field { border-top: 1px dashed #ececec; }
+.impact-field-label {
+  font-weight: 700; color: #555; font-size: 12px; margin-bottom: 4px;
+  text-transform: uppercase; letter-spacing: .02em;
+}
+.impact-field p { margin: 0; }
+/* “怎么办”做成醒目的行动召唤条，呼应主报告 .fix-card/.dp-fix 的视觉语言，
+   同时用底色块把它和上面的说明性文字区分开——减轻“每张卡都在念同一句话”
+   的观感（用户反馈④之一：内容本身仍是模板句，属内容生成侧，此处只做视觉区隔）*/
+.impact-action {
+  background: #f3faf7; border-left: 3px solid var(--accent, #0f766e);
+  border-radius: 0 8px 8px 0; padding: 8px 12px; color: #2d4a3d;
+}
+/* 代码上下文块：文件名/行号做成编辑器 tab 条，深色代码正文 + 高亮目标行，
+   解决用户反馈②（file:line 太不显眼）与③（无上下文、无高亮） */
+.impact-code-tab {
+  display: flex; align-items: baseline; gap: 10px; background: #1a2438;
+  color: #cbd5e0; font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12px; padding: 7px 13px; border-radius: 8px 8px 0 0; margin-top: 8px;
+}
+.impact-code-tab-path { font-weight: 600; color: #e2e8f0; word-break: break-all; }
+.impact-code-tab-line { color: #7dd3e8; white-space: nowrap; }
+.impact-code-body {
+  background: var(--code-bg, #10182b); border-radius: 0 0 8px 8px; padding: 7px 0;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12.5px; line-height: 1.65; overflow-x: auto;
+}
+.impact-code-line { display: flex; padding: 0 12px; white-space: pre; }
+.impact-code-no {
+  flex: 0 0 auto; width: 2.6em; text-align: right; margin-right: 12px;
+  color: #718096; user-select: none;
+}
+.impact-code-text { color: #e2e8f0; }
+.impact-code-line-hl {
+  background: rgba(214, 158, 46, .18); border-left: 3px solid #d69e2e;
+  padding-left: 9px; margin-left: -3px;
+}
+.impact-code-line-hl .impact-code-no { color: #f6c453; font-weight: 700; }
+.impact-code-line-hl .impact-code-text { color: #fdf6e3; }
+/* quote 单行降级展示（拿不到源文件时的兜底，见 render_impact_section.py 说明） */
+.impact-evidence {
+  background: var(--code-bg, #10182b); color: #e2e8f0; border-radius: 0 0 8px 8px;
+  padding: 9px 13px; font-size: 12.5px; overflow-x: auto; margin: 0;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+/* 折叠区统一加 ▸ 箭头指示，跟主报告其它折叠区（issue-fold/dp-fold）一致，
+   修掉「牵连影响」这节此前唯独没有展开箭头的不一致（用户反馈④之一） */
+.impact-needs-human-fold, .impact-merged-details { margin-top: 10px; }
+.impact-needs-human-fold summary, .impact-merged-details summary {
+  cursor: pointer; font-size: 13.5px; font-weight: 600; color: #555; padding: 6px 0;
+  list-style: none; display: flex; align-items: center; gap: 6px;
+}
+.impact-needs-human-fold summary::-webkit-details-marker,
+.impact-merged-details summary::-webkit-details-marker { display: none; }
+.impact-needs-human-fold summary::before,
+.impact-merged-details summary::before {
+  content: "▸"; font-size: 11px; color: var(--accent, #0f766e); transition: transform .15s;
+}
+.impact-needs-human-fold[open] > summary::before,
+.impact-merged-details[open] > summary::before { transform: rotate(90deg); }
+/* 判定为安全的调用点不再逐条/逐组展示（2026-09-02），.impact-safe-fold 这
+   个折叠 class 已经没有任何 HTML 元素在用，改用不带交互的 .impact-safe-note
+   脚注段落——下面这条规则保留，上面折叠相关的 .impact-safe-fold 选择器已
+   随之删除（P3，code-reviewer 复核指出的死 CSS）。 */
+.impact-safe-note { color: #777; font-size: 12.5px; }
+.impact-merged-row { border-top: 1px dashed #e2e2e2; padding: 10px 0; font-size: 14px; }
+.impact-merged-row-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+</style>
+<section class="impact-section"><h2 class="section-title">牵连影响</h2><div class="impact-section-note"><p><strong>这一节回答的问题：</strong>这次改动被别的代码调用的那些地方，会不会被改坏。跟上面「按文件的审查发现」（这次写的代码本身对不对）是两回事，<strong>两边的数字不能相加</strong>。</p><ul class="impact-note-legend"><li><strong>Critical</strong>＝建议关注，这个调用点可能被改坏了</li><li><strong>Major</strong>＝AI 拿不准，需要人看一眼</li><li><strong>Info</strong>＝已排查，确认没影响</li></ul><p><strong>这次的数字：</strong>一共挖到 122 个调用点，其中 7 个建议关注，来自 6 处真正被改动的方法或字段（同一处改动的每个调用方分开列）。</p></div><div class="impact-stats-banner"><span class="impact-stat impact-risk">Critical · 建议关注 7（6 处改动）</span><span class="impact-stat impact-needs-human">Major · 需人工核实 7（3 处改动）</span><span class="impact-stat impact-safe">Info · 已排查安全 108</span><span class="impact-stat impact-total">Total 122</span></div><div class="impact-group"><h3 class="impact-group-title">接口层功能（Controller）</h3><div class="impact-risk-list"><div class="impact-card impact-risk" data-impact-level="RISK"><div class="impact-card-header"><span class="impact-badge impact-risk">Critical · 有风险</span><span class="impact-index">#10</span><span class="impact-source-tag">方法调用链核对</span></div><div class="impact-field"><div class="impact-field-label">场景</div><p>方法 ExceptionOrderUpdateServiceImpl.update，在 ExceptionOrderInboundController.updateExceptionOrder() 中被调用（接口层功能（Controller））</p></div><div class="impact-field"><div class="impact-field-label">代码现状</div><div class="impact-code-tab"><span class="impact-code-tab-path">backend/wms-sort-facade-impl/src/main/java/io/speedx/wmssort/inbound/ExceptionOrderInboundController.java</span><span class="impact-code-tab-line">第 46 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">43</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">44</span><span class="impact-code-text">        UpdateExceptionOutcomeEnum outcome;</span></div><div class="impact-code-line"><span class="impact-code-no">45</span><span class="impact-code-text">        try {</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">46</span><span class="impact-code-text">            outcome = updateService.update(</span></div><div class="impact-code-line"><span class="impact-code-no">47</span><span class="impact-code-text">                    request.getExceptionId(),</span></div><div class="impact-code-line"><span class="impact-code-no">48</span><span class="impact-code-text">                    request.getAction(),</span></div><div class="impact-code-line"><span class="impact-code-no">49</span><span class="impact-code-text">                    request.getIsClosed(),</span></div></div></div><div class="impact-field"><div class="impact-field-label">判定依据</div><p>（无特别假设，基于代码静态比对）</p></div><div class="impact-field"><div class="impact-field-label">会出什么事</div><p>当 ExceptionOrderUpdateServiceImpl.update 在第一段事务已提交后、writeParcel 阶段失败时，ExceptionOrderInboundController.updateExceptionOrder 会把异常继续抛出而不是返回 TtInboundAck，导致 TT 调用这个接口时拿不到约定的 ACK 包装响应。</p></div><div class="impact-field"><div class="impact-field-label">怎么办</div><p class="impact-action">需评估此改动对『方法 ExceptionOrderUpdateServiceImpl.update』的影响，建议实际验证消费点行为后再上线</p></div></div><div class="impact-card impact-risk" data-impact-level="RISK"><div class="impact-card-header"><span class="impact-badge impact-risk">Critical · 有风险</span><span class="impact-index">#14</span><span class="impact-source-tag">方法调用链核对</span></div><div class="impact-field"><div class="impact-field-label">场景</div><p>方法 ParcelQueryServiceImpl.query，在 ParcelQueryFacadeImpl.query() 中被调用（接口层功能（Controller））</p></div><div class="impact-field"><div class="impact-field-label">代码现状</div><div class="impact-code-tab"><span class="impact-code-tab-path">backend/wms-sort-facade-impl/src/main/java/io/speedx/wmssort/facade/impl/ParcelQueryFacadeImpl.java</span><span class="impact-code-tab-line">第 41 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">38</span><span class="impact-code-text">    @Override</span></div><div class="impact-code-line"><span class="impact-code-no">39</span><span class="impact-code-text">    public ApiResponse&lt;PageResponse&lt;ParcelListItem&gt;&gt; query(ParcelQueryRequest request, String timezone) {</span></div><div class="impact-code-line"><span class="impact-code-no">40</span><span class="impact-code-text">        validateCreateTimeSpan(request, DisplayTimeZone.parse(timezone));</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">41</span><span class="impact-code-text">        Page&lt;Parcel&gt; result = parcelQueryService.query(buildCriteria(request));</span></div><div class="impact-code-line"><span class="impact-code-no">42</span><span class="impact-code-text">        List&lt;ParcelListItem&gt; content = result.getContent().stream()</span></div><div class="impact-code-line"><span class="impact-code-no">43</span><span class="impact-code-text">                .map(parcelDtoMapper::toListItem)</span></div><div class="impact-code-line"><span class="impact-code-no">44</span><span class="impact-code-text">                .toList();</span></div></div></div><div class="impact-field"><div class="impact-field-label">判定依据</div><p>consumer_in_diff=false；该调用直接命中本次修改的 ParcelQueryServiceImpl.query，且给定材料未显示调用方已同步移除这些查询语义。</p></div><div class="impact-field"><div class="impact-field-label">会出什么事</div><p>ParcelQueryFacadeImpl.query 在请求携带导出大分页、按 exceptionTime 排序、按 exceptionReasonCode 过滤或按 exceptionTime 时间范围过滤时，会返回按 createTime 排序且未按这些条件收敛的数据集，导致前端分页列表内容与筛选条件不一致。</p></div><div class="impact-field"><div class="impact-field-label">怎么办</div><p class="impact-action">需评估此改动对『方法 ParcelQueryServiceImpl.query』的影响，建议实际验证消费点行为后再上线</p></div></div><div class="impact-card impact-risk" data-impact-level="RISK"><div class="impact-card-header"><span class="impact-badge impact-risk">Critical · 有风险</span><span class="impact-index">#23</span><span class="impact-source-tag">方法调用链核对</span></div><div class="impact-field"><div class="impact-field-label">场景</div><p>方法 ParcelQueryFacadeImpl.isKeyFieldLookup，在 ParcelQueryFacadeImpl.buildCriteria() 中被调用（接口层功能（Controller））</p></div><div class="impact-field"><div class="impact-field-label">代码现状</div><div class="impact-code-tab"><span class="impact-code-tab-path">backend/wms-sort-facade-impl/src/main/java/io/speedx/wmssort/facade/impl/ParcelQueryFacadeImpl.java</span><span class="impact-code-tab-line">第 112 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">109</span><span class="impact-code-text">                .callbackFailed(request.getCallbackFailed())</span></div><div class="impact-code-line"><span class="impact-code-no">110</span><span class="impact-code-text">                .createTimeFrom(request.getCreateTimeFrom())</span></div><div class="impact-code-line"><span class="impact-code-no">111</span><span class="impact-code-text">                .createTimeTo(request.getCreateTimeTo())</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">112</span><span class="impact-code-text">                .keyFieldLookup(isKeyFieldLookup(request))</span></div><div class="impact-code-line"><span class="impact-code-no">113</span><span class="impact-code-text">                .facilityCode(facilityResolver.current())</span></div><div class="impact-code-line"><span class="impact-code-no">114</span><span class="impact-code-text">                .page(request.getPage())</span></div><div class="impact-code-line"><span class="impact-code-no">115</span><span class="impact-code-text">                .size(request.getSize())</span></div></div></div><div class="impact-field"><div class="impact-field-label">判定依据</div><p>consumer_in_diff=false，且给定材料未显示该消费点有同步适配；本次改动实体是 isKeyFieldLookup 方法本身，buildCriteria 直接消费其返回值。</p></div><div class="impact-field"><div class="impact-field-label">会出什么事</div><p>调用 ParcelQueryFacadeImpl.query 构建 ParcelQueryCriteria 时会把 isKeyFieldLookup(request) 的新语义带入 keyFieldLookup，导致列表查询在相同请求参数下命中的包裹数据集发生变化，前端会看到与改动前不同的查询结果。</p></div><div class="impact-field"><div class="impact-field-label">怎么办</div><p class="impact-action">需评估此改动对『方法 ParcelQueryFacadeImpl.isKeyFieldLookup』的影响，建议实际验证消费点行为后再上线</p></div></div><div class="impact-card impact-merged-card impact-risk" data-impact-level="RISK"><div class="impact-card-header"><span class="impact-badge impact-risk">Critical · 有风险</span><span class="impact-index">#48</span><span class="impact-source-tag">方法调用链核对 · 多处调用</span></div><div class="impact-field"><div class="impact-field-label">场景</div><p>方法 SortingCallbackReplayJob.replay——这 1 处改动被以下 2 个位置调用/引用，逐点判定如下</p></div><details class="impact-merged-details" open="open"><summary>展开查看全部 2 个消费点判定</summary><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-risk">Critical · 有风险</span><span>在 TtAdminFacadeImpl.triggerReplayJob() 中被调用（接口层功能（Controller））</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">backend/wms-sort-facade-impl/src/main/java/io/speedx/wmssort/facade/impl/TtAdminFacadeImpl.java</span><span class="impact-code-tab-line">第 159 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">156</span><span class="impact-code-text">    @AuditAction(&quot;TRIGGER_CALLBACK_REPLAY_JOB&quot;)</span></div><div class="impact-code-line"><span class="impact-code-no">157</span><span class="impact-code-text">    @Override</span></div><div class="impact-code-line"><span class="impact-code-no">158</span><span class="impact-code-text">    public ApiResponse&lt;String&gt; triggerReplayJob(Integer maxAgeHours) {</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">159</span><span class="impact-code-text">        sortingCallbackReplayJob.replay(maxAgeHours != null ? maxAgeHours : 0);</span></div><div class="impact-code-line"><span class="impact-code-no">160</span><span class="impact-code-text">        String scope = maxAgeHours != null ? (&quot;last &quot; + maxAgeHours + &quot; hour(s)&quot;) : &quot;unbounded backlog&quot;;</span></div><div class="impact-code-line"><span class="impact-code-no">161</span><span class="impact-code-text">        return ApiResponse.success(</span></div><div class="impact-code-line"><span class="impact-code-no">162</span><span class="impact-code-text">                &quot;Replay job triggered (&quot; + scope + &quot;); see logs for the [callback-replay] summary.&quot;);</span></div></div><p><span class="impact-field-label">判定依据</span>（无特别假设，基于代码静态比对）</p><p><span class="impact-field-label">会出什么事</span>管理员在 TtAdminFacadeImpl.triggerReplayJob 手动触发补偿时，将不再重放 trans_exception 主题的积压消息，导致这类异常回调继续滞留、下游收不到原本应被补发的数据。</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需评估此改动对『方法 SortingCallbackReplayJob.replay』的影响，建议实际验证消费点行为后再上线</span></p></div><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-risk">Critical · 有风险</span><span>在 SortingCallbackReplayJob.replay() 中被调用（定时任务功能（Job））</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">backend/wms-sort-infrastructure/src/main/java/io/speedx/wmssort/infrastructure/scheduler/SortingCallbackReplayJob.java</span><span class="impact-code-tab-line">第 58 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">55</span><span class="impact-code-text">     */</span></div><div class="impact-code-line"><span class="impact-code-no">56</span><span class="impact-code-text">    @XxlJob(&quot;sortingCallbackReplayHandler&quot;)</span></div><div class="impact-code-line"><span class="impact-code-no">57</span><span class="impact-code-text">    public void replay() {</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">58</span><span class="impact-code-text">        replay(parseMaxAgeHours(XxlJobHelper.getJobParam()));</span></div><div class="impact-code-line"><span class="impact-code-no">59</span><span class="impact-code-text">    }</span></div><div class="impact-code-line"><span class="impact-code-no">60</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">61</span><span class="impact-code-text">    private int parseMaxAgeHours(String jobParam) {</span></div></div><p><span class="impact-field-label">判定依据</span>（无特别假设，基于代码静态比对）</p><p><span class="impact-field-label">会出什么事</span>XXL-Job 定时执行 SortingCallbackReplayJob.replay 时，将不再重放 trans_exception 主题的可补偿消息，导致该主题的失败回调持续积压且不会被这条任务自动恢复。</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需评估此改动对『方法 SortingCallbackReplayJob.replay』的影响，建议实际验证消费点行为后再上线</span></p></div></details></div></div><details class="impact-needs-human-fold" open="open"><summary>Major · 需人工核实 · 3 处</summary><div class="impact-card impact-merged-card impact-needs-human" data-impact-level="NEEDS_HUMAN"><div class="impact-card-header"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span class="impact-index">#3</span><span class="impact-source-tag">方法调用链核对 · 多处调用</span></div><div class="impact-field"><div class="impact-field-label">场景</div><p>方法 ParcelRepository.bulkSetDispatched——这 1 处改动被以下 2 个位置调用/引用，逐点判定如下</p></div><details class="impact-merged-details"><summary>展开查看全部 2 个消费点判定</summary><details class="impact-needs-human-fold" open="open"><summary>Major · 需人工核实 · 2 处</summary><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span>在 DispatchCompleteServiceImpl.confirm() 中被调用（未归类）</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">backend/wms-sort-domain/src/main/java/io/speedx/wmssort/domain/service/impl/DispatchCompleteServiceImpl.java</span><span class="impact-code-tab-line">第 116 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">113</span><span class="impact-code-text">                .map(Container::getContainerCode)</span></div><div class="impact-code-line"><span class="impact-code-no">114</span><span class="impact-code-text">                .collect(Collectors.toList());</span></div><div class="impact-code-line"><span class="impact-code-no">115</span><span class="impact-code-text">        if (!containerCodes.isEmpty()) {</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">116</span><span class="impact-code-text">            parcelRepository.bulkSetDispatched(containerCodes, now, operator, dispatch.getShipmentOrderId());</span></div><div class="impact-code-line"><span class="impact-code-no">117</span><span class="impact-code-text">            List&lt;io.speedx.wmssort.domain.entity.Parcel&gt; parcels =</span></div><div class="impact-code-line"><span class="impact-code-no">118</span><span class="impact-code-text">                    parcelRepository.findByContainerCodeIn(containerCodes);</span></div><div class="impact-code-line"><span class="impact-code-no">119</span><span class="impact-code-text">            parcelEventService.bulkRecordDispatch(parcels, operator, dispatch.getFacilityCode(),</span></div></div><p><span class="impact-field-label">判定依据</span>改动实体 diff 仅显示 ParcelRepository.bulkSetDispatched 的注释变更，看不出方法语义变化；但该方法命中“同表多入口事实”，是否需要与其它写 wms_parcel 的入口保持一致依赖场外设计真值，静态代码无法确认。</p><p><span class="impact-field-label">会出什么事</span>（未说明业务后果）</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需人工核实：判定依据里的假设是否成立</span></p></div><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span>在 DropoffFacadeImpl.confirm() 中被调用（接口层功能（Controller））</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">backend/wms-sort-facade-impl/src/main/java/io/speedx/wmssort/facade/impl/DropoffFacadeImpl.java</span><span class="impact-code-tab-line">第 426 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">423</span><span class="impact-code-text">        List&lt;String&gt; containerCodes = containers.stream()</span></div><div class="impact-code-line"><span class="impact-code-no">424</span><span class="impact-code-text">                .map(Container::getContainerCode).collect(Collectors.toList());</span></div><div class="impact-code-line"><span class="impact-code-no">425</span><span class="impact-code-text">        if (!containerCodes.isEmpty()) {</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">426</span><span class="impact-code-text">            parcelRepository.bulkSetDispatched(containerCodes, now, operator,</span></div><div class="impact-code-line"><span class="impact-code-no">427</span><span class="impact-code-text">                    request.getShipmentOrderId());</span></div><div class="impact-code-line"><span class="impact-code-no">428</span><span class="impact-code-text">            List&lt;Parcel&gt; parcels = parcelRepository.findByContainerCodeIn(containerCodes);</span></div><div class="impact-code-line"><span class="impact-code-no">429</span><span class="impact-code-text">            parcelEventService.bulkRecordDispatch(parcels, operator,</span></div></div><p><span class="impact-field-label">判定依据</span>改动实体 diff 仅显示 ParcelRepository.bulkSetDispatched 的注释变更，看不出方法语义变化；但该方法命中“同表多入口事实”，是否需要与其它写 wms_parcel 的入口保持一致依赖场外设计真值，静态代码无法确认。</p><p><span class="impact-field-label">会出什么事</span>（未说明业务后果）</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需人工核实：判定依据里的假设是否成立</span></p></div></details></details></div><div class="impact-card impact-merged-card impact-needs-human" data-impact-level="NEEDS_HUMAN"><div class="impact-card-header"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span class="impact-index">#25</span><span class="impact-source-tag">方法调用链核对 · 多处调用</span></div><div class="impact-field"><div class="impact-field-label">场景</div><p>方法 SortingDashboardFacadeImpl.buildCriteria——这 1 处改动被以下 4 个位置调用/引用，逐点判定如下</p></div><details class="impact-merged-details"><summary>展开查看全部 4 个消费点判定</summary><details class="impact-needs-human-fold" open="open"><summary>Major · 需人工核实 · 4 处</summary><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span>在 SortingDashboardFacadeImpl.queryDashboard() 中被调用（接口层功能（Controller））</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">backend/wms-sort-facade-impl/src/main/java/io/speedx/wmssort/facade/impl/SortingDashboardFacadeImpl.java</span><span class="impact-code-tab-line">第 74 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">71</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">72</span><span class="impact-code-text">    @Override</span></div><div class="impact-code-line"><span class="impact-code-no">73</span><span class="impact-code-text">    public ApiResponse&lt;DashboardResponse&gt; queryDashboard(DashboardQueryRequest request, String timezone) {</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">74</span><span class="impact-code-text">        DashboardQueryCriteria criteria = buildCriteria(request, DisplayTimeZone.parse(timezone));</span></div><div class="impact-code-line"><span class="impact-code-no">75</span><span class="impact-code-text">        DashboardResult result = dashboardQueryService.query(criteria);</span></div><div class="impact-code-line"><span class="impact-code-no">76</span><span class="impact-code-text">        DashboardResponse response = dashboardDtoMapper.toResponse(result);</span></div><div class="impact-code-line"><span class="impact-code-no">77</span><span class="impact-code-text">        return ApiResponse.success(response);</span></div></div><p><span class="impact-field-label">判定依据</span>buildCriteria 现在通过 sortDashboardProperties.getMaxWindowDays() 动态决定时间窗口上限；queryDashboard 是否会受影响取决于运行时 Nacos 配置的实际值。若该值与原先固定 1 天不同，则这里会放宽或收紧可查询时间范围；静态代码无法得知该配置当前值。</p><p><span class="impact-field-label">会出什么事</span>（未说明业务后果）</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需人工核实：判定依据里的假设是否成立</span></p></div><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span>在 SortingDashboardFacadeImpl.exportDashboard() 中被调用（接口层功能（Controller））</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">backend/wms-sort-facade-impl/src/main/java/io/speedx/wmssort/facade/impl/SortingDashboardFacadeImpl.java</span><span class="impact-code-tab-line">第 87 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">84</span><span class="impact-code-text">    @Override</span></div><div class="impact-code-line"><span class="impact-code-no">85</span><span class="impact-code-text">    public ResponseEntity&lt;byte[]&gt; exportDashboard(DashboardQueryRequest request, String timezone) {</span></div><div class="impact-code-line"><span class="impact-code-no">86</span><span class="impact-code-text">        ZoneId zone = DisplayTimeZone.parse(timezone);</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">87</span><span class="impact-code-text">        DashboardQueryCriteria criteria = buildCriteria(request, zone);</span></div><div class="impact-code-line"><span class="impact-code-no">88</span><span class="impact-code-text">        DashboardResult result = dashboardQueryService.query(criteria);</span></div><div class="impact-code-line"><span class="impact-code-no">89</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">90</span><span class="impact-code-text">        ByteArrayOutputStream out = new ByteArrayOutputStream();</span></div></div><p><span class="impact-field-label">判定依据</span>buildCriteria 现在通过 sortDashboardProperties.getMaxWindowDays() 动态决定时间窗口上限；exportDashboard 是否会受影响取决于运行时 Nacos 配置的实际值。若该值与原先固定 1 天不同，则这里会放宽或收紧可导出时间范围；静态代码无法得知该配置当前值。</p><p><span class="impact-field-label">会出什么事</span>（未说明业务后果）</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需人工核实：判定依据里的假设是否成立</span></p></div><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span>在 SortingDashboardFacadeImpl.exportScanRecords() 中被调用（接口层功能（Controller））</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">backend/wms-sort-facade-impl/src/main/java/io/speedx/wmssort/facade/impl/SortingDashboardFacadeImpl.java</span><span class="impact-code-tab-line">第 110 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">107</span><span class="impact-code-text">    @Override</span></div><div class="impact-code-line"><span class="impact-code-no">108</span><span class="impact-code-text">    public ResponseEntity&lt;byte[]&gt; exportScanRecords(DashboardQueryRequest request, String timezone) {</span></div><div class="impact-code-line"><span class="impact-code-no">109</span><span class="impact-code-text">        ZoneId zone = DisplayTimeZone.parse(timezone);</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">110</span><span class="impact-code-text">        DashboardQueryCriteria criteria = buildCriteria(request, zone);</span></div><div class="impact-code-line"><span class="impact-code-no">111</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">112</span><span class="impact-code-text">        // Read once per export, so a Nacos flip mid-download cannot switch modes half way.</span></div><div class="impact-code-line"><span class="impact-code-no">113</span><span class="impact-code-text">        boolean keyset = scanRecordExportProperties.isKeysetEnabled();</span></div></div><p><span class="impact-field-label">判定依据</span>buildCriteria 现在通过 sortDashboardProperties.getMaxWindowDays() 动态决定时间窗口上限；exportScanRecords 是否会受影响取决于运行时 Nacos 配置的实际值。若该值与原先固定 1 天不同，则这里会放宽或收紧可导出扫描记录的时间范围；静态代码无法得知该配置当前值。</p><p><span class="impact-field-label">会出什么事</span>（未说明业务后果）</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需人工核实：判定依据里的假设是否成立</span></p></div><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span>在 SortingDashboardFacadeImpl.exportScansTask() 中被调用（接口层功能（Controller））</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">backend/wms-sort-facade-impl/src/main/java/io/speedx/wmssort/facade/impl/SortingDashboardFacadeImpl.java</span><span class="impact-code-tab-line">第 143 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">140</span><span class="impact-code-text">    public ApiResponse&lt;TaskSubmissionResponse&gt; exportScansTask(DashboardQueryRequest request, String timezone,</span></div><div class="impact-code-line"><span class="impact-code-no">141</span><span class="impact-code-text">                                                               boolean confirmDuplicate) {</span></div><div class="impact-code-line"><span class="impact-code-no">142</span><span class="impact-code-text">        ZoneId zone = DisplayTimeZone.parse(timezone);</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">143</span><span class="impact-code-text">        DashboardQueryCriteria criteria = buildCriteria(request, zone);</span></div><div class="impact-code-line"><span class="impact-code-no">144</span><span class="impact-code-text">        TaskSubmitCommand command = new TaskSubmitCommand(</span></div><div class="impact-code-line"><span class="impact-code-no">145</span><span class="impact-code-text">                TaskTypeEnum.SORT_SCAN_EXPORT,</span></div><div class="impact-code-line"><span class="impact-code-no">146</span><span class="impact-code-text">                ExportTaskParamsFactory.scans(criteria, zone),</span></div></div><p><span class="impact-field-label">判定依据</span>buildCriteria 现在通过 sortDashboardProperties.getMaxWindowDays() 动态决定时间窗口上限；exportScansTask 是否会受影响取决于运行时 Nacos 配置的实际值。若该值与原先固定 1 天不同，则这里会放宽或收紧可提交导出任务的时间范围；静态代码无法得知该配置当前值。</p><p><span class="impact-field-label">会出什么事</span>（未说明业务后果）</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需人工核实：判定依据里的假设是否成立</span></p></div></details></details></div><div class="impact-card impact-needs-human" data-impact-level="NEEDS_HUMAN"><div class="impact-card-header"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span class="impact-index">#66</span><span class="impact-source-tag">字段对账</span></div><div class="impact-field"><div class="impact-field-label">场景</div><p>字段 maxWindowDays（SortDashboardProperties），在 SortingDashboardFacadeImpl.checkWindowSpan() 中被读取（接口层功能（Controller））</p></div><div class="impact-field"><div class="impact-field-label">代码现状</div><div class="impact-code-tab"><span class="impact-code-tab-path">backend/wms-sort-facade-impl/src/main/java/io/speedx/wmssort/facade/impl/SortingDashboardFacadeImpl.java</span><span class="impact-code-tab-line">第 227 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">224</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">225</span><span class="impact-code-text">    /** The cap is read from Nacos on every call, so a change applies to the next request. */</span></div><div class="impact-code-line"><span class="impact-code-no">226</span><span class="impact-code-text">    private void checkWindowSpan(Date start, Date end, ZoneId zone) {</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">227</span><span class="impact-code-text">        int days = Math.max(1, sortDashboardProperties.getMaxWindowDays());</span></div><div class="impact-code-line"><span class="impact-code-no">228</span><span class="impact-code-text">        if (TimeRangeUtil.exceedsSpan(start, end, days * DAY_MILLIS, zone)) {</span></div><div class="impact-code-line"><span class="impact-code-no">229</span><span class="impact-code-text">            Msg msg = days == 1</span></div><div class="impact-code-line"><span class="impact-code-no">230</span><span class="impact-code-text">                    ? Msg.of(&quot;dashboard.windowTooLargeOneDay&quot;)</span></div></div></div><div class="impact-field"><div class="impact-field-label">判定依据</div><p>新增字段 maxWindowDays 由 Nacos 配置绑定，checkWindowSpan 的实际行为取决于运行时 wms.sorting.dashboard.maxWindowDays 的真实取值；仅凭给定代码无法确定该消费点会继续使用默认值 1，还是会因配置值变化而放宽/收紧时间窗口限制。</p></div><div class="impact-field"><div class="impact-field-label">会出什么事</div><p>（未说明业务后果）</p></div><div class="impact-field"><div class="impact-field-label">怎么办</div><p class="impact-action">需人工核实：判定依据里的假设是否成立</p></div></div></details><p class="impact-safe-note">另有 25 处已排查判定安全，不在此列出；完整判定记录见同目录下的 <a href="impact_judgements.json" target="_blank">impact_judgements.json</a>（构建产物原始数据）。</p></div><div class="impact-group"><h3 class="impact-group-title">未归类</h3><div class="impact-risk-list"><div class="impact-card impact-risk" data-impact-level="RISK"><div class="impact-card-header"><span class="impact-badge impact-risk">Critical · 有风险</span><span class="impact-index">#15</span><span class="impact-source-tag">方法调用链核对</span></div><div class="impact-field"><div class="impact-field-label">场景</div><p>方法 ParcelQueryServiceImpl.buildSpec，在 ParcelQueryServiceImpl.query() 中被调用（未归类）</p></div><div class="impact-field"><div class="impact-field-label">代码现状</div><div class="impact-code-tab"><span class="impact-code-tab-path">backend/wms-sort-domain/src/main/java/io/speedx/wmssort/domain/service/impl/ParcelQueryServiceImpl.java</span><span class="impact-code-tab-line">第 39 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">36</span><span class="impact-code-text">        int page = Math.max(0, c.getPage());</span></div><div class="impact-code-line"><span class="impact-code-no">37</span><span class="impact-code-text">        int size = c.getSize() &lt;= 0 ? 20 : Math.min(c.getSize(), MAX_PAGE_SIZE);</span></div><div class="impact-code-line"><span class="impact-code-no">38</span><span class="impact-code-text">        PageRequest pageRequest = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, &quot;createTime&quot;));</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">39</span><span class="impact-code-text">        return parcelRepository.findAll(buildSpec(c), pageRequest);</span></div><div class="impact-code-line"><span class="impact-code-no">40</span><span class="impact-code-text">    }</span></div><div class="impact-code-line"><span class="impact-code-no">41</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">42</span><span class="impact-code-text">    private Specification&lt;Parcel&gt; buildSpec(ParcelQueryCriteria c) {</span></div></div></div><div class="impact-field"><div class="impact-field-label">判定依据</div><p>（无特别假设，基于代码静态比对）</p></div><div class="impact-field"><div class="impact-field-label">会出什么事</div><p>调用 ParcelQueryServiceImpl.query 查询包裹列表时，将不再按 exceptionReasonCode、exceptionTimeFrom、exceptionTimeTo 过滤，且导出场景也被限制为 MAX_PAGE_SIZE 并固定按 createTime 排序，导致异常记录查询/导出拿到的数据集与原先条件不一致。</p></div><div class="impact-field"><div class="impact-field-label">怎么办</div><p class="impact-action">需评估此改动对『方法 ParcelQueryServiceImpl.buildSpec』的影响，建议实际验证消费点行为后再上线</p></div></div><div class="impact-card impact-merged-card impact-risk" data-impact-level="RISK"><div class="impact-card-header"><span class="impact-badge impact-risk">Critical · 有风险</span><span class="impact-index">#55</span><span class="impact-source-tag">字段对账 · 多处调用</span></div><div class="impact-field"><div class="impact-field-label">场景</div><p>字段 criteria（DispatchExportParams）——这 1 处改动被以下 5 个位置调用/引用，逐点判定如下</p></div><details class="impact-merged-details" open="open"><summary>展开查看全部 5 个消费点判定</summary><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-risk">Critical · 有风险</span><span>在 DispatchFacadeImpl.exportTask() 中被读取（接口层功能（Controller））</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">backend/wms-sort-facade-impl/src/main/java/io/speedx/wmssort/facade/impl/DispatchFacadeImpl.java</span><span class="impact-code-tab-line">第 633 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">630</span><span class="impact-code-text">                ExportTaskParamsFactory.dispatchFileName(zone, new Date()),</span></div><div class="impact-code-line"><span class="impact-code-no">631</span><span class="impact-code-text">                facilityResolver.currentUsername(),</span></div><div class="impact-code-line"><span class="impact-code-no">632</span><span class="impact-code-text">                facilityResolver.current(),</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">633</span><span class="impact-code-text">                params.getCriteria().getOrgCode(),</span></div><div class="impact-code-line"><span class="impact-code-no">634</span><span class="impact-code-text">                null);</span></div><div class="impact-code-line"><span class="impact-code-no">635</span><span class="impact-code-text">        return ExportTaskSubmission.submit(taskSubmitService, taskDtoMapper, command, confirmDuplicate, zone);</span></div><div class="impact-code-line"><span class="impact-code-no">636</span><span class="impact-code-text">    }</span></div></div><p><span class="impact-field-label">判定依据</span>（无特别假设，基于代码静态比对）</p><p><span class="impact-field-label">会出什么事</span>用户勾选订单走导出时，DispatchFacadeImpl.exportTask 会从仅设置了 facilityCode 和 shipmentOrderIds 的 criteria 里读取 orgCode，导致提交 DISPATCH_EXPORT 任务时 orgCode 为空，可能按错误的组织维度创建任务。</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需评估此改动对『字段 criteria（DispatchExportParams）』的影响，建议实际验证消费点行为后再上线</span></p></div><p class="impact-safe-note">另有 4 处已排查判定安全，不在此列出；完整判定记录见同目录下的 <a href="impact_judgements.json" target="_blank">impact_judgements.json</a>（构建产物原始数据）。</p></details></div></div><p class="impact-safe-note">另有 34 处已排查判定安全，不在此列出；完整判定记录见同目录下的 <a href="impact_judgements.json" target="_blank">impact_judgements.json</a>（构建产物原始数据）。</p></div></section><div class="summary-shard" style="border-left-color:#c53030;background:#fff5f5;"><span style="font-size:14px;color:#c53030;">⚠ 本次未识别到对应需求文档（可能是需求还没入库，或分支名/diff 缺少可匹配的业务关键词）。下方所有 finding（含牵连影响）的风险判断均未经需求预期核对，可能把「需求本来就要改的代码」误判为风险，请人工结合实际需求复核。</span></div><h2 class="section-title subsection-title">按文件的审查发现</h2><details class="action-group action-group-fix_now" open="open" style="margin-bottom:14px;border:1px solid #c53030;border-radius:8px;"><summary style="cursor:pointer;font-weight:700;font-size:15px;color:#c53030;padding:8px 12px;list-style:none;">&#128308; 立即修代码 &middot; 6 个问题</summary><div style="padding:0 12px 8px;"><div class="findings-list-wrap"><details class="file-group findings-file-group" open="open" id="fg-a72dca00b95f" data-file-path="backend/wms-sort-domain/src/main/java/io/speedx/wmssort/domain/entity/Parcel.java" data-short-name="Parcel.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/wms-sort-domain/src/main/java/io/speedx/wmssort/domain/entity/Parcel.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L123-124</span><span class="finding-cat finding-cat-requirement">需求外动作</span><span class="evidence-line-unverified-badge" style="color:#c62828;border:1px solid #c62828;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段附近 &#177;5 行内未找到 evidence_quote 摘抄的原文，行号未经核实，下方证据代码可能不是问题真正所在的位置，请人工核实">&#9888; 行号未验证</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>本次 diff 删除了 <code>Parcel.exceptionCallbackStatus</code> 字段，同时删除了 <code>ParcelExceptionService</code>、<code>TransExceptionCallbackPublisher</code>、<code>TransExceptionCallbackService</code> 及其实现、异常原因字典实体/仓库/服务，以及多条 <code>trans_exception (5.3)</code> 相关 i18n 文案；</p><p><code>CLAUDE.md</code> 也同步把 <code>TransExceptionMqLog</code> 和对应回放说明删掉。可见这不是单纯清理死代码，而是整套 <code>trans_exception</code> 能力被移除。</p><p>但当前提供的需求原文只有“wmssort 不在需求库覆盖范围”的通用说明，没有任何一条要求下线 <code>trans_exception (5.3)</code>、异常上报、异常原因字典或消息补偿能力。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>如果系统中仍存在异常上报入口、历史任务、补偿流程或依赖这些字段/服务的调用方，本次改动会直接导致编译失败、运行时缺失能力，或让既有异常上报/回放链路整体消失，属于超出当前需求材料的高风险删功能。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>先确认是否有正式设计/需求要求下线 <code>trans_exception (5.3)</code> 全链路；</p><p>若没有，应恢复 <code>Parcel.exceptionCallbackStatus</code> 及相关服务/文案/补偿说明，至少保证既有异常上报能力不被本次改动顺带移除。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>以一条需要异常上报的包裹为样本，分别验证三类场景：第 1 类是本地登记异常；第 2 类是需要同步到 TT 的异常回告发送与状态回写；</p><p>第 3 类是消息交互管理页对 <code>trans_exception (5.3)</code> 的人工重放。确认这些场景在本次改动后是否仍有完整实现入口。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">118</span></span><span class="code-row"><span class="code-ln">119</span>    <span class="code-annotation">@Temporal</span>(TemporalType.TIMESTAMP)</span><span class="code-row"><span class="code-ln">120</span>    <span class="code-annotation">@Column</span>(name = <span class="code-string">"exception_time"</span>)</span><span class="code-row"><span class="code-ln">121</span>    <span class="code-keyword">private</span> Date exceptionTime;</span><span class="code-row"><span class="code-ln">122</span></span><span class="code-row code-row-target"><span class="code-ln">123</span>    <span class="code-comment">// timeline</span></span><span class="code-row code-row-target"><span class="code-ln">124</span>    <span class="code-annotation">@Temporal</span>(TemporalType.TIMESTAMP)</span><span class="code-row"><span class="code-ln">125</span>    <span class="code-annotation">@Column</span>(name = <span class="code-string">"create_time"</span>)</span><span class="code-row"><span class="code-ln">126</span>    <span class="code-keyword">private</span> Date createTime;</span><span class="code-row"><span class="code-ln">127</span></span><span class="code-row"><span class="code-ln">128</span>    <span class="code-annotation">@Temporal</span>(TemporalType.TIMESTAMP)</span><span class="code-row"><span class="code-ln">129</span>    <span class="code-annotation">@Column</span>(name = <span class="code-string">"sync_time"</span>)</span></code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-9bce99c0e4b7" data-file-path="backend/wms-sort-domain/src/main/java/io/speedx/wmssort/domain/service/impl/ParcelQueryServiceImpl.java" data-short-name="ParcelQueryServiceImpl.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/wms-sort-domain/src/main/java/io/speedx/wmssort/domain/service/impl/ParcelQueryServiceImpl.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L37-38</span><span class="finding-cat finding-cat-requirement">需求外动作</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>需求材料明确说明当前服务业务系统 <code>wmssort</code> “不在需求库覆盖范围，跳过需求识别，按常规业务规则审查，不套用需求预期豁免”，本次可对账的需求原文里没有任何一条要求删除包裹查询的导出分页放宽能力或异常记录按 <code>exceptionTime</code> 排序能力；</p><p>但 <code>ParcelQueryServiceImpl.query</code> 直接把 <code>c.isExport() ? MAX_EXPORT_SIZE : MAX_PAGE_SIZE</code> 改成固定 <code>MAX_PAGE_SIZE</code>，并把 <code>c.isOrderByExceptionTime() ? &quot;exceptionTime&quot; : &quot;createTime&quot;</code> 改成固定 <code>&quot;createTime&quot;</code>，同时 diff 还删除了 <code>ParcelQueryCriteria</code> 中对应的 <code>export</code>、<code>orderByExceptionTime</code> 字段。</p><p>这属于未见需求依据的功能收缩。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>如果现有调用方仍依赖异常记录视图按 <code>exceptionTime</code> 倒序展示，或依赖导出场景允许大于交互页的分页上限，本次改动会把结果 silently 改成按 <code>createTime</code> 排序且最多 200 条，导致导出不完整或页面顺序变化。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>恢复 <code>ParcelQueryCriteria</code> 的 <code>export</code> 与 <code>orderByExceptionTime</code> 能力，或在本次变更中补充明确的设计/需求说明，证明这些能力被有意下线且调用方已同步调整。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>准备两类查询：第 1 类是异常记录查询，构造两条 <code>createTime</code> 与 <code>exceptionTime</code> 先后顺序相反的包裹；第 2 类是导出查询，请求 <code>size</code> 大于 200。</p><p>验证异常记录查询是否仍按 <code>exceptionTime</code> 倒序返回，且导出查询是否仍能返回超过交互页上限的结果。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">32</span>    <span class="code-keyword">private</span> <span class="code-keyword">final</span> ParcelEventRepository parcelEventRepository;</span><span class="code-row"><span class="code-ln">33</span></span><span class="code-row"><span class="code-ln">34</span>    <span class="code-annotation">@Override</span></span><span class="code-row"><span class="code-ln">35</span>    <span class="code-keyword">public</span> Page&lt;Parcel&gt; query(ParcelQueryCriteria c) {</span><span class="code-row"><span class="code-ln">36</span>        int page = Math.max(<span class="code-number">0</span>, c.getPage());</span><span class="code-row code-row-target"><span class="code-ln">37</span>        int size = c.getSize() &lt;= <span class="code-number">0</span> ? <span class="code-number">20</span> : Math.min(c.getSize(), MAX_PAGE_SIZE);</span><span class="code-row code-row-target"><span class="code-ln">38</span>        PageRequest pageRequest = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, <span class="code-string">"createTime"</span>));</span><span class="code-row"><span class="code-ln">39</span>        <span class="code-keyword">return</span> parcelRepository.findAll(buildSpec(c), pageRequest);</span><span class="code-row"><span class="code-ln">40</span>    }</span><span class="code-row"><span class="code-ln">41</span></span><span class="code-row"><span class="code-ln">42</span>    <span class="code-keyword">private</span> Specification&lt;Parcel&gt; buildSpec(ParcelQueryCriteria c) {</span><span class="code-row"><span class="code-ln">43</span>        <span class="code-keyword">if</span> (c.isKeyFieldLookup()) {</span></code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-48f2c337f879" data-file-path="backend/wms-sort-facade-impl/src/main/java/io/speedx/wmssort/facade/impl/advice/AuditLogAspect.java" data-short-name="AuditLogAspect.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/wms-sort-facade-impl/src/main/java/io/speedx/wmssort/facade/impl/advice/AuditLogAspect.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L256</span><span class="finding-cat">边界条件</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 NULL-001 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 NULL-001</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [NULL-001] 连续链式取值未判空 命中了这行代码：<code>return pjp.getSignature().getDeclaringType().getSimpleName()</code>。</p><p>这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「连续链式取值未判空」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">251</span>    <span class="code-keyword">private</span> String resolveAction(ProceedingJoinPoint pjp) {</span><span class="code-row"><span class="code-ln">252</span>        AuditAction annotation = auditAction(pjp);</span><span class="code-row"><span class="code-ln">253</span>        <span class="code-keyword">if</span> (annotation != <span class="code-keyword">null</span>) {</span><span class="code-row"><span class="code-ln">254</span>            <span class="code-keyword">return</span> annotation.value();</span><span class="code-row"><span class="code-ln">255</span>        }</span><span class="code-row code-row-target"><span class="code-ln">256</span>        <span class="code-keyword">return</span> pjp.getSignature().getDeclaringType().getSimpleName()</span><span class="code-row"><span class="code-ln">257</span>                + <span class="code-string">"."</span> + pjp.getSignature().getName();</span><span class="code-row"><span class="code-ln">258</span>    }</span><span class="code-row"><span class="code-ln">259</span></span><span class="code-row"><span class="code-ln">260</span>    <span class="code-keyword">private</span> AuditAction auditAction(ProceedingJoinPoint pjp) {</span><span class="code-row"><span class="code-ln">261</span>        <span class="code-keyword">try</span> {</span></code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-3ec56c845657" data-file-path="backend/wms-sort-facade/src/main/java/io/speedx/wmssort/facade/dto/DispatchExportRequest.java" data-short-name="DispatchExportRequest.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/wms-sort-facade/src/main/java/io/speedx/wmssort/facade/dto/DispatchExportRequest.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L20-21</span><span class="finding-cat">边界条件</span><span class="evidence-line-unverified-badge" style="color:#c62828;border:1px solid #c62828;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段附近 &#177;5 行内未找到 evidence_quote 摘抄的原文，行号未经核实，下方证据代码可能不是问题真正所在的位置，请人工核实">&#9888; 行号未验证</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>DispatchExportRequest.shipmentOrderIds</code> 的说明明确写了“any number”，并且当 <code>shipmentOrderIds</code> 非空时会“ignore”其他过滤条件与 <code>30-day cap</code>。</p><p>这次新增代码没有在 DTO 层体现任何数量上限、长度约束或格式约束，意味着调用方可以一次提交超大 <code>shipmentOrderIds</code> 集合进入后续查询/导出链路。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>一旦前端或恶意调用方传入大量 <code>shipmentOrderIds</code>，后续导出逻辑很容易触发超长 <code>IN</code> 条件、超大结果集加载或超长任务参数持久化，造成导出接口资源耗尽或任务中心堆积，形成可被低成本触发的拒绝服务风险。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>在 <code>DispatchExportRequest.shipmentOrderIds</code> 上增加明确的输入边界约束，并在服务层再次校验数量与单个元素长度/格式；</p><p>同时即使走 <code>shipmentOrderIds</code> 分支，也应保留一个可配置的最大导出条数限制。示例：</p><pre class="code-block"><code><span class="code-annotation">@Size</span>(max = <span class="code-number">500</span>, message = <span class="code-string">"{validation.shipmentOrderIds.max}"</span>)
+<span class="code-keyword">private</span> List&lt;<span class="code-annotation">@NotBlank</span> <span class="code-annotation">@Size</span>(max = <span class="code-number">64</span>) String&gt; shipmentOrderIds;</code></pre><p>并在消费 <code>shipmentOrderIds</code> 的服务方法中对 <code>shipmentOrderIds.size()</code> 做硬限制，超限直接拒绝。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>构造一个 <code>DispatchExportRequest</code>，其中 <code>shipmentOrderIds</code> 包含 5000 个以上字符串，并触发导出；</p><p>验证接口会在进入查询/任务提交前返回明确的参数校验错误，而不是继续创建导出任务或执行大批量查询。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">15</span><span class="code-annotation">@EqualsAndHashCode</span>(callSuper = <span class="code-keyword">true</span>)</span><span class="code-row"><span class="code-ln">16</span><span class="code-annotation">@ToString</span>(callSuper = <span class="code-keyword">true</span>)</span><span class="code-row"><span class="code-ln">17</span><span class="code-annotation">@Schema</span>(description = <span class="code-string">"Dispatch report export request"</span>)</span><span class="code-row"><span class="code-ln">18</span><span class="code-keyword">public</span> <span class="code-keyword">class</span> DispatchExportRequest <span class="code-keyword">extends</span> DispatchQueryRequest {</span><span class="code-row"><span class="code-ln">19</span></span><span class="code-row code-row-target"><span class="code-ln">20</span>    <span class="code-annotation">@Schema</span>(description = <span class="code-string">"Ticked shipment order ids, any number. When non-empty, exactly these orders in the "</span></span><span class="code-row code-row-target"><span class="code-ln">21</span>            + <span class="code-string">"user's facility are exported and every other filter, including the 30-day cap, is ignored. "</span></span><span class="code-row"><span class="code-ln">22</span>            + <span class="code-string">"Empty or absent exports every order matching the filters."</span>)</span><span class="code-row"><span class="code-ln">23</span>    <span class="code-keyword">private</span> List&lt;String&gt; shipmentOrderIds;</span><span class="code-row"><span class="code-ln">24</span>}</span></code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-e16db7d9516a" data-file-path="backend/wms-sort-infrastructure/src/main/java/io/speedx/wmssort/infrastructure/tt/dto/TrackingCallbackRequest.java" data-short-name="TrackingCallbackRequest.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend/wms-sort-infrastructure/src/main/java/io/speedx/wmssort/infrastructure/tt/dto/TrackingCallbackRequest.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L23-24</span><span class="finding-cat">API契约</span><span class="evidence-line-unverified-badge" style="color:#c62828;border:1px solid #c62828;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段附近 &#177;5 行内未找到 evidence_quote 摘抄的原文，行号未经核实，下方证据代码可能不是问题真正所在的位置，请人工核实">&#9888; 行号未验证</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>TrackingCallbackRequest</code> 删除了 <code>reasonCode</code> 字段，并把类注释从“<code>trans_exception</code> 需要 <code>reason_code</code>”改成仅描述 <code>sc_accepted</code> / <code>pickup_station_in</code>。</p><p>这会直接改变发送给 TT 的请求结构：凡是仍需表达异常原因的调用链，序列化后的 <code>TrackingCallbackRequest</code> 将不再包含 <code>reasonCode</code>。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>如果 <code>TransExceptionCallbackService</code>、<code>TransExceptionCallbackPublisher</code> 或 <code>TransExceptionCallbackSender</code> 仍会发送 <code>statusCode = trans_exception</code> 的异常回传，请求将缺少 TT 协议要求的原因字段，导致外部回调被拒收、异常状态丢失，进而让异常件在本系统与 TT 之间出现状态不一致。</p><p>这类契约回归属于对外集成面的安全/稳定性风险。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>恢复 <code>TrackingCallbackRequest</code> 中的 <code>reasonCode</code> 字段，或在同一批变更里同步证明 <code>TrackingCallbackRequest</code> 已不再用于 <code>statusCode = trans_exception</code> 的任何发送路径；</p><p>如果协议已升级，也应同时修改所有发送方和校验逻辑，避免旧路径继续构造 <code>trans_exception</code> 但缺少 <code>reasonCode</code>。可补充类似下面的保护：</p><pre class="code-block"><code><span class="code-keyword">if</span> (<span class="code-string">"trans_exception"</span>.equals(request.getStatusCode()) &amp;&amp; request.getReasonCode() == <span class="code-keyword">null</span>) {
+    <span class="code-keyword">throw</span> <span class="code-keyword">new</span> IllegalArgumentException(<span class="code-string">"reasonCode is required when statusCode = trans_exception"</span>);
+}</code></pre></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>构造一次异常回传场景，使发送方生成 <code>TrackingCallbackRequest</code> 且 <code>statusCode</code> 为 <code>trans_exception</code>；</p><p>验证序列化后的请求体是否仍包含 <code>reasonCode</code>，并在联调或契约测试中确认 TT 不会因缺少 <code>reason_code</code> 返回参数错误。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">18</span></span><span class="code-row"><span class="code-ln">19</span>    <span class="code-keyword">private</span> String providerOrderId;</span><span class="code-row"><span class="code-ln">20</span></span><span class="code-row"><span class="code-ln">21</span>    <span class="code-keyword">private</span> String pickupContainerId;</span><span class="code-row"><span class="code-ln">22</span></span><span class="code-row code-row-target"><span class="code-ln">23</span>    <span class="code-comment">/** Status node, see TT section 6.3 (sc_accepted / pickup_station_in / ...). */</span></span><span class="code-row code-row-target"><span class="code-ln">24</span>    <span class="code-keyword">private</span> String statusCode;</span><span class="code-row"><span class="code-ln">25</span></span><span class="code-row"><span class="code-ln">26</span>    <span class="code-comment">/** Operation timestamp (epoch millis). */</span></span><span class="code-row"><span class="code-ln">27</span>    <span class="code-keyword">private</span> Long operationTime;</span><span class="code-row"><span class="code-ln">28</span></span><span class="code-row"><span class="code-ln">29</span>    <span class="code-comment">/** Node operator (system for automatic collection). */</span></span></code></pre></details></div></div></details><details class="file-group findings-file-group" open="open" id="fg-19ce6b5883d6" data-file-path="frontend/app/(main)/sorting/stats/page.tsx" data-short-name="page.tsx" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">frontend/app/(main)/sorting/stats/page.tsx</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L35-36</span><span class="finding-cat">边界条件</span><span class="evidence-line-unverified-badge" style="color:#c62828;border:1px solid #c62828;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段附近 &#177;5 行内未找到 evidence_quote 摘抄的原文，行号未经核实，下方证据代码可能不是问题真正所在的位置，请人工核实">&#9888; 行号未验证</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>frontend/app/(main)/sorting/stats/page.tsx</code> 删除了前端对导出/查询时间窗上限的校验，并明确改成“只校验开始时间早于结束时间”。</p><p>新增注释说明“最长窗口由后端控制”，但当前 <code>handleExport</code> 仍会直接把任意大的 <code>from</code>/<code>to</code> 传给 <code>exportDashboard</code> 和 <code>submitScanExport</code>，使浏览器端失去对超大时间范围请求的本地拦截。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>任何能打开该页面的用户都可以反复提交超大时间窗的统计查询或导出请求，把原本应在前端快速失败的异常流量直接打到后端统计/导出链路；即使后端最终拒绝，也会增加无意义的重请求与资源消耗，放大导出接口被滥用时的拒绝服务风险。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>在 <code>resolveWindow</code> 中恢复时间窗上限校验，至少在调用 <code>exportDashboard</code> 和 <code>submitScanExport</code> 前继续做一次本地限制；</p><p>如果上限确实要完全以后端配置为准，也应先通过配置接口下发当前上限，再据此在前端拦截超限请求，避免把明显非法的大窗口请求直接提交到服务端。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>将 <code>from</code> 设为 30 天前、<code>to</code> 设为当前时间，分别点击导出看板和导出扫描记录；预期前端直接提示时间窗超限且不发起请求，而不是把请求提交给后端后再依赖后端报错。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">30</span>  submitScanExport,</span><span class="code-row"><span class="code-ln">31</span>  type DashboardResponse,</span><span class="code-row"><span class="code-ln">32</span>  type NextStopStatRow,</span><span class="code-row"><span class="code-ln">33</span>} from <span class="code-string">"@/apis/dashboard"</span></span><span class="code-row"><span class="code-ln">34</span></span><span class="code-row code-row-target"><span class="code-ln">35</span><span class="code-comment">// The longest window is configured in Nacos and enforced by the backend only, so a</span></span><span class="code-row code-row-target"><span class="code-ln">36</span><span class="code-comment">// change there needs no frontend release; the page shows the backend's message.</span></span><span class="code-row"><span class="code-ln">37</span><span class="code-keyword">const</span> METRIC_COLS: Array&lt;keyof NextStopStatRow&gt; = [</span><span class="code-row"><span class="code-ln">38</span>  <span class="code-string">"sorted"</span>,</span><span class="code-row"><span class="code-ln">39</span>  <span class="code-string">"packed"</span>,</span><span class="code-row"><span class="code-ln">40</span>  <span class="code-string">"closed"</span>,</span><span class="code-row"><span class="code-ln">41</span>  <span class="code-string">"dispatched"</span>,</span></code></pre></details></div></div></details></div></div></details><details class="action-group action-group-optional" style="margin-bottom:14px;border:1px solid #2f855a;border-radius:8px;"><summary style="cursor:pointer;font-weight:700;font-size:15px;color:#2f855a;padding:8px 12px;list-style:none;">&#128994; 可选优化 &middot; 5 个问题</summary><div style="padding:0 12px 8px;"><div class="findings-list-wrap"><details class="file-group findings-file-group" id="fg-678be852babe" data-file-path="backend/wms-sort-domain/src/main/java/io/speedx/wmssort/domain/service/impl/ExceptionOrderUpdateServiceImpl.java" data-short-name="ExceptionOrderUpdateServiceImpl.java" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">backend/wms-sort-domain/src/main/java/io/speedx/wmssort/domain/service/impl/ExceptionOrderUpdateServiceImpl.java</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L134</span><span class="finding-cat">日志规范</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 LOG-003 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 LOG-003</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [LOG-003] 日志使用加号拼接而非占位符 命中了这行代码：<code>log.warn(&quot;[5.11 update] wms_parcel write failed, round kept: exceptionOrderId={}, action={}, &quot;</code>。</p><p>这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「日志使用加号拼接而非占位符」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">129</span>                <span class="code-keyword">if</span> (persisted.getExceptionOrderId() != <span class="code-keyword">null</span>) {</span><span class="code-row"><span class="code-ln">130</span>                    parcelRepository.save(persisted);</span><span class="code-row"><span class="code-ln">131</span>                }</span><span class="code-row"><span class="code-ln">132</span>            });</span><span class="code-row"><span class="code-ln">133</span>        } <span class="code-keyword">catch</span> (RuntimeException e) {</span><span class="code-row code-row-target"><span class="code-ln">134</span>            log.warn(<span class="code-string">"[5.11 update] wms_parcel write failed, round kept: exceptionOrderId={}, action={}, "</span></span><span class="code-row"><span class="code-ln">135</span>                    + <span class="code-string">"providerOrderId={}, trackingNo={}"</span>, entity.getId(), action,</span><span class="code-row"><span class="code-ln">136</span>                    order.getProviderOrderId(), order.getTrackingNo(), e);</span><span class="code-row"><span class="code-ln">137</span>            parcelEventService.recordFail(order.getProviderOrderId(), order.getTrackingNo(),</span><span class="code-row"><span class="code-ln">138</span>                    ParcelEventTypeEnum.EXCEPTION_ORDER, OrgConstants.OPERATOR_SYSTEM,</span><span class="code-row"><span class="code-ln">139</span>                    <span class="code-string">"wms_parcel upsert via 5.11 order snapshot failed, round kept (exception #"</span></span></code></pre></details></div></div></details><details class="file-group findings-file-group" id="fg-791f95c7de51" data-file-path="backend/wms-sort-infrastructure/src/main/java/io/speedx/wmssort/infrastructure/scheduler/SortingCallbackReplayJob.java" data-short-name="SortingCallbackReplayJob.java" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">backend/wms-sort-infrastructure/src/main/java/io/speedx/wmssort/infrastructure/scheduler/SortingCallbackReplayJob.java</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span> <span class="stat-chip stat-info">1 Info</span></span><span class="file-group-count">2 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L111-115</span><span class="finding-cat">日志规范</span><span class="evidence-line-unverified-badge" style="color:#c62828;border:1px solid #c62828;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段附近 &#177;5 行内未找到 evidence_quote 摘抄的原文，行号未经核实，下方证据代码可能不是问题真正所在的位置，请人工核实">&#9888; 行号未验证</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>新增日志仍然使用字符串加号拼接：<code>log.info(&quot;[callback-replay] circuit-broken awaiting manual replay: &quot; + &quot;in={}, out={}, create_container={}, exception_order={}&quot;, ...)</code>。</p><p>这违反了占位符日志写法，属于 <code>LOG-003</code> 命中。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>即使当前日志级别关闭，前缀字符串仍会被提前拼接；在定时任务高频执行时会带来不必要的对象创建和日志开销，放大回放任务本身的资源消耗。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>把该 <code>log.info(...)</code> 改为单个占位符模板，不要使用 <code>+</code> 拼接字符串，例如直接写成一个完整的格式串。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>在关闭 INFO 日志级别的环境下压测 <code>SortingCallbackReplayJob.runOnce()</code>，对比修改前后对象分配和 CPU 开销；修复后不应再出现由字符串拼接带来的额外分配。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">106</span>                    ccRepo.countByStatus(CallbackMqStatus.CIRCUIT_BROKEN),</span><span class="code-row"><span class="code-ln">107</span>                    eoRepo.countByStatus(CallbackMqStatus.CIRCUIT_BROKEN));</span><span class="code-row"><span class="code-ln">108</span>        } <span class="code-keyword">catch</span> (Exception e) {</span><span class="code-row"><span class="code-ln">109</span>            log.warn(<span class="code-string">"[callback-replay] failed to compute circuit-broken backlog counts"</span>, e);</span><span class="code-row"><span class="code-ln">110</span>        }</span><span class="code-row code-row-target"><span class="code-ln">111</span>    }</span><span class="code-row code-row-target"><span class="code-ln">112</span></span><span class="code-row code-row-target"><span class="code-ln">113</span>    <span class="code-keyword">private</span> &lt;T <span class="code-keyword">extends</span> CallbackMqLog&gt; int replayTopic(String topic,</span><span class="code-row code-row-target"><span class="code-ln">114</span>                                                      Supplier&lt;List&lt;T&gt;&gt; replayableRows,</span><span class="code-row code-row-target"><span class="code-ln">115</span>                                                      Consumer&lt;T&gt; save) {</span><span class="code-row"><span class="code-ln">116</span>        List&lt;T&gt; rows = replayableRows.get();</span><span class="code-row"><span class="code-ln">117</span>        int n = <span class="code-number">0</span>;</span><span class="code-row"><span class="code-ln">118</span>        <span class="code-keyword">for</span> (T row : rows) {</span><span class="code-row"><span class="code-ln">119</span>            <span class="code-keyword">try</span> {</span><span class="code-row"><span class="code-ln">120</span>                row.setStatus(CallbackMqStatus.PENDING);</span></code></pre></details></div><div class="finding-card severity-info" data-severity="info"><div class="finding-header"><span class="sev-badge info">INFO</span><span class="finding-line" title="行号">L99-105</span><span class="finding-cat">业务逻辑</span><span class="evidence-line-unverified-badge" style="color:#c62828;border:1px solid #c62828;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="模型给出的 line 字段附近 &#177;5 行内未找到 evidence_quote 摘抄的原文，行号未经核实，下方证据代码可能不是问题真正所在的位置，请人工核实">&#9888; 行号未验证</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p><code>SortingCallbackReplayJob</code> 在本次修改中删除了 <code>TransExceptionCallbackPublisherImpl.TOPIC_TRANS_EXCEPTION</code> 的重放分支，<code>runOnce()</code> 现在只对 <code>TOPIC_CREATE_CONTAINER</code> 和 <code>TOPIC_EXCEPTION_ORDER_SUBMIT</code> 等主题执行 <code>replayTopic(...)</code>，不再处理 <code>TransExceptionMqLogRepository.findReplayable(...)</code> 中积压的 <code>trans_exception</code> 消息。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>一旦 <code>trans_exception</code> 回调发送失败并进入可重放状态，这个定时任务将永久跳过该类消息，导致运输异常回调无法自动补发；</p><p>外部系统会持续看到缺失的异常状态，同步链路退化为人工介入，属于对既有失败恢复链路的安全性/可用性削弱。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>在 <code>SortingCallbackReplayJob.runOnce()</code> 中恢复 <code>TransExceptionCallbackPublisherImpl.TOPIC_TRANS_EXCEPTION</code> 的 <code>replayTopic(...)</code> 调用，并继续使用 <code>TransExceptionMqLogRepository</code> 查询和保存重放状态；</p><p>如果这是有意下线该主题，需同步删除对应生产者/消费者并补充明确的迁移保护，避免失败消息无人处理。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>构造一条 <code>TransExceptionMqLogRepository.findReplayable(...)</code> 可返回的 <code>trans_exception</code> 失败记录，执行一次 <code>SortingCallbackReplayJob.runOnce()</code>；</p><p>期望该记录被重新发布且状态更新。当前代码下该记录不会被处理，应能稳定复现积压。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln"> 94</span>                () -&gt; ccRepo.findReplayable(gapCutoff, stuckCutoff, windowStart, limit),</span><span class="code-row"><span class="code-ln"> 95</span>                ccRepo::save);</span><span class="code-row"><span class="code-ln"> 96</span>        int eo = replayTopic(ExceptionOrderSubmitPublisherImpl.TOPIC_EXCEPTION_ORDER_SUBMIT,</span><span class="code-row"><span class="code-ln"> 97</span>                () -&gt; eoRepo.findReplayable(gapCutoff, stuckCutoff, windowStart, limit),</span><span class="code-row"><span class="code-ln"> 98</span>                eoRepo::save);</span><span class="code-row code-row-target"><span class="code-ln"> 99</span>        log.info(<span class="code-string">"[callback-replay] re-published in={}, out={}, create_container={}, exception_order={}"</span>,</span><span class="code-row code-row-target"><span class="code-ln">100</span>                in, out, cc, eo);</span><span class="code-row code-row-target"><span class="code-ln">101</span>        <span class="code-keyword">try</span> {</span><span class="code-row code-row-target"><span class="code-ln">102</span>            log.info(<span class="code-string">"[callback-replay] circuit-broken awaiting manual replay: "</span></span><span class="code-row code-row-target"><span class="code-ln">103</span>                            + <span class="code-string">"in={}, out={}, create_container={}, exception_order={}"</span>,</span><span class="code-row code-row-target"><span class="code-ln">104</span>                    inRepo.countByStatus(CallbackMqStatus.CIRCUIT_BROKEN),</span><span class="code-row code-row-target"><span class="code-ln">105</span>                    outRepo.countByStatus(CallbackMqStatus.CIRCUIT_BROKEN),</span><span class="code-row"><span class="code-ln">106</span>                    ccRepo.countByStatus(CallbackMqStatus.CIRCUIT_BROKEN),</span><span class="code-row"><span class="code-ln">107</span>                    eoRepo.countByStatus(CallbackMqStatus.CIRCUIT_BROKEN));</span><span class="code-row"><span class="code-ln">108</span>        } <span class="code-keyword">catch</span> (Exception e) {</span><span class="code-row"><span class="code-ln">109</span>            log.warn(<span class="code-string">"[callback-replay] failed to compute circuit-broken backlog counts"</span>, e);</span><span class="code-row"><span class="code-ln">110</span>        }</span></code></pre></details></div></div></details><details class="file-group findings-file-group" id="fg-b22aa69e6ea2" data-file-path="backend/wms-sort-infrastructure/src/main/resources/db/migration/V40__add_sort_dashboard_covering_indexes.sql" data-short-name="V40__add_sort_dashboard_covering_indexes.sql" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">backend/wms-sort-infrastructure/src/main/resources/db/migration/V40__add_sort_dashboard_covering_indexes.sql</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">7 处影响（1 个根因）</span></summary><div class="file-group-body"><div class="finding-card cluster-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-cat">边界条件</span><span class="cluster-badge">根因 · 7 处影响</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 NULL-003 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 NULL-003</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：<code>-- is (goInception rejects SET / PREPARE). MySQL 8 builds secondary</code>。</p><p>这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「除法运算未判分母为零」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln"> 8</span>-- a day those random reads ran past the JDBC socket timeout. With every</span><span class="code-row"><span class="code-ln"> 9</span>-- column the query reads in the index, both become index-only scans.</span><span class="code-row"><span class="code-ln">10</span>--</span><span class="code-row"><span class="code-ln">11</span>-- Large tables (wms_sort_scan ~11M rows, wms_parcel ~9M rows): run in a</span><span class="code-row"><span class="code-ln">12</span>-- quiet window. Plain ALTERs only, so the file can go through Archery as</span><span class="code-row code-row-target"><span class="code-ln">13</span>-- is (goInception rejects SET / PREPARE). MySQL <span class="code-number">8</span> builds secondary</span><span class="code-row"><span class="code-ln">14</span>-- indexes in place with concurrent DML by <span class="code-keyword">default</span>; ALGORITHM / LOCK are</span><span class="code-row"><span class="code-ln">15</span>-- left out so they <span class="code-keyword">do</span> not clash with gh-ost / pt-osc <span class="code-keyword">if</span> Archery uses them.</span><span class="code-row"><span class="code-ln">16</span>-- Each ALTER drops and re-adds the index in one statement, so the old</span><span class="code-row"><span class="code-ln">17</span>-- index keeps serving queries until the <span class="code-keyword">new</span> one is built.</span><span class="code-row"><span class="code-ln">18</span>-- =====================================================================</span></code></pre></details><details class="cluster-locations"><summary>展开查看全部 7 处影响位置</summary><table class="loc-table"><thead><tr><th>文件</th><th>行</th><th>问题摘要</th></tr></thead><tbody><tr><td class="loc-file">backend/wms-sort-infrastructure/src/main/resources/db/migration/V40__add_sort_dashboard_covering_indexes.sql</td><td class="loc-line">13</td><td class="loc-snippet">固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：`-- is (goInception rejects SET / PREPARE). MySQL 8 bui…</td></tr><tr><td class="loc-file">backend/wms-sort-infrastructure/src/main/resources/db/migration/V40__add_sort_dashboard_covering_indexes.sql</td><td class="loc-line">14</td><td class="loc-snippet">固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：`-- indexes in place with concurrent DML by default; AL…</td></tr><tr><td class="loc-file">backend/wms-sort-infrastructure/src/main/resources/db/migration/V40__add_sort_dashboard_covering_indexes.sql</td><td class="loc-line">15</td><td class="loc-snippet">固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：`-- left out so they do not clash with gh-ost / pt-osc …</td></tr><tr><td class="loc-file">backend/wms-sort-infrastructure/src/main/resources/db/migration/V40__add_sort_dashboard_covering_indexes.sql</td><td class="loc-line">3</td><td class="loc-snippet">固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：`-- 300k+ rows a day (POST /api/v1/sorting/dashboard/qu…</td></tr><tr><td class="loc-file">backend/wms-sort-infrastructure/src/main/resources/db/migration/V40__add_sort_dashboard_covering_indexes.sql</td><td class="loc-line">3</td><td class="loc-snippet">固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：`-- 300k+ rows a day (POST /api/v1/sorting/dashboard/qu…</td></tr><tr><td class="loc-file">backend/wms-sort-infrastructure/src/main/resources/db/migration/V40__add_sort_dashboard_covering_indexes.sql</td><td class="loc-line">3</td><td class="loc-snippet">固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：`-- 300k+ rows a day (POST /api/v1/sorting/dashboard/qu…</td></tr><tr><td class="loc-file">backend/wms-sort-infrastructure/src/main/resources/db/migration/V40__add_sort_dashboard_covering_indexes.sql</td><td class="loc-line">7</td><td class="loc-snippet">固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：`-- wms_sort_scan, lm_carrier_name / status on wms_parc…</td></tr></tbody></table></details></div></div></details><details class="file-group findings-file-group" id="fg-9cbaf5e29162" data-file-path="frontend/apis/container.ts" data-short-name="container.ts" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">frontend/apis/container.ts</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L126</span><span class="finding-cat">边界条件</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 NULL-003 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 NULL-003</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [NULL-003] 除法运算未判分母为零 命中了这行代码：<code>return request&lt;TaskSubmission&gt;(</code>${BASE}/container/export-task${query}<code>, {</code>。</p><p>这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「除法运算未判分母为零」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">121</span>  body: ContainerExportRequest,</span><span class="code-row"><span class="code-ln">122</span>  timezone: AppTimezone,</span><span class="code-row"><span class="code-ln">123</span>  confirmDuplicate = <span class="code-keyword">false</span>,</span><span class="code-row"><span class="code-ln">124</span>): Promise&lt;TaskSubmission&gt; {</span><span class="code-row"><span class="code-ln">125</span>  <span class="code-keyword">const</span> query = `${timezoneParam(timezone)}${confirmDuplicateParam(confirmDuplicate)}`</span><span class="code-row code-row-target"><span class="code-ln">126</span>  <span class="code-keyword">return</span> request&lt;TaskSubmission&gt;(`${BASE}/container/<span class="code-keyword">export</span>-task${query}`, {</span><span class="code-row"><span class="code-ln">127</span>    method: <span class="code-string">"POST"</span>,</span><span class="code-row"><span class="code-ln">128</span>    body: JSON.stringify(body),</span><span class="code-row"><span class="code-ln">129</span>  })</span><span class="code-row"><span class="code-ln">130</span>}</span><span class="code-row"><span class="code-ln">131</span></span></code></pre></details></div></div></details></div></div></details>
+    </div>
+
+    <div id="panel-dp" class="report-panel" role="tabpanel" aria-labelledby="tab-dp">
+      <div class="dp-shell"><div class="dp-header">
+  <h1>数据权限分析报告</h1>
+  <p class="subtitle">AI Code Review · 接口级别数据权限审计</p>
+  <div class="meta-row"><div class="meta-item">项目 <strong>wms-sort-web</strong></div><div class="meta-item">涉及接口路径（自动汇总） <strong>服务 wms-sort-web · 本次无可聚合路径的权限类接口（请检查 path_pattern）</strong></div><div class="meta-item">报告日期 <strong>2026-11-05 11:16:51</strong></div><div class="meta-item">涉及角色标签 <strong>见 role_data / findings</strong></div></div>
+</div>
+
+<div class="dp-body">
+
+  <div class="dp-stats">
+    
+  <div class="summary-grid">
+    <div class="summary-card critical"><div class="count">0</div><div class="label">Critical</div></div>
+    <div class="summary-card high"><div class="count">0</div><div class="label">Major</div></div>
+    <div class="summary-card medium"><div class="count">0</div><div class="label">Minor</div></div>
+    <div class="summary-card info"><div class="count">0</div><div class="label">Info</div></div>
+  </div>
+  <p style="margin:8px 0 0;font-size:.8rem;color:#718096;">Total 0 条权限类问题 · 涉及 0 个接口（已解析路径）</p>
+
+  </div>
+
+  <div class="dp-section">
+    <div class="dp-section-title">角色权限定义</div>
+    <div class="dp-roles"><div class="role-box muted"><div class="role-icon">&#128100;</div><div class="role-info"><h3>未提供 role_data.md</h3><p class="role-md">请在仓库根目录放置 <code>role_data.md</code> 并由流水线传入 <code>--role-data-file</code>。</p></div></div></div>
+  </div>
+
+  <div class="dp-gate"></div>
+
+  <div class="dp-section">
+    <div class="dp-section-title">接口权限审计总览</div>
+    <div class="empty">暂无可解析路径的「权限与访问控制」条目；请检查 path_pattern 与 HTTP 清单。</div>
+  </div>
+
+  <div class="section"><div class="file-block endpoint-gap-block"><h3 class="api-surface-sub">Diff 中出现但未出现在「权限与访问控制」接口表中的路径（待核对）</h3><p class="inferred-hint">说明：由脚本从 diff 新增行中的 <code>@GetMapping</code> 等注解提取，未做类级路径拼接；未出现在上表可能表示本次无此类 finding、模型漏标 category/path，或该路径非 HTTP 面。请人工对照 Controller/Facade。</p><table><thead><tr><th>可疑漏列 API</th></tr></thead><tbody><tr><td><code>POST /export-task</code></td></tr></tbody></table></div></div>
+
+  <div class="dp-section">
+    <div class="dp-section-title">端点详情</div>
+    <div class="dp-folds"></div>
+  </div>
+
+  
+
+  
+
+  <div class="dp-footer"><p>本报告由 AI Code Review 生成（data_permission 模式）。权限类 finding 涉及文件：<strong>（无）</strong></p><p style="margin-top:4px;">生成时间：2026-11-05 11:16:51 · 项目：wms-sort-web</p></div>
+
+</div>
+</div>
+    </div>
+  </div>
+  <script>
+    function escHtml(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function formatSummaryInner(rawBlock) {
+      var lines = rawBlock.split(/\r?\n/);
+      var html = '';
+      var listType = null;
+
+      function closeList() {
+        if (listType) { html += '</' + listType + '>'; listType = null; }
+      }
+
+      function renderInline(text) {
+        var st = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        st = st.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        st = st.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+        return st;
+      }
+
+      lines.forEach(function(line) {
+        var trimmed = line.trim();
+        if (!trimmed) { closeList(); return; }
+
+        if (/^#{1,3}\s+/.test(trimmed)) {
+          closeList();
+          var title = trimmed.replace(/^#{1,3}\s+/, '');
+          html += '<p class="summary-section-title">' + renderInline(title) + '</p>';
+          return;
+        }
+
+        if (/^\*\*[^*]+\*\*[：:。]?$/.test(trimmed)) {
+          closeList();
+          var title2 = trimmed.replace(/^\*\*|\*\*[：:。]?$/g, '');
+          html += '<p class="summary-section-title">' + renderInline(title2) + '</p>';
+          return;
+        }
+
+        if (/^[【「『].*[】」』]$/.test(trimmed) ||
+            (trimmed.length <= 30 && /[：:]$/.test(trimmed) && !/^\d/.test(trimmed))) {
+          closeList();
+          var title3 = trimmed.replace(/^[【「『]|[】」』]$/g, '').replace(/[：:]$/, '');
+          html += '<p class="summary-section-title">' + renderInline(title3) + '</p>';
+          return;
+        }
+
+        if (/^[-*]\s+/.test(trimmed)) {
+          if (listType !== 'ul') { closeList(); html += '<ul>'; listType = 'ul'; }
+          var content = trimmed.replace(/^[-*]\s+/, '');
+          html += '<li>' + renderInline(content) + '</li>';
+          return;
+        }
+
+        if (/^[\(（]?\d+[\)）.\、]\s*/.test(trimmed)) {
+          if (listType !== 'ol') { closeList(); html += '<ol>'; listType = 'ol'; }
+          var content2 = trimmed.replace(/^[\(（]?\d+[\)）.\、]\s*/, '');
+          html += '<li>' + renderInline(content2) + '</li>';
+          return;
+        }
+
+        closeList();
+        if (trimmed.length > 280 && /[。！？][\s\u3000]/.test(trimmed)) {
+          var chunks = trimmed.split(/(?<=[。！？])[\s\u3000]+/).filter(function (c) { return c.trim(); });
+          if (chunks.length > 1) {
+            chunks.forEach(function (c) {
+              html += '<p>' + renderInline(c.trim()) + '</p>';
+            });
+            return;
+          }
+        }
+        html += '<p>' + renderInline(trimmed) + '</p>';
+      });
+
+      closeList();
+      return html;
+    }
+
+    function formatSummary() {
+      var el = document.getElementById('summary-text');
+      if (!el) return;
+      if (el.classList.contains('summary-preformatted')) return;
+      var raw = el.textContent || '';
+      raw = raw.replace(/\s+(?=本分片)/g, '\n---SHARD---\n');
+      var shards = raw.split(/\n---SHARD---\n/).map(function(s) { return s.trim(); }).filter(Boolean);
+      if (!shards.length) shards = [raw.trim()].filter(Boolean);
+
+      if (shards.length <= 1) {
+        var inner = formatSummaryInner(shards[0] || '');
+        if (inner) el.innerHTML = inner;
+        return;
+      }
+
+      var htmlShards = [];
+      for (var i = 0; i < shards.length; i++) {
+        var blockHtml = formatSummaryInner(shards[i]);
+        if (blockHtml) htmlShards.push('<div class="summary-shard">' + blockHtml + '</div>');
+      }
+      var head = htmlShards.slice(0, 3).join('');
+      var tail = htmlShards.slice(3).join('');
+      var moreBtn = '';
+      if (tail) {
+        moreBtn = '<button type="button" class="summary-toggle" id="summary-toggle-btn" aria-expanded="false">展开全部分片结论 (' + (htmlShards.length - 3) + ')</button>';
+      }
+      el.innerHTML = '<div class="summary-shards-wrap">' + head +
+        (tail ? '<div class="summary-more" id="summary-more-block" hidden>' + tail + '</div>' : '') +
+        moreBtn + '</div>';
+
+      var btn = document.getElementById('summary-toggle-btn');
+      var more = document.getElementById('summary-more-block');
+      if (btn && more) {
+        btn.addEventListener('click', function() {
+          var ex = btn.getAttribute('aria-expanded') === 'true';
+          more.hidden = ex;
+          btn.setAttribute('aria-expanded', ex ? 'false' : 'true');
+          btn.textContent = ex
+            ? ('展开全部分片结论 (' + (htmlShards.length - 3) + ')')
+            : '收起分片结论';
+        });
+      }
+    }
+
+    function switchReportTab(which) {
+      var panels = ['panel-general', 'panel-dp'];
+      var tabs = ['tab-general', 'tab-dp'];
+      var activePanel = which === 'dp' ? 'panel-dp' : 'panel-general';
+      var activeTab = which === 'dp' ? 'tab-dp' : 'tab-general';
+      panels.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) { el.classList.toggle('is-active', id === activePanel); }
+      });
+      tabs.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) { el.setAttribute('aria-selected', id === activeTab ? 'true' : 'false'); }
+      });
+    }
+
+    var activeFilter = null;
+
+    function getSearchQuery() {
+      var inp = document.getElementById('findings-search');
+      return inp ? String(inp.value || '').trim().toLowerCase() : '';
+    }
+
+    function applyFindingsFilter() {
+      var hint = document.getElementById('filter-hint');
+      var hintLabel = document.getElementById('filter-hint-label');
+
+      if (activeFilter) {
+        hintLabel.textContent = activeFilter.toUpperCase();
+        hint.style.display = 'block';
+      } else {
+        hint.style.display = 'none';
+      }
+
+      var q = getSearchQuery();
+
+      document.querySelectorAll('.findings-file-group').forEach(function(group) {
+        var visible = 0;
+        group.querySelectorAll('.finding-card').forEach(function(card) {
+          var sev = card.getAttribute('data-severity') || 'info';
+          var sevOk = !activeFilter || sev === activeFilter;
+          var textOk = !q || card.textContent.toLowerCase().indexOf(q) !== -1;
+          var show = sevOk && textOk;
+          card.style.display = show ? '' : 'none';
+          if (show) visible++;
+        });
+        group.style.display = visible === 0 ? 'none' : '';
+        // 任务115续作：finding 现在可能嵌套在 <details class="action-group"> 里，
+        // 该祖先关闭时子元素无论 style.display 如何都不会渲染，命中过滤结果时须一并展开。
+        if (visible > 0) {
+          var actionGroup = group.closest('.action-group');
+          if (actionGroup) actionGroup.open = true;
+        }
+      });
+
+      document.querySelectorAll('.file-block').forEach(function(block) {
+        if (block.classList.contains('findings-file-group')) return;
+        var rows = block.querySelectorAll('tbody tr');
+        if (!rows.length) return;
+        var vis = 0;
+        rows.forEach(function(row) {
+          if (!activeFilter || row.querySelector('.chip.' + activeFilter)) {
+            row.style.display = '';
+            vis++;
+          } else {
+            row.style.display = 'none';
+          }
+        });
+        block.style.display = vis === 0 ? 'none' : '';
+      });
+
+      // 顶部 Critical/Major 计数把「牵连影响」的 RISK/NEEDS_HUMAN 也并了进去
+      // （用户拍板口径），但这些卡片不是 .finding-card，之前点 Critical 只会
+      // 过滤上面两段、对牵连影响毫无反应，数字和实际看到的东西对不上
+      // （build TEST_pus-exchange-api/222 反馈）。按同一套口径把牵连影响的卡
+      // 也纳入过滤：RISK 对应 critical，NEEDS_HUMAN 对应 major；筛 minor/info
+      // 时牵连影响没有对应桶，全部隐藏是符合口径的。
+      var impactLevelMap = { critical: 'RISK', major: 'NEEDS_HUMAN' };
+      document.querySelectorAll('.impact-card[data-impact-level]').forEach(function(card) {
+        var level = card.getAttribute('data-impact-level');
+        var show = !activeFilter || impactLevelMap[activeFilter] === level;
+        card.style.display = show ? '' : 'none';
+        if (show && activeFilter) {
+          var d = card.closest('details');
+          if (d) d.open = true;
+        }
+      });
+    }
+
+    function filterBySeverity(chip) {
+      var filter = chip.dataset.filter;
+      if (activeFilter === filter) {
+        clearFilter();
+        return;
+      }
+      activeFilter = filter;
+      document.querySelectorAll('.filter-chip').forEach(function(c) {
+        if (c.dataset.filter === filter) {
+          c.classList.add('active');
+          c.classList.remove('dimmed');
+        } else {
+          c.classList.remove('active');
+          c.classList.add('dimmed');
+        }
+      });
+      applyFindingsFilter();
+    }
+
+    function clearFilter() {
+      activeFilter = null;
+      document.querySelectorAll('.filter-chip').forEach(function(c) {
+        c.classList.remove('active', 'dimmed');
+      });
+      applyFindingsFilter();
+    }
+
+    function initFindingsToolbar() {
+      var tb = document.getElementById('findings-toolbar');
+      if (!tb) return;
+      var groups = document.querySelectorAll('#panel-general .findings-file-group');
+      tb.style.display = groups.length ? '' : 'none';
+    }
+
+    (function () {
+      var chips = document.querySelectorAll('table .chip');
+      for (var i = 0; i < chips.length; i++) {
+        chips[i].textContent = chips[i].textContent.toUpperCase();
+      }
+
+      formatSummary();
+
+      initFindingsToolbar();
+
+      var ex = document.getElementById('expand-all-files');
+      var cl = document.getElementById('collapse-all-files');
+      if (ex) ex.addEventListener('click', function() {
+        document.querySelectorAll('.findings-file-group').forEach(function(d) { d.open = true; });
+        document.querySelectorAll('.action-group').forEach(function(d) { d.open = true; });
+      });
+      if (cl) cl.addEventListener('click', function() {
+        document.querySelectorAll('.findings-file-group').forEach(function(d) { d.open = false; });
+        document.querySelectorAll('.action-group').forEach(function(d) { d.open = false; });
+      });
+
+      var search = document.getElementById('findings-search');
+      if (search) {
+        search.addEventListener('input', function() { applyFindingsFilter(); });
+      }
+    })();
+
+    // Chart.js initialization
+    function renderCategoryChart(categoryData) {
+      var ctx = document.getElementById('categoryChart');
+      if (!ctx) return;
+      ctx = ctx.getContext('2d');
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: Object.keys(categoryData),
+          datasets: [{
+            label: '问题数量',
+            data: Object.values(categoryData),
+            // 跟报告主色（teal 系）协调的低饱和度调色板，替换 Chart.js 默认的
+            // 高饱和度七彩配色（用户反馈报告"不好看"，实测截图确认默认色彩
+            // 花哨刺眼、跟品牌色不搭）；18 色覆盖 VALID_CATEGORIES 全量枚举，
+            // 保证再多分类同时出现也不会因为数组不够长而退化成无色
+            backgroundColor: [
+              '#0f766e', '#b5651d', '#4a6fa5', '#8e6c96',
+              '#6b8f71', '#b58a3d', '#b56576', '#5c7a89',
+              '#3d8a8a', '#a3703f', '#5f7a9d', '#7a6b9d',
+              '#7fa17f', '#c29b5c', '#9d6b7a', '#6b8a9d',
+              '#8a9d6b', '#9d7a5f'
+            ]
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: true } }
+        }
+      });
+    }
+
+    // 这个短列表只是一句话摘要，不值得把 markdown 代码块渲染进一个 <li> 里——
+    // 直接去掉标记符本身，露出裸文本即可（跟 _render_markdown_lite 的完整
+    // 渲染不同，这里要的是"别露出字面 ** 和 ``` "，不是"渲染出富文本"）
+    function stripMdLite(text) {
+      return (text || '')
+        .replace(/```[a-zA-Z]*\n?/g, '')
+        .replace(/```/g, '')
+        .replace(/\*\*([^*]+)\*\*/g, '$1')
+        .replace(/`([^`]+)`/g, '$1');
+    }
+
+    function renderTopCriticals(topCriticals) {
+      var list = document.getElementById('top-criticals-list');
+      var box = document.getElementById('top-criticals');
+      if (!list) return;
+      // 一条都没有时整块收起，不留「标题 + 暂无 Critical 问题」空框占首屏
+      if (!topCriticals || !topCriticals.length) {
+        if (box) box.hidden = true;
+        list.innerHTML = '';
+        return;
+      }
+      if (box) box.hidden = false;
+      list.innerHTML = topCriticals.map(function(c) {
+        var desc = stripMdLite(c.description || '');
+        if (desc.length > 120) desc = desc.substring(0, 120) + '…';
+        // source 只有牵连影响条目才带：不标来源的话，读者会把"改动波及到的
+        // 其他调用点"当成"这段代码本身写错了"，两者要采取的动作不一样
+        var tag = c.source
+          ? '<span class="tc-source">' + escHtml(c.source) + '</span>'
+          : '';
+        return '<li>' + tag + '<strong>' + escHtml(c.file + (c.line ? ':' + c.line : '')) +
+               '</strong><span class="tc-desc">' + escHtml(desc) + '</span></li>';
+      }).join('');
+    }
+
+    // Export stubs (implemented in Task 5)
+    function exportJira() { alert('导出为 Jira 功能待实现'); }
+    function exportExcel() { alert('导出为 Excel 功能待实现'); }
+    function exportCsv() { alert('导出为 CSV 功能待实现'); }
+
+    // Inject summary data (Task 5)
+    if (typeof renderCategoryChart === 'function') renderCategoryChart({"\u8fb9\u754c\u6761\u4ef6": 5, "\u9700\u6c42\u5916\u52a8\u4f5c": 2, "\u65e5\u5fd7\u89c4\u8303": 2, "API\u5951\u7ea6": 1, "\u4e1a\u52a1\u903b\u8f91": 1});
+if (typeof renderTopCriticals === 'function') renderTopCriticals([{"file": "backend/wms-sort-domain/src/main/java/io/speedx/wmssort/domain/service/impl/ParcelQueryServiceImpl.java", "line": "39", "description": "方法 ParcelQueryServiceImpl.buildSpec——在 ParcelQueryServiceImpl.query() 中被调用（未归类）；调用 ParcelQueryServiceImpl.query 查询包裹列表时，将不再按 exceptionReasonCode、exceptionTimeFrom、exceptionTimeTo 过滤，且导出场景也被限制为 MAX_PAGE_SIZE 并固定按 createTime 排序，导致异常记录查询/导出拿到的数据集与原先条件不一致。", "source": "牵连影响"}, {"file": "backend/wms-sort-facade-impl/src/main/java/io/speedx/wmssort/facade/impl/DispatchFacadeImpl.java", "line": "633", "description": "字段 criteria（DispatchExportParams）——在 DispatchFacadeImpl.exportTask() 中被读取（接口层功能（Controller））；用户勾选订单走导出时，DispatchFacadeImpl.exportTask 会从仅设置了 facilityCode 和 shipmentOrderIds 的 criteria 里读取 orgCode，导致提交 DISPATCH_EXPORT 任务时 orgCode 为空，可能按错误的组织维度创建任务。", "source": "牵连影响"}, {"file": "backend/wms-sort-facade-impl/src/main/java/io/speedx/wmssort/facade/impl/ParcelQueryFacadeImpl.java", "line": "112", "description": "方法 ParcelQueryFacadeImpl.isKeyFieldLookup——在 ParcelQueryFacadeImpl.buildCriteria() 中被调用（接口层功能（Controller））；调用 ParcelQueryFacadeImpl.query 构建 ParcelQueryCriteria 时会把 isKeyFieldLookup(request) 的新语义带入 keyFieldLookup，导致列表查询在相同请求参数下命中的包裹数据集发生变化，前端会看到与改动前不同的查询结果。", "source": "牵连影响"}]);
+
+    // Export dropdown toggle
+    (function() {
+      var btn = document.getElementById('export-btn');
+      var menu = document.getElementById('export-menu');
+      if (!btn || !menu) return;
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var shown = menu.style.display === 'block';
+        menu.style.display = shown ? 'none' : 'block';
+      });
+      document.addEventListener('click', function() {
+        menu.style.display = 'none';
+      });
+    })();
+  </script>
+</body>
+</html>
