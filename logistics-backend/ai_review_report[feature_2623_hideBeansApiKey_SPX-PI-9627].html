@@ -1,0 +1,2616 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Code Review Report</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      /* 重新设计（用户反馈"前端样式不好看"）：底色/正文/次要文字/边框/标题
+         此前全部带一层绿色调（跟 --accent 撞在一起，显得到处都是同一种绿），
+         改成中性板岩灰基调 + 一个teal 强调色，层次更清楚，也更耐看。 */
+      --bg: #f3f4f7;
+      --card: #ffffff;
+      --text: #1c2333;
+      --muted: #667085;
+      --border: #e3e6ec;
+      --heading: #0f1420;
+      --accent: #0f766e;
+      --accent-dark: #0b5850;
+      --accent-soft: #e6f4f2;
+
+      --critical-bg: #fdeceb;
+      --critical-text: #b3261e;
+      --critical-border: #f3b7b2;
+      --critical-strong: #d1291f;
+
+      --major-bg: #fdf1e3;
+      --major-text: #a85311;
+      --major-border: #f4d19d;
+      --major-strong: #d5720f;
+
+      --minor-bg: #fdf7e0;
+      --minor-text: #8a6208;
+      --minor-border: #f1e096;
+      --minor-strong: #a37d0a;
+
+      --info-bg: #eaf1fd;
+      --info-text: #23509c;
+      --info-border: #c0d6f6;
+      --info-strong: #2f66c9;
+
+      --safe-bg: #e8f6ee;
+      --safe-text: #1a7a4c;
+      --safe-border: #aee3c4;
+
+      --chip-bg: #eef0f5;
+      --code-bg: #10182b;
+      --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+      --shadow: 0 8px 24px rgba(16, 24, 40, 0.08);
+      --shadow-lg: 0 20px 44px rgba(16, 24, 40, 0.14);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans SC", Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .page {
+      max-width: 1180px;
+      margin: 28px auto 48px;
+      padding: 0 20px;
+    }
+
+    /* 重新设计：原来是一大片高饱和绿色渐变斜切块，视觉上很"闹"；
+       改成深板岩底色 + 顶部一条细 teal 强调线，克制一些，也更像专业
+       研发工具的报告头，而不是营销落地页banner。 */
+    .hero {
+      position: relative;
+      background: linear-gradient(165deg, #0b1220 0%, #121a2c 55%, #0e2422 100%);
+      color: #f4f7fb;
+      border-radius: 18px;
+      padding: 26px 28px 24px;
+      box-shadow: var(--shadow-lg);
+      margin-bottom: 18px;
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 3px;
+      background: linear-gradient(90deg, #14b8a6, #22d3ee 45%, #14b8a6 100%);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -60px;
+      top: -60px;
+      width: 220px;
+      height: 220px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(20, 184, 166, 0.22), transparent 70%);
+      pointer-events: none;
+    }
+
+    .hero h1 {
+      margin: 0 0 10px;
+      font-size: 24px;
+      font-weight: 700;
+      line-height: 1.25;
+      letter-spacing: 0.1px;
+    }
+
+    .hero-meta {
+      margin: 0;
+      font-size: 13.5px;
+      color: #aab4c8;
+      letter-spacing: 0.01em;
+    }
+
+    .summary {
+      background: var(--card);
+      padding: 16px 18px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      margin-bottom: 20px;
+    }
+
+    .summary h2,
+    .section-title {
+      margin: 0 0 12px;
+      font-size: 18px;
+      color: var(--heading);
+    }
+
+    .subsection-title {
+      margin-top: 28px;
+    }
+
+    .api-permission-block code {
+      font-size: 12px;
+      word-break: break-all;
+    }
+
+    .api-surface-sub {
+      margin: 18px 0 8px;
+      font-size: 16px;
+      color: var(--heading);
+    }
+
+    .inferred-hint {
+      margin: 0 0 12px;
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    /* 总体结论正文区 */
+    .summary-body {
+      margin: 0 0 16px;
+      font-size: 14px;
+      color: var(--text);
+      line-height: 1.75;
+    }
+
+    .summary-body p {
+      margin: 0 0 10px;
+    }
+
+    .summary-body p:last-child {
+      margin-bottom: 0;
+    }
+
+    .summary-body ol,
+    .summary-body ul {
+      margin: 4px 0 12px;
+      padding-left: 22px;
+    }
+
+    .summary-body ol li,
+    .summary-body ul li {
+      margin-bottom: 6px;
+      line-height: 1.65;
+    }
+
+    .summary-body .summary-section-title {
+      font-weight: 700;
+      color: var(--heading);
+      margin: 16px 0 6px;
+      font-size: 13px;
+      letter-spacing: 0.3px;
+      padding-left: 8px;
+      border-left: 3px solid var(--accent);
+    }
+
+    .summary-body .summary-section-title:first-child {
+      margin-top: 0;
+    }
+
+    .summary-body strong {
+      color: var(--heading);
+      font-weight: 700;
+    }
+
+    /* 严重级别筛选区 */
+    .filter-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-top: 6px;
+    }
+
+    .filter-label {
+      font-size: 12px;
+      color: var(--muted);
+      margin-right: 2px;
+    }
+
+    .chips-impact-note {
+      width: 100%;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 5px 13px;
+      border-radius: 9px;
+      font-size: 12.5px;
+      font-weight: 700;
+      background: var(--chip-bg);
+      color: var(--heading);
+      border: 1px solid transparent;
+    }
+
+    .filter-chip {
+      cursor: pointer;
+      transition: transform 0.12s, box-shadow 0.12s, opacity 0.12s;
+      user-select: none;
+    }
+
+    .filter-chip:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 3px 8px rgba(0,0,0,0.12);
+    }
+
+    .filter-chip.active {
+      box-shadow: 0 0 0 2.5px currentColor;
+      transform: translateY(-1px);
+    }
+
+    .filter-chip.dimmed {
+      opacity: 0.4;
+    }
+
+    .critical { background: var(--critical-bg); color: var(--critical-text); border-color: var(--critical-border); }
+    .major { background: var(--major-bg); color: var(--major-text); border-color: var(--major-border); }
+    .minor { background: var(--minor-bg); color: var(--minor-text); border-color: var(--minor-border); }
+    .info { background: var(--info-bg); color: var(--info-text); border-color: var(--info-border); }
+
+    /* 筛选状态提示条 */
+    #filter-hint {
+      display: none;
+      margin: -10px 0 14px;
+      padding: 8px 14px;
+      background: var(--accent-soft);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    #filter-hint .clear-filter {
+      margin-left: 8px;
+      color: var(--accent);
+      cursor: pointer;
+      font-weight: 600;
+      text-decoration: underline;
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    /* 工具栏：搜索 + 展开折叠 */
+    .findings-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+      padding: 12px 14px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+    }
+
+    .findings-search {
+      flex: 1 1 220px;
+      min-width: 0;
+      padding: 10px 14px;
+      font: inherit;
+      font-size: 14px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+      color: var(--text);
+    }
+
+    .findings-search:focus {
+      outline: none;
+      box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.35);
+      border-color: var(--accent);
+    }
+
+    .findings-toolbar-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .toolbar-btn {
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--chip-bg);
+      color: var(--heading);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .toolbar-btn:hover {
+      background: #e3e6ec;
+    }
+
+    /* 文件 TOC */
+    .findings-toc {
+      margin-bottom: 16px;
+      padding: 10px 12px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+    }
+
+    .toc-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 8px;
+      letter-spacing: 0.04em;
+    }
+
+    .toc-pill-wrap {
+      display: flex;
+      flex-wrap: nowrap;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .toc-pill {
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      text-decoration: none;
+      color: var(--heading);
+      background: var(--chip-bg);
+      border: 1px solid var(--border);
+      transition: transform 0.12s, box-shadow 0.12s;
+    }
+
+    .toc-pill:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+
+    .toc-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .toc-dot.sev-critical { background: var(--critical-text); }
+    .toc-dot.sev-major { background: var(--major-text); }
+    .toc-dot.sev-minor { background: var(--minor-text); }
+    .toc-dot.sev-info { background: var(--info-text); }
+
+    /* 总体结论：多分片 */
+    .summary-shards-wrap {
+      margin-bottom: 4px;
+    }
+
+    .summary-shard {
+      margin-bottom: 14px;
+      padding: 12px 14px;
+      background: #fafbfd;
+      border-radius: 10px;
+      border-left: 4px solid var(--accent);
+    }
+
+    .summary-shard:last-of-type {
+      margin-bottom: 10px;
+    }
+
+    .summary-more[hidden] {
+      display: none !important;
+    }
+
+    .summary-toggle {
+      display: inline-block;
+      margin-top: 4px;
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 16px;
+      border-radius: 8px;
+      border: 1px solid var(--accent);
+      background: #fff;
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .summary-toggle:hover {
+      background: #eef8f5;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details {
+      margin-top: 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0 12px 10px;
+      background: #fafbfc;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details summary {
+      cursor: pointer;
+      padding: 10px 0;
+      font-weight: 600;
+      color: var(--accent);
+      list-style: none;
+    }
+
+    .summary-body.summary-preformatted .summary-raw-details summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .summary-raw-pre {
+      margin: 0;
+      max-height: 420px;
+      overflow: auto;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* 按文件 findings：可折叠组 + 卡片 */
+    .findings-list-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    details.file-group.findings-file-group {
+      margin: 0;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .file-group-summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 14px;
+      padding: 14px 16px;
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .file-group-summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .file-group-title {
+      display: inline-flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 14px;
+      color: var(--heading);
+      flex: 1 1 200px;
+      min-width: 0;
+    }
+
+    .file-path-text {
+      word-break: break-all;
+      line-height: 1.45;
+    }
+
+    .sev-indicator {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      margin-top: 4px;
+    }
+
+    .sev-indicator.sev-critical { background: var(--critical-text); box-shadow: 0 0 0 2px var(--critical-bg); }
+    .sev-indicator.sev-major { background: var(--major-text); box-shadow: 0 0 0 2px var(--major-bg); }
+    .sev-indicator.sev-minor { background: var(--minor-text); box-shadow: 0 0 0 2px var(--minor-bg); }
+    .sev-indicator.sev-info { background: var(--info-text); box-shadow: 0 0 0 2px var(--info-bg); }
+
+    .file-group-stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .stat-chip {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 999px;
+    }
+
+    .stat-chip.stat-critical { background: var(--critical-bg); color: var(--critical-text); }
+    .stat-chip.stat-major { background: var(--major-bg); color: var(--major-text); }
+    .stat-chip.stat-minor { background: var(--minor-bg); color: var(--minor-text); }
+    .stat-chip.stat-info { background: var(--info-bg); color: var(--info-text); }
+
+    .file-group-count {
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .file-group-body {
+      padding: 12px 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .finding-card {
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: #fff;
+      padding: 15px 17px;
+      border-left-width: 4px;
+      border-left-style: solid;
+      box-shadow: var(--shadow-sm);
+      transition: box-shadow 0.15s;
+    }
+
+    .finding-card:hover { box-shadow: var(--shadow); }
+
+    .finding-card.severity-critical { border-left-color: var(--critical-strong); background: linear-gradient(90deg, var(--critical-bg) 0%, #fff 14px); }
+    .finding-card.severity-major { border-left-color: var(--major-strong); background: linear-gradient(90deg, var(--major-bg) 0%, #fff 14px); }
+    .finding-card.severity-minor { border-left-color: var(--minor-strong); background: linear-gradient(90deg, var(--minor-bg) 0%, #fff 14px); }
+    .finding-card.severity-info { border-left-color: var(--info-strong); background: linear-gradient(90deg, var(--info-bg) 0%, #fff 14px); }
+
+    .finding-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .sev-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 4px 12px;
+      border-radius: 7px;
+      font-size: 11.5px;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .sev-badge.critical { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .sev-badge.major { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .sev-badge.minor { background: var(--minor-bg); color: var(--minor-text); border: 1px solid var(--minor-border); }
+    .sev-badge.info { background: var(--info-bg); color: var(--info-text); border: 1px solid var(--info-border); }
+
+    .finding-line {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      background: var(--chip-bg);
+      padding: 4px 8px;
+      border-radius: 6px;
+    }
+
+    .finding-cat {
+      font-size: 12.5px;
+      font-weight: 700;
+      color: var(--accent-dark);
+      background: var(--accent-soft);
+      padding: 3px 9px;
+      border-radius: 6px;
+    }
+
+    /* 需求对账三类（需求未实现/需求矛盾/需求外动作）用色块徽章而非纯文字，
+       跟严重级别徽章一样醒目——用户反馈普通文字分类容易在列表里被漏看，
+       尤其"需求未实现"现在总是 Critical。*/
+    .finding-cat-requirement {
+      background: var(--critical-bg);
+      color: var(--critical-text);
+      border: 1px solid var(--critical-border);
+      border-radius: 6px;
+      padding: 3px 10px;
+    }
+
+    /* ── 接口权限核对（附录） ── */
+    .ec-summary { cursor: pointer; font-weight: 600; padding: 8px 0; color: #2d3748; }
+    .ec-details > .ec-note { margin-top: 8px; }
+    .endpoint-coverage {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px 18px;
+      box-shadow: var(--shadow);
+      margin-bottom: 20px;
+    }
+
+    .ec-note {
+      margin: 0 0 10px;
+      font-size: 13px;
+      line-height: 1.7;
+      color: var(--muted);
+    }
+
+    .ec-note-warn {
+      padding: 9px 12px;
+      border-radius: 8px;
+      background: var(--major-bg);
+      border-left: 4px solid var(--major-strong);
+      color: var(--major-text);
+    }
+
+    .ec-note-warn strong { color: var(--major-strong); }
+
+    .ec-table-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid var(--border); }
+
+    .ec-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .ec-table th {
+      text-align: left;
+      padding: 9px 12px;
+      background: #fafbfd;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .ec-table td {
+      padding: 10px 12px;
+      border-top: 1px solid var(--border);
+      vertical-align: top;
+      line-height: 1.65;
+    }
+
+    .ec-table tbody tr:first-child td { border-top: none; }
+
+    .ec-table .ec-method,
+    .ec-table .ec-verdict { white-space: nowrap; }
+
+    .ec-table .ec-path code {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+      word-break: break-all;
+    }
+
+    .ec-table .ec-reason { color: var(--muted); }
+
+    .ec-badge {
+      display: inline-block;
+      padding: 2px 9px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .ec-badge.ec-risk { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .ec-badge.ec-pending { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .ec-badge.ec-safe { background: var(--safe-bg); color: var(--safe-text); border: 1px solid var(--safe-border); }
+
+    tr.ec-risk td { background: #fffbfa; }
+    tr.ec-pending td { background: #fffdf9; }
+
+    /* 分片没审成时的披露条：必须比正文更抢眼，否则读者会把
+       「报告里没写」误当成「这里没问题」 */
+    .shard-health-alert {
+      margin: 0 0 12px;
+      padding: 12px 15px;
+      border-radius: 10px;
+      background: var(--critical-bg);
+      border: 1px solid var(--critical-border);
+      border-left: 4px solid var(--critical-strong);
+      color: var(--critical-text);
+      font-size: 13.5px;
+      line-height: 1.7;
+    }
+
+    .shard-health-alert strong { color: var(--critical-strong); }
+
+    /* 轻档：只是少审了几个文件（提示词过长被精简），琥珀色且文件清单折叠，不抢总体结论 */
+    .shard-health-warn {
+      margin: 0 0 12px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      background: var(--major-bg);
+      border: 1px solid var(--major-border);
+      border-left: 4px solid var(--major-strong);
+      color: var(--major-text);
+      font-size: 13px;
+      line-height: 1.7;
+    }
+    .shard-health-warn strong { color: var(--major-strong); }
+    .shard-health-warn summary { cursor: pointer; margin-top: 4px; font-weight: 600; }
+    .shard-health-warn ul { margin: 6px 0 0; padding-left: 20px; }
+    .shard-health-warn li span { margin-right: 4px; border-bottom: 1px dotted var(--major-border); }
+
+    .finding-desc {
+      font-size: 14px;
+      line-height: 1.65;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* finding 卡片正文的四行结构（问题 / 后果 / 怎么改 / 怎么验）。
+       用户反馈（build 532）"文案挤在一团，难以阅读"：此前正文是一整段
+       `原因：…影响：…` 靠 white-space:pre-wrap 原样糊上去，修复建议和测试
+       场景又被折叠藏起来。改成左标签 + 右正文的两列网格，每行一个语义单元，
+       段落之间有明确留白，长句由 Python 侧按句末标点拆成多个 <p>。 */
+    .finding-body {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      font-size: 14px;
+      line-height: 1.7;
+      color: var(--text);
+    }
+
+    .fb-row {
+      display: grid;
+      grid-template-columns: 68px minmax(0, 1fr);
+      gap: 2px 14px;
+      padding: 10px 0;
+      border-top: 1px dashed var(--border);
+    }
+
+    .fb-row:first-child {
+      border-top: none;
+      padding-top: 2px;
+    }
+
+    /* 重新设计：标签从"一段带颜色的纯文字"改成小色块标签（跟 sev-badge/
+       finding-cat 同一套视觉语言），扫一眼列表就能靠色块分辨这行是"问题"
+       还是"怎么改"，比单靠文字颜色更容易一眼分辨。 */
+    .fb-label {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1.6;
+      letter-spacing: 0.03em;
+      white-space: nowrap;
+      padding: 2px 8px;
+      border-radius: 6px;
+      margin-top: 1px;
+    }
+
+    .fb-problem .fb-label { color: var(--major-text); background: var(--major-bg); }
+    .fb-impact .fb-label { color: var(--critical-text); background: var(--critical-bg); }
+    .fb-fix .fb-label { color: var(--accent-dark); background: var(--accent-soft); }
+    .fb-test .fb-label { color: var(--info-text); background: var(--info-bg); }
+
+    .fb-text {
+      min-width: 0;
+      word-break: break-word;
+    }
+
+    .fb-text > p {
+      margin: 0 0 7px;
+    }
+
+    .fb-text > p:last-child {
+      margin-bottom: 0;
+    }
+
+    .fb-text .rt-list {
+      margin: 2px 0 6px;
+      padding-left: 20px;
+    }
+
+    .fb-text .rt-list li {
+      margin-bottom: 4px;
+    }
+
+    .fb-text .code-block {
+      margin: 8px 0 4px;
+      font-size: 12.5px;
+    }
+
+    .fb-text code {
+      background: var(--chip-bg);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+    }
+
+    /* 窄屏（Jenkins 里报告常挤在窗格里看）时标签落到正文上方，不再抢走
+       62px 宽度，避免正文被压成一列细条 */
+    @media (max-width: 720px) {
+      .fb-row {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 2px;
+      }
+    }
+
+    /* 证据代码块从固定 div 改成可折叠 details（默认展开）——一份报告里
+       十几张卡片各带 8-10 行代码，读者需要能收起来快速扫结论 */
+    details.finding-evidence > summary {
+      cursor: pointer;
+      list-style: none;
+    }
+
+    details.finding-evidence > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    details.finding-evidence > summary::before {
+      content: "▾ ";
+      color: var(--muted);
+    }
+
+    details.finding-evidence:not([open]) > summary::before {
+      content: "▸ ";
+    }
+
+    /* 证据代码块（2026-07-19 补）：evidence_quote 的稳定展示位置，不再依赖
+       模型是否顺手把代码写进 description 里；纯 CSS + Python 正则高亮，
+       不引外部 JS 库，内网报告零外部依赖风险。 */
+    .finding-evidence {
+      margin-top: 10px;
+    }
+
+    .finding-evidence .detail-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .code-block {
+      margin: 0;
+      padding: 12px 15px;
+      background: var(--code-bg);
+      color: #e6edf3;
+      border-radius: 9px;
+      overflow-x: auto;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12.5px;
+      line-height: 1.6;
+    }
+
+    .code-block code {
+      white-space: pre;
+      /* 2026-09-02 用户反馈：安全/权限折叠卡里"怎么改"给的整段修复示意代码
+         （``` 代码围栏渲染出来也是 <pre class="code-block"><code>）看不清——
+         根因是 .fb-text code（第 833 行，给"问题/后果/怎么改/怎么验"正文里
+         `existsActive` 这类行内代码片段配的浅灰底色）跟这里选择器优先级/
+         特异性相同，同一个 <code> 标签只要落在 .fb-text 范围内就会被套上
+         浅灰底，而 .code-annotation/.code-keyword 这套语法高亮配色是给
+         .code-block 本来的深色底（--code-bg）设计的，叠在浅灰底上对比度
+         塌陷，几乎看不见字。显式声明透明背景覆盖掉那条通用规则，让
+         .code-block 自己的深色底透出来。 */
+      background: transparent;
+    }
+
+    .code-comment { color: #8b949e; font-style: italic; }
+    .code-string { color: #a5d6ff; }
+    .code-annotation { color: #d2a8ff; }
+    .code-keyword { color: #ff7b72; font-weight: 600; }
+    .code-number { color: #79c0ff; }
+
+    /* 带上下文的证据代码块（逐行渲染，问题行整行高亮）*/
+    .code-row {
+      display: block;
+      padding: 0 6px;
+      border-left: 3px solid transparent;
+    }
+
+    .code-row-target {
+      background: rgba(255, 123, 114, 0.16);
+      border-left-color: #ff7b72;
+    }
+
+    .code-ln {
+      display: inline-block;
+      min-width: 2.5em;
+      margin-right: 12px;
+      color: #6e7681;
+      text-align: right;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    .finding-details {
+      margin-top: 12px;
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+      padding: 0;
+      background: #fafbfd;
+    }
+
+    .finding-details > summary {
+      cursor: pointer;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--heading);
+      list-style: none;
+    }
+
+    .finding-details > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .finding-details-body {
+      padding: 0 14px 14px;
+      border-top: 1px solid var(--border);
+    }
+
+    .detail-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin: 12px 0 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .finding-suggestion p,
+    .finding-test p {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.65;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .file-block {
+      margin: 14px 0 18px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: var(--shadow);
+    }
+
+    .file-block h3 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      color: var(--heading);
+      word-break: break-all;
+    }
+
+    table {
+      border-collapse: separate;
+      border-spacing: 0;
+      width: 100%;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+    }
+
+    th, td {
+      border-bottom: 1px solid var(--border);
+      padding: 10px;
+      vertical-align: top;
+      text-align: left;
+      font-size: 13px;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      background: #fafbfd;
+      color: var(--heading);
+      font-weight: 700;
+      z-index: 1;
+    }
+
+    tbody tr:nth-child(even) { background: #fafbfd; }
+    tbody tr:last-child td { border-bottom: none; }
+
+    .empty {
+      padding: 18px;
+      border: 1px dashed var(--border);
+      border-radius: 14px;
+      color: var(--muted);
+      background: #fafbfd;
+    }
+
+    @media (max-width: 900px) {
+      .hero h1 { font-size: 22px; }
+      .summary,
+      .file-block { padding: 12px; }
+      th, td { padding: 8px; font-size: 12px; }
+      .charts-row { flex-direction: column; }
+    }
+
+    /* ── 报告标签页 ──
+       重新设计：从"按钮选中变绿色渐变块"改成分段控件（segmented control）
+       的样式——浅灰底槽 + 选中项浮成白色药丸，更接近成熟工具（如 GitHub/
+       Linear）里的页签观感，也跟下面卡片的白底形成呼应。 */
+    .report-tabs {
+      display: inline-flex;
+      gap: 2px;
+      padding: 4px;
+      margin-bottom: 18px;
+      background: #e9ebf0;
+      border-radius: 12px;
+      flex-wrap: wrap;
+    }
+    .report-tabs button {
+      font: inherit;
+      cursor: pointer;
+      padding: 8px 18px;
+      border-radius: 9px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 13.5px;
+      transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+    }
+    .report-tabs button:hover {
+      color: var(--heading);
+    }
+    .report-tabs button[aria-selected="true"] {
+      background: #ffffff;
+      color: var(--heading);
+      box-shadow: var(--shadow-sm);
+    }
+    .report-panel { display: none; }
+    .report-panel.is-active { display: block; }
+
+    /* ── 数据权限页（嵌入，与综合页隔离） ── */
+    .dp-shell {
+      font-family: "Avenir Next", "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif;
+      color: #1a2b22;
+      line-height: 1.6;
+    }
+
+    /* 重置全局 table 样式污染 */
+    .dp-shell table {
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+    }
+    .dp-shell th, .dp-shell td {
+      border: none !important;
+      border-bottom: 1px solid #edf2f7 !important;
+      background: transparent !important;
+    }
+
+    .dp-shell .dp-header {
+      position: relative;
+      background: linear-gradient(165deg, #0b1220 0%, #121a2c 55%, #0e2422 100%);
+      color: #f4f7fb;
+      padding: 26px 28px 24px;
+      border-radius: 18px;
+      margin-bottom: 24px;
+      box-shadow: var(--shadow-lg);
+      overflow: hidden;
+    }
+    .dp-shell .dp-header::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 3px;
+      background: linear-gradient(90deg, #14b8a6, #22d3ee 45%, #14b8a6 100%);
+    }
+    .dp-shell .dp-header h1 { font-size: 1.4rem; font-weight: 700; letter-spacing: .01em; margin: 0 0 6px; }
+    .dp-shell .dp-header .subtitle { margin: 0; color: #aab4c8; font-size: .9rem; }
+    .dp-shell .dp-header .meta-row { margin-top: 16px; display: flex; gap: 24px; flex-wrap: wrap; }
+    .dp-shell .dp-header .meta-item { font-size: .8rem; color: #8b95ab; }
+    .dp-shell .dp-header .meta-item strong { color: #8ce8d4; font-weight: 600; }
+
+    .dp-shell .dp-body { padding: 0 0 32px; }
+
+    /* ── dp-shell 内部组件（与 Python 生成的类名严格对齐） ── */
+
+    /* 统计卡片区（Python 生成 .summary-grid / .summary-card） */
+    .dp-shell .dp-stats { margin-bottom: 4px; }
+    .dp-shell .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+    .dp-shell .summary-card {
+      background: #fff;
+      border-radius: 14px;
+      padding: 18px 20px;
+      box-shadow: var(--shadow-sm);
+      border: 1px solid var(--border);
+      border-top: 3px solid transparent;
+    }
+    .dp-shell .summary-card.critical { border-top-color: var(--critical-strong); }
+    .dp-shell .summary-card.high     { border-top-color: var(--major-strong); }
+    .dp-shell .summary-card.medium   { border-top-color: var(--minor-strong); }
+    .dp-shell .summary-card.info     { border-top-color: var(--info-strong); }
+    .dp-shell .summary-card .count   { font-size: 2.1rem; font-weight: 800; line-height: 1; }
+    .dp-shell .summary-card.critical .count { color: var(--critical-text); }
+    .dp-shell .summary-card.high     .count { color: var(--major-text); }
+    .dp-shell .summary-card.medium   .count { color: var(--minor-text); }
+    .dp-shell .summary-card.info     .count { color: var(--info-text); }
+    .dp-shell .summary-card .label   { margin-top: 8px; font-size: .72rem; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .07em; }
+
+    /* 区块标题 */
+    .dp-shell .dp-section { margin-bottom: 24px; }
+    .dp-shell .dp-section-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--heading);
+      margin: 0 0 14px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* 角色定义盒（Python 生成 .role-box / .role-icon / .role-info） */
+    .dp-shell .dp-roles { display: flex; flex-direction: column; gap: 10px; }
+    .dp-shell .role-box {
+      background: #fff;
+      border-radius: 12px;
+      padding: 16px 20px;
+      box-shadow: 0 2px 10px rgba(17,51,38,.07);
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+    }
+    .dp-shell .role-box.muted {
+      background: #f8f9fb;
+      border: 1px solid var(--border);
+      box-shadow: none;
+    }
+    .dp-shell .role-icon { font-size: 1.8rem; line-height: 1; flex-shrink: 0; }
+    .dp-shell .role-info { flex: 1; min-width: 0; }
+    .dp-shell .role-info h3 { font-size: 1rem; font-weight: 700; color: var(--heading); margin: 0 0 4px; }
+    .dp-shell .role-info .role-md { font-size: .88rem; color: #4a5568; margin-top: 8px; line-height: 1.65; word-break: break-word; }
+    .dp-shell .role-info code { background: #edf2f7; padding: 1px 6px; border-radius: 4px; font-size: .85em; }
+
+    /* gate banner */
+    .dp-shell .dp-gate { margin-bottom: 20px; }
+
+    /* 审计表格包装（Python 生成 .table-wrap > table.dp-audit）
+       表头从深绿底改成跟报告其它表格（.ec-table）同一套浅底大写小标签，
+       整份报告的表格风格统一，不再是"深色表头 vs 浅色表头"两套语言。 */
+    .dp-shell .table-wrap {
+      overflow-x: auto;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow-sm);
+    }
+    .dp-shell table.dp-audit {
+      width: 100% !important;
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+      font-size: .84rem;
+    }
+    .dp-shell .dp-audit th {
+      background: #fafbfd !important;
+      color: var(--muted) !important;
+      padding: 11px 14px !important;
+      text-align: left !important;
+      font-size: .68rem !important;
+      font-weight: 700 !important;
+      text-transform: uppercase !important;
+      letter-spacing: .07em !important;
+      white-space: nowrap !important;
+      border-bottom: 1px solid var(--border) !important;
+      position: sticky;
+      top: 0;
+    }
+    .dp-shell .dp-audit td {
+      padding: 11px 14px !important;
+      border-bottom: 1px solid var(--border) !important;
+      vertical-align: top !important;
+      color: var(--text) !important;
+      background: transparent !important;
+    }
+    .dp-shell .dp-audit tr:last-child td { border-bottom: none !important; }
+    .dp-shell .dp-audit tr:hover td { background: #f8f9fb !important; }
+    .dp-shell .dp-audit tr.row-critical td { background: var(--critical-bg) !important; }
+    .dp-shell .dp-audit tr.row-critical:hover td { background: #fbdcda !important; }
+    .dp-shell .dp-audit tr.row-major td { background: var(--major-bg) !important; }
+    .dp-shell .dp-audit tr.row-major:hover td { background: #fbe4c4 !important; }
+
+    /* HTTP 方法 & 严重性徽标（Python 生成 .badge .badge-*） */
+    .dp-shell .badge {
+      display: inline-block; padding: 2px 9px; border-radius: 6px;
+      font-size: .72rem; font-weight: 700; letter-spacing: .04em; white-space: nowrap;
+    }
+    .dp-shell .badge-get    { background: var(--info-bg); color: var(--info-text); }
+    .dp-shell .badge-post   { background: var(--safe-bg); color: var(--safe-text); }
+    .dp-shell .badge-put    { background: var(--minor-bg); color: var(--minor-text); }
+    .dp-shell .badge-delete { background: var(--critical-bg); color: var(--critical-text); }
+    .dp-shell .badge-patch  { background: #f4f0fd; color: #6b46c1; }
+    .dp-shell .badge-critical { background: var(--critical-bg); color: var(--critical-text); border: 1px solid var(--critical-border); }
+    .dp-shell .badge-high     { background: var(--major-bg); color: var(--major-text); border: 1px solid var(--major-border); }
+    .dp-shell .badge-medium   { background: var(--minor-bg); color: var(--minor-text); border: 1px solid var(--minor-border); }
+    .dp-shell .badge-info     { background: var(--info-bg); color: var(--info-text); border: 1px solid var(--info-border); }
+
+    /* 风险文字 */
+    .dp-shell .risk-zh { font-size: .82rem; color: var(--text); font-weight: 600; line-height: 1.4; }
+
+    /* Issue 列表（Python 生成 .issue-list） */
+    .dp-shell .issue-list { list-style: none !important; margin: 6px 0 0; padding: 0; }
+    .dp-shell .issue-list li { position: relative; padding: 3px 0 3px 18px; font-size: .84rem; color: #4a5568; line-height: 1.55; }
+    .dp-shell .issue-list li::before { content: "▸"; position: absolute; left: 2px; color: #e53e3e; }
+    .dp-shell .issue-list li strong { color: var(--heading); }
+    .dp-shell .issue-list code { background: #edf2f7; padding: 1px 5px; border-radius: 3px; font-size: .85em; }
+
+    /* 修复建议卡片（Python 生成 .fix-card） */
+    .dp-shell .fix-card {
+      background: #f0faf5;
+      border-left: 4px solid var(--accent);
+      border-radius: 0 10px 10px 0;
+      padding: 13px 16px;
+      margin-top: 10px;
+    }
+    .dp-shell .fix-card h4 { font-size: .84rem; font-weight: 700; color: var(--heading); margin: 0 0 6px; }
+    .dp-shell .fix-card p, .dp-shell .fix-card li { font-size: .83rem; color: #2d4a3d; line-height: 1.6; margin: 0; }
+    .dp-shell .fix-card ul, .dp-shell .fix-card ol { padding-left: 18px; margin: 6px 0; }
+    .dp-shell .fix-card code { background: #d4efe4; padding: 1px 5px; border-radius: 4px; font-size: .85em; }
+
+    /* 代码块（Python 生成 .code-block） */
+    .dp-shell .code-block {
+      background: var(--code-bg); color: #e2e8f0; border-radius: 9px;
+      padding: 12px 16px; margin-top: 8px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: .78rem; line-height: 1.55; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+    }
+
+    /* 端点详情折叠（Python 生成 details.issue-fold） */
+    .dp-shell details.issue-fold {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: var(--shadow-sm);
+      margin-bottom: 12px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .dp-shell details.issue-fold > summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 13px 16px;
+      font-weight: 600;
+      font-size: .9rem;
+      color: var(--heading);
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid transparent;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transition: background .15s;
+    }
+    .dp-shell details.issue-fold > summary::-webkit-details-marker { display: none; }
+    .dp-shell details.issue-fold > summary::before { content: "▸"; font-size: 11px; color: var(--accent); transition: transform .15s; }
+    .dp-shell details.issue-fold[open] > summary::before { transform: rotate(90deg); }
+    .dp-shell details.issue-fold[open] > summary { border-bottom-color: var(--border); background: var(--accent-soft); }
+    .dp-shell .issue-fold-body { padding: 16px 20px; font-size: .85rem; color: #4a5568; }
+    .dp-shell .issue-fold-body p { margin: 6px 0; line-height: 1.65; }
+    .dp-shell .issue-fold-body strong { color: var(--heading); }
+
+    /* dp-fold（端点详情另一种渲染，Python 生成 details.dp-fold） */
+    .dp-shell .dp-folds { display: flex; flex-direction: column; gap: 10px; }
+    .dp-shell .dp-fold {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
+    }
+    .dp-shell .dp-fold > summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 13px 16px;
+      font-weight: 600;
+      font-size: .9rem;
+      color: var(--heading);
+      background: linear-gradient(180deg, #fafbfd 0%, #fff 100%);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .dp-shell .dp-fold > summary::-webkit-details-marker { display: none; }
+    .dp-shell .dp-fold > summary::before { content: "▸"; font-size: 11px; color: var(--accent); transition: transform .15s; }
+    .dp-shell .dp-fold[open] > summary::before { transform: rotate(90deg); }
+    .dp-shell .dp-fold-body { padding: 16px; font-size: .85rem; color: #4a5568; }
+
+    /* issue list（dp-fold 内部用） */
+    .dp-shell .dp-issue-list { list-style: none; margin: 8px 0 0; padding: 0; }
+    .dp-shell .dp-issue-list li { position: relative; padding: 3px 0 3px 18px; font-size: .84rem; color: #4a5568; }
+    .dp-shell .dp-issue-list li::before { content: "▸"; position: absolute; left: 2px; color: #e53e3e; }
+
+    /* dp-fix（dp-fold 内部修复建议） */
+    .dp-shell .dp-fix {
+      background: #f0faf5;
+      border-left: 4px solid var(--accent);
+      border-radius: 0 10px 10px 0;
+      padding: 12px 16px;
+      margin-top: 10px;
+    }
+    .dp-shell .dp-fix h4 { font-size: .84rem; font-weight: 700; color: var(--heading); margin: 0 0 6px; }
+    .dp-shell .dp-fix p, .dp-shell .dp-fix li { font-size: .83rem; color: #2d4a3d; line-height: 1.6; margin: 0; }
+    .dp-shell .dp-fix code { background: #d4efe4; padding: 1px 5px; border-radius: 4px; font-size: .85em; }
+
+    /* dp-code（dp-fold 内部代码块） */
+    .dp-shell .dp-code {
+      background: var(--code-bg); color: #e2e8f0; border-radius: 9px;
+      padding: 12px 16px; margin-top: 8px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: .78rem; line-height: 1.55; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+    }
+
+    /* 存量越权风险区块（dp-shell 内，全文扫描）*/
+    .dp-shell .legacy-privilege-block {
+      background: var(--minor-bg);
+      border: 1px solid var(--minor-border);
+      border-left: 4px solid var(--minor-strong);
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin-bottom: 16px;
+    }
+    .dp-shell .legacy-privilege-block .lp-title { font-size: 14px; font-weight: 700; color: var(--minor-strong); margin: 0 0 4px; }
+    .dp-shell .legacy-privilege-block .lp-subtitle { font-size: 12px; color: var(--minor-text); margin: 0 0 14px; }
+
+    .dp-shell .dp-footer {
+      text-align: center; font-size: .78rem; color: #a0aec0;
+      margin-top: 36px; padding-top: 20px; border-top: 1px solid var(--border);
+    }
+
+    /* ── 综合审查 Tab 权限接口表（privilege_endpoints 模式，在 dp-shell 外） ── */
+    .perm-table-wrap {
+      overflow-x: auto;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow-sm);
+    }
+    .perm-table {
+      width: 100%;
+      border-collapse: collapse !important;
+      border-spacing: 0 !important;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+      font-size: .84rem;
+    }
+    .perm-table th {
+      background: #fafbfd !important;
+      color: var(--muted) !important;
+      padding: 10px 14px !important;
+      text-align: left !important;
+      font-size: .68rem !important;
+      font-weight: 700 !important;
+      text-transform: uppercase !important;
+      letter-spacing: .07em !important;
+      white-space: nowrap !important;
+      border-bottom: 1px solid var(--border) !important;
+    }
+    .perm-table td {
+      padding: 10px 14px !important;
+      border-bottom: 1px solid var(--border) !important;
+      vertical-align: top !important;
+      color: var(--text) !important;
+      background: transparent !important;
+    }
+    .perm-table tr:last-child td { border-bottom: none !important; }
+    .perm-table tr:hover td { background: #f8f9fb !important; }
+    .api-permission-block { overflow-x: auto; }
+
+    /* 存量越权风险区块（综合审查 Tab，全文扫描） */
+    .legacy-privilege-block {
+      background: var(--minor-bg);
+      border: 1px solid var(--minor-border);
+      border-left: 4px solid var(--minor-strong);
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin-bottom: 16px;
+    }
+    .legacy-privilege-block .lp-title { font-size: 14px; font-weight: 700; color: var(--minor-strong); margin: 0 0 4px; }
+    .legacy-privilege-block .lp-subtitle { font-size: 12px; color: var(--minor-text); margin: 0 0 14px; }
+    /* 根因聚合卡片 */
+    .cluster-card { border-left: 4px solid #6366f1; }
+    .cluster-badge {
+      background: #6366f1; color: #fff;
+      font-size: 11px; padding: 2px 8px;
+      border-radius: 10px; margin-left: 8px;
+      font-weight: 600; letter-spacing: .02em;
+    }
+    .cluster-locations { margin: 8px 0 4px; }
+    .cluster-locations > summary {
+      cursor: pointer; color: #6366f1;
+      font-size: 13px; font-weight: 500;
+    }
+    .cluster-locations > summary:hover { text-decoration: underline; }
+    .loc-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+    .loc-table th, .loc-table td {
+      padding: 4px 8px; border: 1px solid #e5e7eb; text-align: left;
+    }
+    .loc-table th { background: #f9fafb; font-weight: 600; }
+    .loc-file { font-family: monospace; color: #374151; }
+    .loc-line { text-align: center; color: #6b7280; white-space: nowrap; }
+    .loc-snippet { color: #4b5563; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* ── Charts Row (并列布局) ── */
+    .charts-row {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    /* ── Chart Section ── */
+    .chart-section {
+      flex: 1 1 0;
+      min-width: 0;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .chart-container {
+      position: relative;
+      height: 260px;
+    }
+
+    /* ── Top 3 Criticals in Hero ── */
+    .top-criticals {
+      position: relative;
+      margin-top: 18px;
+      padding-top: 16px;
+      border-top: 1px solid rgba(255,255,255,0.12);
+    }
+
+    .top-criticals h3 {
+      margin: 0 0 10px;
+      font-size: 13px;
+      font-weight: 700;
+      color: #ff9d94;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .top-criticals ul {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .top-criticals li {
+      font-size: 13px;
+      color: #d6dcea;
+      line-height: 1.5;
+      padding: 9px 12px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.09);
+      border-left: 3px solid #f2645a;
+      border-radius: 0 8px 8px 0;
+    }
+
+    .top-criticals li strong {
+      color: #ffe1dc;
+      font-weight: 700;
+      display: block;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 12px;
+    }
+
+    .top-criticals[hidden] { display: none !important; }
+
+    .top-criticals .tc-desc {
+      display: block;
+      margin-top: 3px;
+    }
+
+    .top-criticals .tc-source {
+      display: inline-block;
+      margin-bottom: 4px;
+      padding: 1px 7px;
+      border-radius: 5px;
+      background: rgba(255,255,255,0.14);
+      color: #f4f7fb;
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    /* ── Export Dropdown ── */
+    .export-dropdown {
+      position: relative;
+    }
+
+    .export-menu {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 4px);
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+      min-width: 160px;
+      z-index: 100;
+      overflow: hidden;
+    }
+
+    .export-menu a {
+      display: block;
+      padding: 10px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--heading);
+      text-decoration: none;
+      transition: background 0.12s;
+    }
+
+    .export-menu a:hover {
+      background: #eef5f1;
+    }
+
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <h1>AI Code Review 报告</h1>
+      <p class="hero-meta">服务: logistics-backend | 生成时间: 2026-11-13 11:09:58</p>
+      <div class="top-criticals" id="top-criticals" hidden>
+        <h3>最需要先看的问题（Critical）</h3>
+        <ul id="top-criticals-list"></ul>
+      </div>
+    </header>
+
+    <div class="report-tabs" role="tablist" aria-label="报告视图">
+      <button type="button" role="tab" id="tab-general" aria-controls="panel-general" aria-selected="true" onclick="switchReportTab('general')">综合审查</button>
+      
+    </div>
+
+    <div id="panel-general" class="report-panel is-active" role="tabpanel" aria-labelledby="tab-general">
+    <section class="summary">
+      <h2>总体结论</h2>
+      <div id="summary-text" class="summary-body summary-preformatted"><div class="summary-condensed"><p>合并 <strong>40</strong> 个分片审查，共 <strong>20</strong> 条发现 （Critical 7 · Major 11 · Minor 2 · Info 0）。</p><p>其中本次代码本身 6 条，Critical 7 条、Major 7 条来自「牵连影响」（改动波及到的其他调用点）；两部分都在下方「需要处理的问题」里逐条展开。</p><p>逐条明细见下方「需要处理的问题」。</p><details class="summary-raw-details"><summary>展开各分片原文结论</summary><pre class="summary-raw-pre"><strong>分片 1</strong>
+
+本分片 diff 仅新增 testResetTrackendLabelStatus_PartitionsUpdateInClause 测试，未发现新增安全问题。新增代码不涉及 HTTP 入口、鉴权或生产数据访问逻辑；其他文件仅提供了上下文，未纳入本分片变更结论。
+
+<strong>分片 2</strong>
+
+本分片 PosZipCodeInfoService.java 的 diff 仅包含删除行，没有新增或修改的 + 行；按审查范围，未发现可报告的新增安全问题。本分片不涉及 HTTP 映射或鉴权逻辑变更，其他文件的上下文不作为本次安全结论的依据。
+
+<strong>分片 3</strong>
+
+本分片仅审查 BeanRefreshRouteServiceImpl.resetTrackendLabelStatus 的新增/修改行，未发现可由所提供 diff 确认的新增安全问题；日志采样减少了 trkNos 的输出量，数据库更新按每批 1000 条执行。diff 未涉及 HTTP 映射或鉴权配置，且未提供该方法的实际入口与数据范围校验，权限完整性需人工确认；其他文件的上下文不作为本分片变更结论。
+
+<strong>分片 4</strong>
+
+仅审查本分片 PosContainerImplService.java 的新增/修改行，未发现可由现有证据确认的新增安全问题：混装规则按 LoginUserUtil.getCurFacilityCode() 获取，并检查启用状态、合法性及 POE 覆盖范围，未命中时保持拦截。scanWorkShareReceptacleToContainer 的 HTTP 入口、权限配置及完整资源归属校验未在本分片 diff 中提供，需人工确认，不能据此断言接口整体无权限风险。
+
+<strong>分片 5</strong>
+
+仅审查本分片两个文件的 diff，未发现新增或修改行中可直接证实的安全问题。本分片未新增 HTTP 映射或修改鉴权逻辑；所附全局接口的实现及权限配置不在本分片 diff 内，无法据此断言其权限安全性。
+
+<strong>分片 6</strong>
+
+本分片仅审查 AbstractPartnerService.java 的实际 diff，未发现新增行引入的可确认安全问题；新增校验在 location.getFacilityCode() 或 location.getZoneId() 为空白时拒绝继续处理。该 diff 未涉及 HTTP 映射、身份鉴别或权限范围变更，全局接口清单中的其他文件不属于本分片审查范围，无法据此断言其权限安全性。
+
+<strong>分片 7</strong>
+
+本分片仅修改 UserServiceImpl 的凭证失败异常类型，使其可被 RateLimitProtect 计数；未发现新增的可确认安全问题，原有凭证校验未被移除或绕过。
+
+<strong>已审查无风险接口</strong>
+- POST /login（方法级映射，类级前缀未提供）：关联 UserServiceImpl.login，本次异常替换无新增权限风险。
+- POST /login/bi-login（路径来自代码注释）：关联 UserServiceImpl.performLogin，本次异常替换保留 currentUser.login(token) 认证流程，无新增权限风险。
+
+其他文件及全局接口清单不属于本分片实际 diff，无法据此断言其权限安全；RateLimitTargetException 的响应处理及限流配置仍需结合对应分片确认。
+接口覆盖率：本分片可关联 2 个接口，已审查 2 个，0 个存在新增权限风险，2 个无新增权限风险。
+
+<strong>分片 8</strong>
+
+本分片 diff 仅将 WebInboundParcelServiceImpl 中三处重复扫描提示改为固定字符串，未发现新增安全问题；变更不涉及身份认证、权限校验或数据范围控制。其他文件及全局接口清单未包含在本分片 diff 中，不据此断言其权限安全性。
+
+<strong>分片 9</strong>
+
+本分片仅新增 PosContainerImplServiceTest 的 Mock 配置和混装规则测试，未发现新增行引入的安全问题；LoginUserUtil 的静态模拟仅用于测试，并在 @AfterEach 中关闭。diff 不包含 HTTP 入口或生产鉴权逻辑变更，无法据此断言全局接口清单的权限安全性，相关实现需在对应分片审查。
+
+<strong>分片 10</strong>
+
+本分片仅修改 PartnerLocationSyncServiceImplTest 和 PartnerLocationSyncServiceImplV2PayloadTest，涉及 Mock 依赖替换及邮编、facilityCode、zoneId 的测试断言，未发现新增安全问题。实际 diff 不包含 HTTP 入口或生产鉴权逻辑变更；全局上下文中的其他接口不属于本分片审查范围，不能据此断言其权限安全。
+
+<strong>分片 11</strong>
+
+本分片仅涉及 AbstractPartnerServiceTest.java 的测试数据调整及新增异常分支测试；新增测试验证缺少 facilityCode 或 zoneId 时抛出 RRException，且不调用 pusApi。所提供 diff 的新增/修改行未发现安全问题，未涉及 HTTP 映射或鉴权逻辑变更；其他文件的全局上下文不属于本分片审查范围。
+
+<strong>分片 12</strong>
+
+本分片仅新增 RateLimitTargetException 导入及 credentialFailuresAreCountedByRateLimit 单元测试，未发现新增安全问题。测试覆盖账号不存在和密码错误时的异常类型，不涉及 HTTP 映射或权限策略变更；其他文件的上下文不属于本分片 diff，不据此作出安全结论。
+
+<strong>分片 13</strong>
+
+在本分片已展示的新增/修改行中，未发现可直接确认的安全问题；可见变更主要为测试和文档，不能据此认定生产代码存在漏洞。部分 diff 已截断，且所列 Service/HTTP 入口的实现与鉴权变更未在本分片展示，无法断言其权限安全性，本结论不代表完整分支已通过安全审查。
+
+<strong>分片 14</strong>
+
+本分片发现 3 项安全问题，涉及 Redis 占位与过期设置非原子、释放占位的并发竞态，以及拒绝请求残留计数导致误锁定。审查仅覆盖 RateLimitProtectAspect.java 的新增/修改行；本 diff 无 HTTP 映射或角色、数据范围变更，其他全局入口实现未在本分片 diff 内，无法断言其权限安全。
+
+<strong>分片 15</strong>
+
+本分片 diff 无新增或修改的代码行，按审查范围未发现可报告的新增安全问题。本分片不涉及 HTTP 入口变更；全局清单中的接口实现不在本分片 diff 内，无法据此断言其权限安全性。
+
+<strong>分片 16</strong>
+
+本分片 diff 未发现新增安全问题；SubscriberDto 将 apiKey 字段注释掉，有助于减少该 DTO 暴露凭证的风险。本分片不包含 HTTP 映射或鉴权逻辑变更，无法据此判断全局端点清单中的接口权限行为。
+
+<strong>分片 17</strong>
+
+本分片仅修改 MessageCode.SCAN_WARN_DUPLICATE_GEOCODED 的固定提示文案，未发现新增安全问题，未涉及鉴权、数据范围或 HTTP 入口变更。全局清单中的其他方法实现未包含在本分片 diff 内，不对其权限安全作出结论。
+
+<strong>分片 18</strong>
+
+本分片 diff 仅将 RRExceptionHandler.requestLine() 中的变量赋值语句合并为一行，未改变执行逻辑，未发现新增安全问题。未涉及 HTTP 映射、鉴权或数据范围变更；全局端点清单中的实现不在本分片 diff 内，无法据此断言其权限安全性。
+
+<strong>分片 19</strong>
+
+本分片仅为 LoginUserForm.loginName 新增 @RateLimitKey 及对应 import，未发现新增行中可确认的安全问题。diff 不包含 HTTP 入口或鉴权实现，无法据此断言全局接口权限或限流执行效果。
+
+<strong>分片 20</strong>
+
+本分片 diff 仅将 RateLimitTargetException 的两处 Javadoc 空行改为 &lt;p&gt;，不影响运行逻辑，未发现新增安全问题。未涉及 HTTP 映射、鉴权或数据范围变更；其他文件及全局接口清单的实现不在本分片 diff 内，无法据此断言其权限安全性。
+
+<strong>分片 21</strong>
+
+本分片新增扫描范围限定为 com.miq.backendcommonservice.aop.ratelimit，未发现新增行引入可确认的安全问题。本次 diff 不涉及 HTTP 映射或鉴权、数据范围规则修改；其他文件及全局接口清单的实现不在本分片 diff 内，无法据此断言其权限安全性。
+
+<strong>分片 22</strong>
+
+本分片 diff 无新增或修改的代码行，未发现符合报告范围的新增安全问题。结论仅限所提供 diff，不代表对其他分片或上下文所列接口的权限安全作出确认。
+
+<strong>分片 23</strong>
+
+本分片 WarmupController.java 的 diff 仅包含删除行，没有新增或修改的 + 行，未发现符合报告范围的新增安全问题。审查严格限定于本分片 diff，其他文件及全局接口上下文不据此作出安全结论。
+
+<strong>分片 24</strong>
+
+本分片新增代码主要补充权限注解及登录限流注解，未发现可由所提供 diff 确认的新增安全问题；未将既有实现或其他分片代码的问题归入本次 findings。未提供 role_data、完整 Shiro 配置及权限分配信息，注解运行时生效情况、具体角色授权和数据范围策略仍需人工确认，不能据此认定整个分支安全。
+
+<strong>已审查无风险接口</strong>
+以下结论均指“无新增权限风险”，路径为方法级映射；类级路径前缀未提供。
+- POST /syncByRedisCode：新增 system:redis:syncAll 校验，未扩大访问权限。
+- POST /deleteByRedisCode：新增 system:redis:syncAll 校验，未扩大访问权限。
+- GET /syncAll：保留 system:redis:syncAll 校验，仅调整注解位置。
+- POST /getByQueryKey：新增 system:redis:syncAll 校验，未扩大查询权限。
+- GET /getByKey：新增 system:redis:syncAll 校验，未新增读取逻辑。
+- GET /getIncrementByKey：新增 system:redis:syncAll 校验，未扩大操作权限。
+- GET /setIncrementByKey：新增 system:redis:syncAll 校验，未扩大操作权限。
+- GET /deleteByKey：新增 system:redis:syncAll 校验，未扩大删除权限。
+- POST /login：新增 RateLimitProtect(configKey = &quot;login&quot;)，未修改身份验证及响应逻辑。
+- GET /permissionCodeList：新增 pos:role:query、pos:role:add、pos:role:edit 任一权限校验，未新增数据返回逻辑。
+- GET /delete/{id}：新增 pos:role:edit 校验；缺少权限定义，不能推断必须使用其他删除权限标识符。
+- GET /getOne：新增 pos:role:query、pos:role:add、pos:role:edit 任一权限校验，未新增数据返回逻辑。
+- POST /reset-pwd：新增 pos:user:resetPwd 校验，未修改密码重置实现。
+
+<strong>HTTP 入口清单（方法 + 路径）</strong>
+- POST /syncByRedisCode：无新增权限风险，新增权限限制。
+- POST /deleteByRedisCode：无新增权限风险，新增权限限制。
+- GET /syncAll：无新增权限风险，原权限限制保持不变。
+- POST /getByQueryKey：无新增权限风险，新增权限限制。
+- GET /getByKey：无新增权限风险，新增权限限制。
+- GET /getIncrementByKey：无新增权限风险，新增权限限制。
+- GET /setIncrementByKey：无新增权限风险，新增权限限制。
+- GET /deleteByKey：无新增权限风险，新增权限限制。
+- POST /login：无新增权限风险，新增限流注解。
+- GET /permissionCodeList：无新增权限风险，新增权限限制。
+- GET /delete/{id}：无新增权限风险，新增权限限制。
+- GET /getOne：无新增权限风险，新增权限限制。
+- POST /reset-pwd：无新增权限风险，新增权限限制。
+
+以上入口的具体角色授权与数据范围是否符合权限体系均需人工确认；其他分片的全局方法清单不计入本分片覆盖统计。
+接口覆盖率：本分片清单共 13 个接口，已审查 13 个，0 个存在可确认的新增权限风险，13 个无新增权限风险，0 个新增权限风险结论待确认。
+
+<strong>分片 25</strong>
+
+本分片 diff 仅包含 ShiroConfig.java 的删除，没有新增或修改的代码行；按仅审查并报告“+”行的约束，无可报告的安全问题。此结论不代表已验证删除配置后的鉴权行为或其他分片接口的权限安全。
+
+<strong>分片 26</strong>
+
+本分片 diff 仅包含 UsernamePasswordRealm.java 的删除，无新增或修改的代码行；按仅审查新增/修改行的约束，无可报告的安全问题。本结论不代表已验证删除后的认证与授权行为，其他文件及全局接口清单的实现不在本分片审查范围内。
+
+<strong>分片 27</strong>
+
+本分片 diff 仅删除 pos-api 的 SysLoginController.java，没有新增或修改的代码行；按审查约束，未发现可报告的新增安全问题。其他文件及全局接口清单仅作为上下文，不属于本分片审查范围，不能据此断言其权限安全性。
+
+<strong>分片 28</strong>
+
+本分片的变更保留原有组件扫描范围，并新增 com.miq.backendcommonservice.aop.ratelimit 的扫描，未发现可由新增或修改行证实的安全问题。diff 不涉及 HTTP 映射、鉴权放行或数据范围变更；全局接口清单中的实现不在本分片 diff 内，无法据此断言其权限行为。
+
+<strong>分片 29</strong>
+
+本分片 diff 无新增或修改的代码行，未发现符合报告范围的新增安全问题。全局端点清单所涉实现不在本分片 diff 内，无法据此断言其权限行为。
+
+<strong>分片 30</strong>
+
+本分片新增/修改行未发现可确认的安全问题：登录入口新增 RateLimitProtect，resetPwd 改为使用当前用户的 loginName，消除了由请求指定密码重置对象的风险；SysMemoryCacheController 仅删除未使用的 import。
+
+<strong>已审查无风险接口 / HTTP 入口清单（方法 + 路径）</strong>
+以下为方法级映射，类级路径前缀未提供；结论仅指本次变更无新增权限风险，不代表完整鉴权链已验证。
+- POST /login：新增 RateLimitProtect(configKey = &quot;login&quot;)，未修改身份验证及返回数据逻辑，无新增权限风险。
+- POST /bi-login：新增 RateLimitProtect(configKey = &quot;login&quot;)，仍调用 userService.performLogin(userForm)，无新增权限风险。
+- POST /reset-pwd：拒绝 currentUser 为 null 的请求，并使用 currentUser.getLoginName() 调用 resetPassword，不再接受请求指定重置对象，无新增权限风险。
+
+需人工确认：未提供 role_data、LoginUserUtil.getCurrentUser() 实现及本分片对应的完整鉴权配置，无法断言完整权限体系一致性；其他分片的方法和全局端点清单不属于本次 diff 审查范围。
+接口覆盖率：本分片共 3 个接口，已审查 3 个，0 个存在新增权限风险，3 个无新增权限风险，0 个变更级结论待确认。
+
+<strong>分片 31</strong>
+
+本分片 WebDataToolController.java 的 diff 不含新增或修改（+）代码行，未发现符合报告范围的新增安全问题。按审查约束，未对删除行及其他文件的关联上下文作问题判定，本结论不代表整个分支的安全审查结果。
+
+<strong>分片 32</strong>
+
+本分片 diff 仅包含两个文件的整文件删除，没有新增或修改代码行，未发现可报告的新增安全问题；其他文件及调用链上下文不在本次审查范围内。
+
+<strong>分片 33</strong>
+
+本分片仅将 BeansApi.getItemByTrackingNumber 日志中的 apiKey 改为通过 LogUtils.mask 处理，属于减少凭证明文日志暴露的正向修改，未发现可由该 diff 确认的新增安全问题。该变更不涉及 HTTP 映射、鉴权或数据范围调整；因未提供 LogUtils.mask 实现，无法核实其具体脱敏效果。
+
+<strong>分片 34</strong>
+
+本分片仅涉及新增 WorkshareMixPoeRuleBo，未发现可由所提供 diff 确认的安全问题；未新增 HTTP 入口、鉴权配置、敏感数据输出或数据库操作。全局清单中的其他接口实现不在本分片 diff 内，无法据此判断其权限行为。
+
+<strong>分片 35</strong>
+
+本分片仅修改 ExcelRowLimit.UPLOAD_TRACKEND_PARCEL_RESET_STATUS_LIMIT，将上限调整为 50000；未发现可由该新增行直接确认的安全问题。diff 不包含 HTTP 入口或鉴权实现，不能据此断言全局接口清单的权限行为，也不足以认定上限调整会导致资源耗尽。
+
+<strong>分片 36</strong>
+
+本分片 diff 仅包含删除行，无新增或修改的代码行；按审查范围，未发现可报告的新增安全问题。本分片未涉及 HTTP 映射变更，其他接口的权限行为无法由本分片 diff 判断。
+
+<strong>分片 37</strong>
+
+本分片新增的 PartnerLocationSyncDto.getZipCode() 使用空值安全的 StringUtils 方法完成邮编截取与去除首尾空格，未发现可由所提供 diff 确认的新增安全问题。本次 diff 不涉及 HTTP 入口、鉴权或数据范围变更；全局清单中的其他接口实现不在本分片 diff 内，无法据此断言其权限安全性。
+
+<strong>分片 38</strong>
+
+本分片 diff 仅修改 SysDictTypeEnum 的枚举分隔符并新增 WS_MIX_POE_RULE 及其注释，未发现新增安全问题。变更未涉及 HTTP 入口、鉴权或数据范围控制；其他分片的接口实现不在本次 diff 内，无法据此断言其权限安全性。
+
+<strong>分片 39</strong>
+
+本分片 diff 无新增或修改的代码行，按仅报告新增/修改行问题的审查范围，未发现可报告的新增安全问题。全局端点清单中的实现与权限校验不在本分片 diff 内，无法据此断言其权限安全性。
+
+<strong>分片 40</strong>
+
+本分片 diff 仅删除 DiagnoseController.java 和 ReportTaskJobDebugController.java，没有新增或修改行，因此未发现符合报告范围的新增安全问题。其他文件的上下文与全局接口清单不属于本分片 diff 的新增代码范围，不据此作出安全结论。</pre></details></div></div>
+      <div class="filter-row">
+        <span class="filter-label">点击筛选:</span>
+        <div class="chips">
+          <span class="chip critical filter-chip" data-filter="critical" onclick="filterBySeverity(this)">Critical: 7</span>
+          <span class="chip major filter-chip" data-filter="major" onclick="filterBySeverity(this)">Major: 11</span>
+          <span class="chip minor filter-chip" data-filter="minor" onclick="filterBySeverity(this)">Minor: 2</span>
+          <span class="chip info filter-chip" data-filter="info" onclick="filterBySeverity(this)">Info: 0</span>
+          <span class="chip">Total: 20</span>
+        </div>
+        <div class="chips-impact-note">牵连影响另有 49 条判定为安全，不计入以上统计</div>
+      </div>
+    </section>
+
+    <div class="charts-row">
+      <div class="chart-section" id="chart-section">
+        <h3 class="section-title">问题分布</h3>
+        <div class="chart-container">
+          <canvas id="categoryChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div id="filter-hint">
+      筛选中: <strong id="filter-hint-label"></strong>，仅显示对应问题
+      <span class="clear-filter" onclick="clearFilter()">清除筛选</span>
+    </div>
+
+    <div class="findings-toolbar" id="findings-toolbar" style="display: none;">
+      <!-- 筛选按钮已下线：与上方「总体结论」区的 filter-row（Critical/Major/Minor/Info 计数
+           chip）功能重复，且从未挂过点击事件，是从未生效的死代码（用户反馈"这个筛选多余了"）。
+           筛选统一走上方 filter-row 的 filterBySeverity()，这里只保留搜索 + 导出。 -->
+      <input type="text" class="findings-search" id="findings-search" placeholder="搜索文件/描述…">
+      <div class="export-dropdown">
+        <button class="toolbar-btn" id="export-btn">导出 ▼</button>
+        <div class="export-menu" id="export-menu" style="display:none;">
+          <a href="#" onclick="exportJira()">导出为 Jira</a>
+          <a href="#" onclick="exportExcel()">导出为 Excel</a>
+          <a href="#" onclick="exportCsv()">导出为 CSV</a>
+        </div>
+      </div>
+    </div>
+
+    <h2 class="section-title">需要处理的问题</h2><h2 class="section-title subsection-title">本次代码的问题（按处理方式分组）</h2><details class="action-group action-group-fix_now" open="open" style="margin-bottom:14px;border:1px solid #c53030;border-radius:8px;"><summary style="cursor:pointer;font-weight:700;font-size:15px;color:#c53030;padding:8px 12px;list-style:none;">&#128308; 立即修代码 &middot; 4 个问题</summary><div style="padding:0 12px 8px;"><div class="findings-list-wrap"><details class="file-group findings-file-group" open="open" id="fg-383d70969619" data-file-path="backend-common-service/src/main/java/com/miq/backendcommonservice/aop/ratelimit/RateLimitProtectAspect.java" data-short-name="RateLimitProtectAspect.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend-common-service/src/main/java/com/miq/backendcommonservice/aop/ratelimit/RateLimitProtectAspect.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">3 Major</span></span><span class="file-group-count">3 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major" data-fkey="8e0ef2800c" data-fid="M2"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L149-151</span><span class="finding-cat">并发安全</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>RateLimitProtectAspect.release 对 redisKey 执行 decrement 后，再根据返回值执行独立的 delete，且未校验当前计数是否仍属于这次请求占位时的窗口。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>release 将计数减至 0 后，另一个同 bizKey 请求可以先 increment 并进入凭证校验，随后 release 的 delete 会删除该请求的占位，使凭证失败不再被计数。</p><p>若原 redisKey 已过期，尚未完成的旧请求也会通过 release 扣减新窗口的计数，削弱并发场景下的防爆破限制。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>为 around 的占位记录关联计数窗口标识，并在 release 中使用 Lua 脚本原子校验窗口、扣减及必要时删除；旧窗口的请求不得修改新窗口计数。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>控制并发顺序：先让 release 的 decrement 返回 0，暂停 delete，再让同一 bizKey 的另一个请求 increment 并返回 VERIFY_FAILURE，最后恢复 delete，断言失败计数仍保留。</p><p>另让旧请求执行跨越 redisKey 过期时间，创建新窗口后再执行旧请求的 release，断言新窗口计数不变。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">144</span>    }</span><span class="code-row"><span class="code-ln">145</span></span><span class="code-row"><span class="code-ln">146</span>    <span class="code-comment">/** 把占的序号还回去（不是凭证类失败，不该算一次尝试）。 */</span></span><span class="code-row"><span class="code-ln">147</span>    <span class="code-keyword">private</span> <span class="code-keyword">void</span> release(String redisKey) {</span><span class="code-row"><span class="code-ln">148</span>        <span class="code-keyword">try</span> {</span><span class="code-row code-row-target"><span class="code-ln">149</span>            Long n = redisTemplate.opsForValue().decrement(redisKey);</span><span class="code-row code-row-target"><span class="code-ln">150</span>            <span class="code-keyword">if</span> (n != <span class="code-keyword">null</span> &amp;&amp; n &lt;= <span class="code-number">0</span>) {</span><span class="code-row code-row-target"><span class="code-ln">151</span>                redisTemplate.delete(redisKey);</span><span class="code-row"><span class="code-ln">152</span>            }</span><span class="code-row"><span class="code-ln">153</span>        } <span class="code-keyword">catch</span> (Exception e) {</span><span class="code-row"><span class="code-ln">154</span>            log.warn(<span class="code-string">"rate-limit redis release failed, ignore. key={}"</span>, redisKey, e);</span><span class="code-row"><span class="code-ln">155</span>        }</span><span class="code-row"><span class="code-ln">156</span>    }</span></code></pre></details></div><div class="finding-card severity-major" data-severity="major" data-fkey="b845521f44" data-fid="M3"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L86-93</span><span class="finding-cat">并发安全</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>RateLimitProtectAspect.around 将 increment 和 expire 分为独立 Redis 命令，且只有 reserved 等于 1 或 rule.getThreshold() 时才设置过期时间；</p><p>increment 成功后进程退出或 expire 失败，已增加的计数不会回滚。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>首次占位后若未设置过期时间，同一 bizKey 的后续失败请求可使计数达到阈值；如果阈值处的 expire 同样未成功，该 bizKey 将持续被拒绝，无法按 rule.getLockSeconds() 自动恢复。</p><p>达到阈值时更新过期时间失败，也可能使实际锁定时长沿用原计数窗口。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>将 around 中的 increment、阈值判断及首次/达到阈值时的 expire 合并为一个 Redis Lua 脚本，原子返回尝试序号并设置对应过期时间，避免产生没有过期时间的计数。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>使用真实 Redis，在首次 increment 成功但 expire 尚未执行时中断请求执行，验证 redisKey 不会遗留无过期时间的计数；</p><p>另覆盖达到 rule.getThreshold() 时的过期时间更新，确认锁定后能够按 rule.getLockSeconds() 恢复。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">81</span>        String redisKey = KEY_PREFIX + protect.configKey() + <span class="code-string">":"</span> + bizKey;</span><span class="code-row"><span class="code-ln">82</span></span><span class="code-row"><span class="code-ln">83</span>        <span class="code-comment">// 先占位再判断：INCR 是原子的，并发请求拿到不同序号</span></span><span class="code-row"><span class="code-ln">84</span>        Long reserved = <span class="code-keyword">null</span>;</span><span class="code-row"><span class="code-ln">85</span>        <span class="code-keyword">try</span> {</span><span class="code-row code-row-target"><span class="code-ln">86</span>            reserved = redisTemplate.opsForValue().increment(redisKey);</span><span class="code-row code-row-target"><span class="code-ln">87</span>            <span class="code-keyword">if</span> (reserved != <span class="code-keyword">null</span>) {</span><span class="code-row code-row-target"><span class="code-ln">88</span>                <span class="code-keyword">if</span> (reserved == rule.getThreshold()) {</span><span class="code-row code-row-target"><span class="code-ln">89</span>                    <span class="code-comment">// 最后一次允许的尝试：TTL 改为锁定时长（阈值为 1 时也走这里）</span></span><span class="code-row code-row-target"><span class="code-ln">90</span>                    redisTemplate.expire(redisKey, rule.getLockSeconds(), TimeUnit.SECONDS);</span><span class="code-row code-row-target"><span class="code-ln">91</span>                } <span class="code-keyword">else</span> <span class="code-keyword">if</span> (reserved == 1L) {</span><span class="code-row code-row-target"><span class="code-ln">92</span>                    <span class="code-comment">// 固定窗口：只在首次尝试时设 TTL，之后不刷新</span></span><span class="code-row code-row-target"><span class="code-ln">93</span>                    redisTemplate.expire(redisKey, rule.getCounterTtlSeconds(), TimeUnit.SECONDS);</span><span class="code-row"><span class="code-ln">94</span>                }</span><span class="code-row"><span class="code-ln">95</span>            }</span><span class="code-row"><span class="code-ln">96</span>        } <span class="code-keyword">catch</span> (Exception e) {</span><span class="code-row"><span class="code-ln">97</span>            log.warn(<span class="code-string">"rate-limit redis reserve failed, fail-open. key={}"</span>, redisKey, e);</span><span class="code-row"><span class="code-ln">98</span>        }</span></code></pre></details></div><details class="finding-security-fold" style="margin-top:8px;border-top:1px dashed #e2e2e2;padding-top:8px;"><summary style="cursor:pointer;font-weight:600;font-size:13px;color:#555;">🔒 安全/权限相关 · 1 项（点击展开）</summary><div class="finding-card severity-major" data-severity="major" data-fkey="e7b9ebd2f6" data-fid="M1"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L105-109</span><span class="finding-cat">安全风险</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>RateLimitProtectAspect.around 在 attempt 大于 rule.getThreshold() 时直接返回，但此前 increment 已增加 redisKey，拒绝分支不会释放此次占位。</p><p>并发占位因此会把未执行凭证校验的请求永久计入当前窗口。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>针对同一 bizKey 并发发送超过阈值的请求，即使所有进入业务的方法最终均抛出不计次数的账号状态异常，被拒绝请求留下的计数仍无法由 release 清除。</p><p>攻击者可利用这些请求制造或维持窗口内的误锁定，使本应不累计尝试次数的账号状态失败也消耗登录额度。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>修改 around 的 Redis 占位逻辑，通过 Lua 脚本先原子检查阈值，仅为允许进入业务的请求递增；达到阈值后直接返回拒绝结果，不再增加计数，并与 release 的原子窗口校验配套实现。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>设置 rule.getThreshold() 为 3，针对同一 bizKey 同时发送 6 次请求，暂停已进入业务的 3 次请求直至其余请求被拒绝，再令这 3 次请求全部抛出普通业务异常并执行 release。</p><p>断言 redisKey 不残留计数，后续请求不会因未执行凭证校验的请求而被锁定。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">100</span>        <span class="code-keyword">if</span> (reserved == <span class="code-keyword">null</span>) {</span><span class="code-row"><span class="code-ln">101</span>            <span class="code-keyword">return</span> pjp.proceed();</span><span class="code-row"><span class="code-ln">102</span>        }</span><span class="code-row"><span class="code-ln">103</span>        long attempt = reserved;</span><span class="code-row"><span class="code-ln">104</span></span><span class="code-row code-row-target"><span class="code-ln">105</span>        <span class="code-keyword">if</span> (attempt &gt; rule.getThreshold()) {</span><span class="code-row code-row-target"><span class="code-ln">106</span>            incrementCounter(METRIC_REQUESTS_BLOCKED, protect.configKey());</span><span class="code-row code-row-target"><span class="code-ln">107</span>            log.info(<span class="code-string">"rate-limit: blocked. configKey={} bizKey={} attempt={}"</span>,</span><span class="code-row code-row-target"><span class="code-ln">108</span>                    protect.configKey(), bizKey, attempt);</span><span class="code-row code-row-target"><span class="code-ln">109</span>            <span class="code-keyword">return</span> ResponseObject.failure(ResponseCode.VERIFY_FAILURE, resolveLockedMessage(rule));</span><span class="code-row"><span class="code-ln">110</span>        }</span><span class="code-row"><span class="code-ln">111</span></span><span class="code-row"><span class="code-ln">112</span>        Object result;</span><span class="code-row"><span class="code-ln">113</span>        <span class="code-keyword">try</span> {</span><span class="code-row"><span class="code-ln">114</span>            result = pjp.proceed();</span></code></pre></details></div></details></div></details><details class="file-group findings-file-group" open="open" id="fg-0ad90269daf4" data-file-path="backend-common/src/main/java/com/miq/backendcommon/dto/subscriber/SubscriberDto.java" data-short-name="SubscriberDto.java" data-worst-severity="major"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-major" aria-hidden="true"></span><span class="file-path-text">backend-common/src/main/java/com/miq/backendcommon/dto/subscriber/SubscriberDto.java</span></span><span class="file-group-stats"><span class="stat-chip stat-major">1 Major</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-major" data-severity="major" data-fkey="1a7418d3a8" data-fid="M5"><div class="finding-header"><span class="sev-badge major">MAJOR</span><span class="finding-line" title="行号">L24</span><span class="finding-cat finding-cat-requirement">需求外动作</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>需求 Brief Summary 要求对日志中的 Beans API key 中间部分脱敏，SubscriberDto 却将 apiKey 字段整行注释掉；</p><p>可见材料没有说明 SubscriberDto.apiKey 与 Beans 日志脱敏之间的关系，也没有要求删除该字段。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>SubscriberDto 不再声明 apiKey，依赖该 DTO 接收或输出 apiKey 的调用将失去原有字段支持。这改变了数据传输结构，而不只是隐藏日志中的敏感内容。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>恢复 SubscriberDto.apiKey，在实际输出 Beans API key 的日志位置执行脱敏；如确需删除该 DTO 字段，应单独确认接口变更需求及调用方兼容性。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>对比修改前后 SubscriberDto 的序列化与反序列化结果，确认 apiKey 字段契约保持不变；另行验证 Beans 日志只隐藏密钥中间部分，不影响实际请求使用完整密钥。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">19</span>    <span class="code-keyword">private</span> Date updatedAt;</span><span class="code-row"><span class="code-ln">20</span>    <span class="code-keyword">private</span> Date createdAt;</span><span class="code-row"><span class="code-ln">21</span></span><span class="code-row"><span class="code-ln">22</span>    <span class="code-annotation">@NotNull</span>(message = <span class="code-string">"orgId must not be null"</span>)</span><span class="code-row"><span class="code-ln">23</span>    <span class="code-keyword">private</span> Long orgId;</span><span class="code-row code-row-target"><span class="code-ln">24</span>    <span class="code-comment">// private String apiKey;</span></span><span class="code-row"><span class="code-ln">25</span>    <span class="code-annotation">@NotBlank</span>(message = <span class="code-string">"status must not be blank"</span>)</span><span class="code-row"><span class="code-ln">26</span>    <span class="code-keyword">private</span> String status;</span><span class="code-row"><span class="code-ln">27</span>    <span class="code-keyword">private</span> String clientCode;</span><span class="code-row"><span class="code-ln">28</span>    <span class="code-annotation">@NotBlank</span>(message = <span class="code-string">"orgCode must not be blank"</span>)</span><span class="code-row"><span class="code-ln">29</span>    <span class="code-keyword">private</span> String orgCode;</span></code></pre></details></div></div></details></div></div></details><details class="action-group action-group-optional" style="margin-bottom:14px;border:1px solid #2f855a;border-radius:8px;"><summary style="cursor:pointer;font-weight:700;font-size:15px;color:#2f855a;padding:8px 12px;list-style:none;">&#128994; 可选优化 &middot; 1 个问题</summary><div style="padding:0 12px 8px;"><div class="findings-list-wrap"><details class="file-group findings-file-group" id="fg-383d70969619" data-file-path="backend-common-service/src/main/java/com/miq/backendcommonservice/aop/ratelimit/RateLimitProtectAspect.java" data-short-name="RateLimitProtectAspect.java" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">backend-common-service/src/main/java/com/miq/backendcommonservice/aop/ratelimit/RateLimitProtectAspect.java</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor" data-fkey="4cdb8f3359" data-fid="M4"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L85-101</span><span class="finding-cat finding-cat-requirement">需求外动作</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>需求仅要求 Beans API key 日志脱敏，但 RateLimitProtectAspect.around 将原来的前置读取计数、失败后递增改为业务执行前递增占位，并新增大小写归一化和释放计数逻辑；</p><p>同一 diff 还在 SysLoginController.login 上增加 @RateLimitProtect(configKey = &quot;login&quot;) 并加入组件扫描。</p><p>这是一组独立的登录限流行为变更，不是日志脱敏所需的改动。</p></div></div><div class="fb-row fb-impact"><div class="fb-label">后果</div><div class="fb-text"><p>当限流配置启用且存在有效 login 规则时，登录请求会在调用 userService.login 前占用计数，超过阈值时直接返回锁定响应；并发请求也会参与这一判断。本次日志脱敏发布因此同时引入了登录放行条件的变化。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>将 RateLimitProtectAspect 的行为重写、SysLoginController.login 的限流注解、LoginUserForm 的 @RateLimitKey 及配套组件扫描和测试拆到独立需求中，本次仅保留 Beans 日志脱敏相关改动。</p></div></div><div class="fb-row fb-test"><div class="fb-label">怎么验</div><div class="fb-text"><p>分别在限流关闭、启用且存在有效 login 规则的条件下，对 SysLoginController.login 执行连续失败和并发登录测试，核对限流变更的独立验收结果；确认仅发布日志脱敏时不会改变登录放行条件。</p></div></div></div><details class="finding-evidence" open><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln"> 80</span>        }</span><span class="code-row"><span class="code-ln"> 81</span>        String redisKey = KEY_PREFIX + protect.configKey() + <span class="code-string">":"</span> + bizKey;</span><span class="code-row"><span class="code-ln"> 82</span></span><span class="code-row"><span class="code-ln"> 83</span>        <span class="code-comment">// 先占位再判断：INCR 是原子的，并发请求拿到不同序号</span></span><span class="code-row"><span class="code-ln"> 84</span>        Long reserved = <span class="code-keyword">null</span>;</span><span class="code-row code-row-target"><span class="code-ln"> 85</span>        <span class="code-keyword">try</span> {</span><span class="code-row code-row-target"><span class="code-ln"> 86</span>            reserved = redisTemplate.opsForValue().increment(redisKey);</span><span class="code-row code-row-target"><span class="code-ln"> 87</span>            <span class="code-keyword">if</span> (reserved != <span class="code-keyword">null</span>) {</span><span class="code-row code-row-target"><span class="code-ln"> 88</span>                <span class="code-keyword">if</span> (reserved == rule.getThreshold()) {</span><span class="code-row code-row-target"><span class="code-ln"> 89</span>                    <span class="code-comment">// 最后一次允许的尝试：TTL 改为锁定时长（阈值为 1 时也走这里）</span></span><span class="code-row code-row-target"><span class="code-ln"> 90</span>                    redisTemplate.expire(redisKey, rule.getLockSeconds(), TimeUnit.SECONDS);</span><span class="code-row code-row-target"><span class="code-ln"> 91</span>                } <span class="code-keyword">else</span> <span class="code-keyword">if</span> (reserved == 1L) {</span><span class="code-row code-row-target"><span class="code-ln"> 92</span>                    <span class="code-comment">// 固定窗口：只在首次尝试时设 TTL，之后不刷新</span></span><span class="code-row code-row-target"><span class="code-ln"> 93</span>                    redisTemplate.expire(redisKey, rule.getCounterTtlSeconds(), TimeUnit.SECONDS);</span><span class="code-row code-row-target"><span class="code-ln"> 94</span>                }</span><span class="code-row code-row-target"><span class="code-ln"> 95</span>            }</span><span class="code-row code-row-target"><span class="code-ln"> 96</span>        } <span class="code-keyword">catch</span> (Exception e) {</span><span class="code-row code-row-target"><span class="code-ln"> 97</span>            log.warn(<span class="code-string">"rate-limit redis reserve failed, fail-open. key={}"</span>, redisKey, e);</span><span class="code-row code-row-target"><span class="code-ln"> 98</span>        }</span><span class="code-row code-row-target"><span class="code-ln"> 99</span>        <span class="code-comment">// proceed 不能放进上面的 try，否则业务异常会被当成 Redis 故障再执行一次</span></span><span class="code-row code-row-target"><span class="code-ln">100</span>        <span class="code-keyword">if</span> (reserved == <span class="code-keyword">null</span>) {</span><span class="code-row code-row-target"><span class="code-ln">101</span>            <span class="code-keyword">return</span> pjp.proceed();</span><span class="code-row"><span class="code-ln">102</span>        }</span><span class="code-row"><span class="code-ln">103</span>        long attempt = reserved;</span><span class="code-row"><span class="code-ln">104</span></span><span class="code-row"><span class="code-ln">105</span>        <span class="code-keyword">if</span> (attempt &gt; rule.getThreshold()) {</span><span class="code-row"><span class="code-ln">106</span>            incrementCounter(METRIC_REQUESTS_BLOCKED, protect.configKey());</span></code></pre></details></div></div></details></div></div></details><details class="action-group action-group-appendix" style="margin-bottom:14px;border:1px solid #718096;border-radius:8px;"><summary style="cursor:pointer;font-weight:700;font-size:15px;color:#718096;padding:8px 12px;list-style:none;">&#128206; 附录：机械规则命中（仅供参考） &middot; 1 个问题</summary><div style="padding:0 12px 8px;"><div class="findings-list-wrap"><details class="file-group findings-file-group" id="fg-7384d72d4954" data-file-path="pos-service/src/main/java/com/miq/posservice/service/impl/PartnerLocationSyncServiceImpl.java" data-short-name="PartnerLocationSyncServiceImpl.java" data-worst-severity="minor"><summary class="file-group-summary"><span class="file-group-title"><span class="sev-indicator sev-minor" aria-hidden="true"></span><span class="file-path-text">pos-service/src/main/java/com/miq/posservice/service/impl/PartnerLocationSyncServiceImpl.java</span></span><span class="file-group-stats"><span class="stat-chip stat-minor">1 Minor</span></span><span class="file-group-count">1 个问题</span></summary><div class="file-group-body"><div class="finding-card severity-minor" data-severity="minor" data-fkey="b13965b7f3" data-fid="M6"><div class="finding-header"><span class="sev-badge minor">MINOR</span><span class="finding-line" title="行号">L67</span><span class="finding-cat">性能隐患</span><span class="custom-rule-badge" style="color:#6b46c1;border:1px solid #6b46c1;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:4px;" title="固定规则 PERF-002 的正则机械匹配命中，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认">&#9881; 规则命中 PERF-002</span></div><div class="finding-body"><div class="fb-row fb-problem"><div class="fb-label">问题</div><div class="fb-text"><p>固定规则 [PERF-002] 大对象加载 命中了这行代码：<code>CompletableFuture.supplyAsync(() -&gt; baseFacilityService.findAll().stream()</code>。</p><p>这是机械正则匹配，不是 AI 读代码判断出来的，命中不代表一定有问题，需要人工确认。</p></div></div><div class="fb-row fb-fix"><div class="fb-label">怎么改</div><div class="fb-text"><p>请对照规则「大对象加载」自行判断这行代码是否真的存在这个问题；确认无风险可直接忽略。</p></div></div></div><details class="finding-evidence"><summary class="detail-label">证据代码（含上下文，问题行已高亮）</summary><pre class="code-block"><code><span class="code-row"><span class="code-ln">62</span>                .distinct().collect(Collectors.toList());</span><span class="code-row"><span class="code-ln">63</span>        CompletableFuture&lt;Map&lt;String, PusCoverageConfigBo&gt;&gt; coverageFuture =</span><span class="code-row"><span class="code-ln">64</span>                CompletableFuture.supplyAsync(() -&gt; pusPickupCoverageService.findCoverageBatch(zipCodes, PusCoverageTypeEnum.PUDO), posAsyncDefaultExecutor);</span><span class="code-row"><span class="code-ln">65</span>        <span class="code-comment">// 仓库数量少，全量查出转 facilityCode -&gt; zoneId</span></span><span class="code-row"><span class="code-ln">66</span>        CompletableFuture&lt;Map&lt;String, String&gt;&gt; facilityZoneFuture =</span><span class="code-row code-row-target"><span class="code-ln">67</span>                CompletableFuture.supplyAsync(() -&gt; baseFacilityService.findAll().stream()</span><span class="code-row"><span class="code-ln">68</span>                        .filter(f -&gt; StringUtils.isNotBlank(f.getZoneId()))</span><span class="code-row"><span class="code-ln">69</span>                        .collect(Collectors.toMap(BaseFacility::getFacilityCode, BaseFacility::getZoneId, (p, n) -&gt; p)), posAsyncDefaultExecutor);</span><span class="code-row"><span class="code-ln">70</span></span><span class="code-row"><span class="code-ln">71</span>        Map&lt;String, PartnerLocation&gt; dbExistMap = partnerLocationDao.findByPartnerId(PARTNER_ID).stream()</span><span class="code-row"><span class="code-ln">72</span>                .collect(Collectors.toMap(PartnerLocation::getPartnerLocationCode, p -&gt; p, (p, n) -&gt; n));</span></code></pre></details></div></div></details></div></div></details>
+<style>
+.impact-section { margin: 16px 0 24px; }
+.impact-section .section-title { font-size: 18px; font-weight: 700; margin-bottom: 10px; }
+/* 颜色直接写死（不用 var(--minor-*)）：既往回归测过"这份样式表里一次都不能
+   出现 --minor-bg 这个变量名"（NEEDS_HUMAN 不该复用 minor 琥珀色，见下方
+   impact-stat.impact-needs-human 的注释），这里的抽样提示条语义完全不同
+   （跟严重度无关，只是"这批数据是抽样的"），但同一份样式表里带上这个变量
+   名字本身就会让那条回归测试的"零出现"断言失去意义。 */
+.impact-sample-banner {
+  background: #fdf7e0; color: #8a6208;
+  border: 1px solid #f1e096;
+  border-radius: 8px; padding: 8px 14px; font-size: 13px; font-weight: 600;
+  margin-bottom: 10px;
+}
+.impact-stats-banner { margin-bottom: 10px; }
+.impact-stat {
+  display: inline-block; padding: 4px 11px; border-radius: 8px; font-size: 12px;
+  font-weight: 700; margin-right: 8px;
+}
+.impact-stat.impact-risk { background: var(--critical-bg, #fdeceb); color: var(--critical-text, #b3261e); }
+/* NEEDS_HUMAN 改用 info 蓝（原用 minor 琥珀色，与"一般问题"严重度语义撞车——
+   需人工核实 ≠ 一个确定的低危问题，是"不知道，人来判断"，语义上更接近
+   info 的"仅供参考/待确认"，用户反馈"两套配色打架"实测已改） */
+.impact-stat.impact-needs-human { background: var(--info-bg, #eaf1fd); color: var(--info-text, #23509c); }
+.impact-stat.impact-safe { background: var(--safe-bg, #e8f6ee); color: var(--safe-text, #1a7a4c); }
+.impact-stat.impact-total { background: var(--chip-bg, #eef0f5); color: var(--muted, #667085); }
+.impact-section-note {
+  font-size: 13px; color: #666; line-height: 1.75; margin: 0 0 12px;
+  padding: 11px 14px; background: #f7f9fa; border-radius: 8px;
+}
+.impact-section-note p { margin: 0 0 7px; }
+.impact-section-note p:last-child { margin-bottom: 0; }
+.impact-section-note strong { color: #333; }
+.impact-note-legend {
+  margin: 0 0 8px; padding-left: 18px; list-style: none;
+}
+.impact-note-legend li { margin-bottom: 3px; }
+.impact-note-legend li::before {
+  content: "·"; margin-right: 6px; color: #999; font-weight: 700;
+}
+.impact-ratio-alert {
+  background: var(--major-bg, #fdf1e3); color: var(--major-text, #a85311);
+  border: 1px solid var(--major-border, #f4d19d); border-radius: 8px; padding: 8px 14px;
+  font-size: 13px; margin-bottom: 10px;
+}
+.impact-group { margin-bottom: 22px; }
+.impact-group-title {
+  font-size: 16px; font-weight: 700; margin: 14px 0 10px; color: #333;
+  padding-bottom: 6px; border-bottom: 1px solid #e5e5e5;
+}
+.impact-empty { color: #666; font-size: 13px; padding: 8px 0; }
+/* 卡片间距加大 + 阴影，强化"一张卡是一个独立问题"的边界感（用户反馈①） */
+.impact-risk-list { display: flex; flex-direction: column; gap: 16px; }
+.impact-card {
+  border: 1px solid var(--border, #e3e6ec); border-left: 4px solid #ccc; border-radius: 12px;
+  padding: 14px 16px; background: #fff; margin-bottom: 16px;
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(16,24,40,.06));
+}
+.impact-card.impact-risk { border-left-color: var(--critical-strong, #d1291f); background: linear-gradient(90deg, var(--critical-bg, #fdeceb) 0%, #fff 14px); }
+.impact-card.impact-needs-human { border-left-color: var(--info-strong, #2f66c9); background: linear-gradient(90deg, var(--info-bg, #eaf1fd) 0%, #fff 14px); }
+.impact-card.impact-safe { border-left-color: var(--safe-text, #1a7a4c); background: linear-gradient(90deg, var(--safe-bg, #e8f6ee) 0%, #fff 14px); }
+.impact-card-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+  padding-bottom: 8px; border-bottom: 1px solid #f0f0f0;
+}
+.impact-badge {
+  font-size: 11.5px; font-weight: 800; padding: 4px 10px; border-radius: 7px;
+  text-transform: none; border: 1px solid transparent;
+}
+/* 加边框跟主报告 .sev-badge 视觉语言对齐（用户反馈"两种报告风格不统一"） */
+.impact-badge.impact-risk { background: var(--critical-bg, #fdeceb); color: var(--critical-text, #b3261e); border-color: var(--critical-border, #f3b7b2); }
+.impact-badge.impact-needs-human { background: var(--info-bg, #eaf1fd); color: var(--info-text, #23509c); border-color: var(--info-border, #c0d6f6); }
+.impact-badge.impact-safe { background: var(--safe-bg, #e8f6ee); color: var(--safe-text, #1a7a4c); border-color: var(--safe-border, #aee3c4); }
+.impact-index { font-size: 12px; color: #888; }
+.impact-source-tag { font-size: 12.5px; color: #555; background: #f2f2f2; border-radius: 4px; padding: 2px 7px; }
+/* 字段之间用细分隔线拉开节奏，避免"挤成一坨"（用户反馈①的卡内延伸） */
+.impact-field { margin: 0; padding: 8px 0; font-size: 14px; }
+.impact-field + .impact-field { border-top: 1px dashed #ececec; }
+.impact-field-label {
+  font-weight: 700; color: #555; font-size: 12px; margin-bottom: 4px;
+  text-transform: uppercase; letter-spacing: .02em;
+}
+.impact-field p { margin: 0; }
+/* “怎么办”做成醒目的行动召唤条，呼应主报告 .fix-card/.dp-fix 的视觉语言，
+   同时用底色块把它和上面的说明性文字区分开——减轻“每张卡都在念同一句话”
+   的观感（用户反馈④之一：内容本身仍是模板句，属内容生成侧，此处只做视觉区隔）*/
+.impact-action {
+  background: #f3faf7; border-left: 3px solid var(--accent, #0f766e);
+  border-radius: 0 8px 8px 0; padding: 8px 12px; color: #2d4a3d;
+}
+/* 代码上下文块：文件名/行号做成编辑器 tab 条，深色代码正文 + 高亮目标行，
+   解决用户反馈②（file:line 太不显眼）与③（无上下文、无高亮） */
+.impact-code-tab {
+  display: flex; align-items: baseline; gap: 10px; background: #1a2438;
+  color: #cbd5e0; font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12px; padding: 7px 13px; border-radius: 8px 8px 0 0; margin-top: 8px;
+}
+.impact-code-tab-path { font-weight: 600; color: #e2e8f0; word-break: break-all; }
+.impact-code-tab-line { color: #7dd3e8; white-space: nowrap; }
+.impact-code-body {
+  background: var(--code-bg, #10182b); border-radius: 0 0 8px 8px; padding: 7px 0;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12.5px; line-height: 1.65; overflow-x: auto;
+}
+.impact-code-line { display: flex; padding: 0 12px; white-space: pre; }
+.impact-code-no {
+  flex: 0 0 auto; width: 2.6em; text-align: right; margin-right: 12px;
+  color: #718096; user-select: none;
+}
+.impact-code-text { color: #e2e8f0; }
+.impact-code-line-hl {
+  background: rgba(214, 158, 46, .18); border-left: 3px solid #d69e2e;
+  padding-left: 9px; margin-left: -3px;
+}
+.impact-code-line-hl .impact-code-no { color: #f6c453; font-weight: 700; }
+.impact-code-line-hl .impact-code-text { color: #fdf6e3; }
+/* quote 单行降级展示（拿不到源文件时的兜底，见 render_impact_section.py 说明） */
+.impact-evidence {
+  background: var(--code-bg, #10182b); color: #e2e8f0; border-radius: 0 0 8px 8px;
+  padding: 9px 13px; font-size: 12.5px; overflow-x: auto; margin: 0;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+/* 折叠区统一加 ▸ 箭头指示，跟主报告其它折叠区（issue-fold/dp-fold）一致，
+   修掉「牵连影响」这节此前唯独没有展开箭头的不一致（用户反馈④之一） */
+.impact-needs-human-fold, .impact-merged-details { margin-top: 10px; }
+.impact-needs-human-fold summary, .impact-merged-details summary {
+  cursor: pointer; font-size: 13.5px; font-weight: 600; color: #555; padding: 6px 0;
+  list-style: none; display: flex; align-items: center; gap: 6px;
+}
+.impact-needs-human-fold summary::-webkit-details-marker,
+.impact-merged-details summary::-webkit-details-marker { display: none; }
+.impact-needs-human-fold summary::before,
+.impact-merged-details summary::before {
+  content: "▸"; font-size: 11px; color: var(--accent, #0f766e); transition: transform .15s;
+}
+.impact-needs-human-fold[open] > summary::before,
+.impact-merged-details[open] > summary::before { transform: rotate(90deg); }
+/* 判定为安全的调用点不再逐条/逐组展示（2026-09-02），.impact-safe-fold 这
+   个折叠 class 已经没有任何 HTML 元素在用，改用不带交互的 .impact-safe-note
+   脚注段落——下面这条规则保留，上面折叠相关的 .impact-safe-fold 选择器已
+   随之删除（P3，code-reviewer 复核指出的死 CSS）。 */
+.impact-safe-note { color: #777; font-size: 12.5px; }
+.impact-merged-row { border-top: 1px dashed #e2e2e2; padding: 10px 0; font-size: 14px; }
+.impact-merged-row-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+</style>
+<section class="impact-section"><h2 class="section-title subsection-title">牵连影响：被这次改动波及的调用点</h2><div class="impact-section-note"><p><strong>这一节回答的问题：</strong>这次改动被别的代码调用的那些地方，会不会被改坏。它们和上面「本次代码的问题」一样都是待处理的问题，数字已合并进页面顶部的总数；区别只是这里的问题出在<strong>别处的调用点</strong>，不是这次写的代码。</p><ul class="impact-note-legend"><li><strong>Critical</strong>＝建议关注，这个调用点可能被改坏了</li><li><strong>Major</strong>＝AI 拿不准，需要人看一眼</li><li><strong>Info</strong>＝已排查，确认没影响</li></ul><p><strong>这次的数字：</strong>一共挖到 77 个调用点，其中 15 个建议关注，来自 7 处真正被改动的方法或字段（同一处改动的每个调用方分开列）。</p></div><div class="impact-stats-banner"><span class="impact-stat impact-risk">Critical · 建议关注 15（7 处改动）</span><span class="impact-stat impact-needs-human">Major · 需人工核实 13（7 处改动）</span><span class="impact-stat impact-safe">已排查安全 49 处（不展开）</span></div><div class="impact-group"><h3 class="impact-group-title">波及到：接口层功能（Controller）</h3><div class="impact-risk-list"><div class="impact-card impact-merged-card impact-risk" data-impact-level="RISK" data-fkey="e349e6bf0e" data-fid="I25"><div class="impact-card-header"><span class="impact-badge impact-risk">Critical · 有风险</span><span class="impact-index">#25</span><span class="impact-source-tag">常量引用核对 · 多处调用</span></div><div class="impact-field"><div class="impact-field-label">场景</div><p>常量 UPLOAD_TRACKEND_PARCEL_RESET_STATUS_LIMIT（ExcelRowLimit）——这 1 处改动被以下 4 个位置调用/引用，逐点判定如下</p></div><details class="impact-merged-details" open="open"><summary>展开查看全部 4 个消费点判定</summary><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-risk">Critical · 有风险</span><span>在 RefreshRouteController.resetTrackendLabelStatus() 中被引用（接口层功能（Controller））</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-admin-api/src/main/java/com/miq/posadminapi/controller/businessdata/RefreshRouteController.java</span><span class="impact-code-tab-line">第 270 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">267</span><span class="impact-code-text">                return ResponseObject.failure(&quot;No data found in the file&quot;);</span></div><div class="impact-code-line"><span class="impact-code-no">268</span><span class="impact-code-text">            }</span></div><div class="impact-code-line"><span class="impact-code-no">269</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">270</span><span class="impact-code-text">            if (trkNos.size() &gt; ExcelRowLimit.UPLOAD_TRACKEND_PARCEL_RESET_STATUS_LIMIT) {</span></div><div class="impact-code-line"><span class="impact-code-no">271</span><span class="impact-code-text">                return ResponseObject.failure(String.format(&quot;Excel data cannot exceed %s rows&quot;, ExcelRowLimit.UPLOAD_TRACKEND_PARCEL_RESET_STATUS_LIMIT));</span></div><div class="impact-code-line"><span class="impact-code-no">272</span><span class="impact-code-text">            }</span></div><div class="impact-code-line"><span class="impact-code-no">273</span><span class="impact-code-text">&nbsp;</span></div></div><p><span class="impact-field-label">判定依据</span>consumer_in_diff=false；需求仅描述Beans API key日志脱敏，未涵盖UPLOAD_TRACKEND_PARCEL_RESET_STATUS_LIMIT从5000提升至50000。</p><p><span class="impact-field-label">会出什么事</span>管理员上传包含5001至50000个不同trkNos的文件时，RefreshRouteController.resetTrackendLabelStatus将不再按原5000条上限拒绝，而会将这些trkNos提交给beanRefreshRouteService.resetTrackendLabelStatus处理。</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需评估此改动对『常量 UPLOAD_TRACKEND_PARCEL_RESET_STATUS_LIMIT（ExcelRowLimit）』的影响，建议实际验证消费点行为后再上线</span></p></div><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-risk">Critical · 有风险</span><span>在 RefreshRouteController.resetTrackendLabelStatus() 中被引用（接口层功能（Controller））</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-admin-api/src/main/java/com/miq/posadminapi/controller/businessdata/RefreshRouteController.java</span><span class="impact-code-tab-line">第 271 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">268</span><span class="impact-code-text">            }</span></div><div class="impact-code-line"><span class="impact-code-no">269</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">270</span><span class="impact-code-text">            if (trkNos.size() &gt; ExcelRowLimit.UPLOAD_TRACKEND_PARCEL_RESET_STATUS_LIMIT) {</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">271</span><span class="impact-code-text">                return ResponseObject.failure(String.format(&quot;Excel data cannot exceed %s rows&quot;, ExcelRowLimit.UPLOAD_TRACKEND_PARCEL_RESET_STATUS_LIMIT));</span></div><div class="impact-code-line"><span class="impact-code-no">272</span><span class="impact-code-text">            }</span></div><div class="impact-code-line"><span class="impact-code-no">273</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">274</span><span class="impact-code-text">            beanRefreshRouteService.resetTrackendLabelStatus(new ArrayList&lt;&gt;(trkNos), reason);</span></div></div><p><span class="impact-field-label">判定依据</span>consumer_in_diff=false；该常量用于接口失败响应而非日志，需求没有要求调整上传上限或其提示。</p><p><span class="impact-field-label">会出什么事</span>管理员上传包含超过50000个不同trkNos的文件时，RefreshRouteController.resetTrackendLabelStatus返回的失败提示将宣告上限为50000而非原5000，向用户展示超出本次日志脱敏需求范围的上传额度。</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需评估此改动对『常量 UPLOAD_TRACKEND_PARCEL_RESET_STATUS_LIMIT（ExcelRowLimit）』的影响，建议实际验证消费点行为后再上线</span></p></div><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-risk">Critical · 有风险</span><span>在 WebRefreshRouteController.resetTrackendLabelStatus() 中被引用（接口层功能（Controller））</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/web/WebRefreshRouteController.java</span><span class="impact-code-tab-line">第 266 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">263</span><span class="impact-code-text">                return ResponseObject.failure(&quot;No data found in the file&quot;);</span></div><div class="impact-code-line"><span class="impact-code-no">264</span><span class="impact-code-text">            }</span></div><div class="impact-code-line"><span class="impact-code-no">265</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">266</span><span class="impact-code-text">            if (trkNos.size() &gt; ExcelRowLimit.UPLOAD_TRACKEND_PARCEL_RESET_STATUS_LIMIT) {</span></div><div class="impact-code-line"><span class="impact-code-no">267</span><span class="impact-code-text">                return ResponseObject.failure(String.format(&quot;Excel data cannot exceed %s rows&quot;, ExcelRowLimit.UPLOAD_TRACKEND_PARCEL_RESET_STATUS_LIMIT));</span></div><div class="impact-code-line"><span class="impact-code-no">268</span><span class="impact-code-text">            }</span></div><div class="impact-code-line"><span class="impact-code-no">269</span><span class="impact-code-text">&nbsp;</span></div></div><p><span class="impact-field-label">判定依据</span>consumer_in_diff=false；需求仅描述Beans API key日志脱敏，未涵盖UPLOAD_TRACKEND_PARCEL_RESET_STATUS_LIMIT从5000提升至50000。</p><p><span class="impact-field-label">会出什么事</span>Web用户上传包含5001至50000个不同trkNos的文件时，WebRefreshRouteController.resetTrackendLabelStatus将不再按原5000条上限拒绝，而会将这些trkNos提交给beanRefreshRouteService.resetTrackendLabelStatus处理。</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需评估此改动对『常量 UPLOAD_TRACKEND_PARCEL_RESET_STATUS_LIMIT（ExcelRowLimit）』的影响，建议实际验证消费点行为后再上线</span></p></div><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-risk">Critical · 有风险</span><span>在 WebRefreshRouteController.resetTrackendLabelStatus() 中被引用（接口层功能（Controller））</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/web/WebRefreshRouteController.java</span><span class="impact-code-tab-line">第 267 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">264</span><span class="impact-code-text">            }</span></div><div class="impact-code-line"><span class="impact-code-no">265</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">266</span><span class="impact-code-text">            if (trkNos.size() &gt; ExcelRowLimit.UPLOAD_TRACKEND_PARCEL_RESET_STATUS_LIMIT) {</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">267</span><span class="impact-code-text">                return ResponseObject.failure(String.format(&quot;Excel data cannot exceed %s rows&quot;, ExcelRowLimit.UPLOAD_TRACKEND_PARCEL_RESET_STATUS_LIMIT));</span></div><div class="impact-code-line"><span class="impact-code-no">268</span><span class="impact-code-text">            }</span></div><div class="impact-code-line"><span class="impact-code-no">269</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">270</span><span class="impact-code-text">            beanRefreshRouteService.resetTrackendLabelStatus(new ArrayList&lt;&gt;(trkNos), reason);</span></div></div><p><span class="impact-field-label">判定依据</span>consumer_in_diff=false；该常量用于接口失败响应而非日志，需求没有要求调整上传上限或其提示。</p><p><span class="impact-field-label">会出什么事</span>Web用户上传包含超过50000个不同trkNos的文件时，WebRefreshRouteController.resetTrackendLabelStatus返回的失败提示将宣告上限为50000而非原5000，向用户展示超出本次日志脱敏需求范围的上传额度。</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需评估此改动对『常量 UPLOAD_TRACKEND_PARCEL_RESET_STATUS_LIMIT（ExcelRowLimit）』的影响，建议实际验证消费点行为后再上线</span></p></div></details></div></div><details class="impact-needs-human-fold" open="open"><summary>Major · 需人工核实 · 1 处</summary><div class="impact-card impact-merged-card impact-needs-human" data-impact-level="NEEDS_HUMAN" data-fkey="1d8483416d" data-fid="I15"><div class="impact-card-header"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span class="impact-index">#15</span><span class="impact-source-tag">方法调用链核对 · 多处调用</span></div><div class="impact-field"><div class="impact-field-label">场景</div><p>方法 UserServiceImpl.login——这 1 处改动被以下 2 个位置调用/引用，逐点判定如下</p></div><details class="impact-merged-details"><summary>展开查看全部 2 个消费点判定</summary><details class="impact-needs-human-fold" open="open"><summary>Major · 需人工核实 · 2 处</summary><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span>在 SysLoginController.login() 中被调用（接口层功能（Controller））</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-admin-api/src/main/java/com/miq/posadminapi/controller/sys/SysLoginController.java</span><span class="impact-code-tab-line">第 43 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">40</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">41</span><span class="impact-code-text">    @TimerLog</span></div><div class="impact-code-line"><span class="impact-code-no">42</span><span class="impact-code-text">    @ApiOperation(value = &quot;System login&quot;)</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">43</span><span class="impact-code-text">    @RateLimitProtect(configKey = &quot;login&quot;)</span></div><div class="impact-code-line"><span class="impact-code-no">44</span><span class="impact-code-text">    @PostMapping(&quot;/login&quot;)</span></div><div class="impact-code-line"><span class="impact-code-no">45</span><span class="impact-code-text">    public ResponseObject&lt;Object&gt; login(@Valid @RequestBody LoginUserForm userForm, HttpServletRequest req) throws Exception {</span></div><div class="impact-code-line"><span class="impact-code-no">46</span><span class="impact-code-text">        LoginRes login = userService.login(userForm);</span></div></div><p><span class="impact-field-label">判定依据</span>消费点未同步修改。UserServiceImpl.login 将凭证错误改为抛出 RateLimitTargetException，与需求中的日志脱敏无关。此入口带有 @RateLimitProtect(configKey = &quot;login&quot;)，异常变化会交由 AOP 处理；需确认该切面的异常处理逻辑及 login 配置实际值，才能确定失败计数、限流及接口响应的实际变化。</p><p><span class="impact-field-label">会出什么事</span>（未说明业务后果）</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需人工核实：判定依据里的假设是否成立</span></p></div><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span>在 SysLoginController.login() 中被调用（接口层功能（Controller））</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/sys/SysLoginController.java</span><span class="impact-code-tab-line">第 45 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">42</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">43</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">44</span><span class="impact-code-text">    @ApiOperation(value = &quot;System login&quot;)</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">45</span><span class="impact-code-text">    @RateLimitProtect(configKey = &quot;login&quot;)</span></div><div class="impact-code-line"><span class="impact-code-no">46</span><span class="impact-code-text">    @PostMapping(&quot;/login&quot;)</span></div><div class="impact-code-line"><span class="impact-code-no">47</span><span class="impact-code-text">    public ResponseObject&lt;Object&gt; login(@Valid @RequestBody LoginUserForm userForm, HttpServletRequest req) throws Exception {</span></div><div class="impact-code-line"><span class="impact-code-no">48</span><span class="impact-code-text">        LoginRes login = userService.login(userForm);</span></div></div><p><span class="impact-field-label">判定依据</span>消费点未同步修改。UserServiceImpl.login 将凭证错误改为抛出 RateLimitTargetException，与需求中的日志脱敏无关。此入口带有 @RateLimitProtect(configKey = &quot;login&quot;)，异常变化会交由 AOP 处理；需确认该切面的异常处理逻辑及 login 配置实际值，才能确定失败计数、限流及接口响应的实际变化。</p><p><span class="impact-field-label">会出什么事</span>（未说明业务后果）</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需人工核实：判定依据里的假设是否成立</span></p></div></details></details></div></details><p class="impact-safe-note">另有 1 处已排查判定安全，不在此列出；完整判定记录见同目录下的 <a href="impact_judgements.json" target="_blank">impact_judgements.json</a>（构建产物原始数据）。</p></div><div class="impact-group"><h3 class="impact-group-title">波及到：定时任务功能（Job）</h3><div class="impact-risk-list"><div class="impact-card impact-risk" data-impact-level="RISK" data-fkey="6cdabbfea6" data-fid="I12"><div class="impact-card-header"><span class="impact-badge impact-risk">Critical · 有风险</span><span class="impact-index">#12</span><span class="impact-source-tag">方法调用链核对</span></div><div class="impact-field"><div class="impact-field-label">场景</div><p>方法 PartnerLocationSyncServiceImpl.syncAll，在 VintedPudoJob.syncVintedPudoPointsJob() 中被调用（定时任务功能（Job））</p></div><div class="impact-field"><div class="impact-field-label">代码现状</div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-api/src/main/java/com/miq/posapi/job/VintedPudoJob.java</span><span class="impact-code-tab-line">第 81 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">78</span><span class="impact-code-text">        try {</span></div><div class="impact-code-line"><span class="impact-code-no">79</span><span class="impact-code-text">            List&lt;PartnerLocationSyncDto&gt; points = MAPPER.readValue(vintedApi.listPointsV2(), POINTS_TYPE);</span></div><div class="impact-code-line"><span class="impact-code-no">80</span><span class="impact-code-text">            long fetchCost = System.currentTimeMillis() - start;</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">81</span><span class="impact-code-text">            partnerLocationSyncService.syncAll(points);</span></div><div class="impact-code-line"><span class="impact-code-no">82</span><span class="impact-code-text">            jobLog(&quot;[syncVintedPudoPointsJob] done, points={}, fetchCost={}ms, totalCost={}ms&quot;,</span></div><div class="impact-code-line"><span class="impact-code-no">83</span><span class="impact-code-text">                    points.size(), fetchCost, System.currentTimeMillis() - start);</span></div><div class="impact-code-line"><span class="impact-code-no">84</span><span class="impact-code-text">            XxlJobHelper.handleSuccess();</span></div></div></div><div class="impact-field"><div class="impact-field-label">判定依据</div><p>consumer_in_diff=false，消费点未同步适配；diff 明确将 zone_id 来源从邮编改为所属 facility，并删除 zipCode 的 trim 处理，这些业务语义变化不属于需求描述的 Beans API key 日志脱敏。</p></div><div class="impact-field"><div class="impact-field-label">会出什么事</div><p>syncVintedPudoPointsJob 全量同步 Vinted 点位时，syncAll 不再按邮编获取 zone_id，而改为按所属 facility 获取，导致点位分区结果改变，且无 facility 或 facility 不存在的点位会得到空 zone_id。</p></div><div class="impact-field"><div class="impact-field-label">怎么办</div><p class="impact-action">需评估此改动对『方法 PartnerLocationSyncServiceImpl.syncAll』的影响，建议实际验证消费点行为后再上线</p></div></div><div class="impact-card impact-risk" data-impact-level="RISK" data-fkey="e4a0e5c29e" data-fid="I18"><div class="impact-card-header"><span class="impact-badge impact-risk">Critical · 有风险</span><span class="impact-index">#18</span><span class="impact-source-tag">方法调用链核对</span></div><div class="impact-field"><div class="impact-field-label">场景</div><p>方法 WebInboundParcelServiceImpl.scanForHaveFile，在 WebInboundParcelServiceImpl.scan() 中被调用（定时任务功能（Job））</p></div><div class="impact-field"><div class="impact-field-label">代码现状</div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/service/web/impl/WebInboundParcelServiceImpl.java</span><span class="impact-code-tab-line">第 781 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">778</span><span class="impact-code-text">        } else {</span></div><div class="impact-code-line"><span class="impact-code-no">779</span><span class="impact-code-text">            if (!InboundScanTypeEnum.RETURN.equals(batch.getType()) || Boolean.TRUE.equals(batch.getHaveManifestFile())) {</span></div><div class="impact-code-line"><span class="impact-code-no">780</span><span class="impact-code-text">                // A Scan Logic</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">781</span><span class="impact-code-text">                result = scanForHaveFile(encodingValue);</span></div><div class="impact-code-line"><span class="impact-code-no">782</span><span class="impact-code-text">            } else {</span></div><div class="impact-code-line"><span class="impact-code-no">783</span><span class="impact-code-text">                result = scanForNoFile(encodingValue);</span></div><div class="impact-code-line"><span class="impact-code-no">784</span><span class="impact-code-text">            }</span></div></div></div><div class="impact-field"><div class="impact-field-label">判定依据</div><p>consumer_in_diff=false；本次修改的是返回告警文案，不是日志，且移除包裹单号不属于需求描述的 Beans API key 日志脱敏。同表多入口事实涉及 pos_label 和 pos_inbound_parcel，但给定 diff 未修改写表逻辑，本项返回文案变化可直接从代码判定，无需依赖其他写入入口是否同步调整。</p></div><div class="impact-field"><div class="impact-field-label">会出什么事</div><p>PDA 与分拣机调用 scan，在重复 A-scan 且状态重置为 GEOCODED 的分支中，将收到不再包含包裹 trackingNumber 的告警文案，失去原告警中用于识别包裹的单号信息。</p></div><div class="impact-field"><div class="impact-field-label">怎么办</div><p class="impact-action">需评估此改动对『方法 WebInboundParcelServiceImpl.scanForHaveFile』的影响，建议实际验证消费点行为后再上线</p></div></div><div class="impact-card impact-risk" data-impact-level="RISK" data-fkey="ad125de4a0" data-fid="I19"><div class="impact-card-header"><span class="impact-badge impact-risk">Critical · 有风险</span><span class="impact-index">#19</span><span class="impact-source-tag">方法调用链核对</span></div><div class="impact-field"><div class="impact-field-label">场景</div><p>方法 WebInboundParcelServiceImpl.scanForNoFile，在 WebInboundParcelServiceImpl.scan() 中被调用（定时任务功能（Job））</p></div><div class="impact-field"><div class="impact-field-label">代码现状</div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/service/web/impl/WebInboundParcelServiceImpl.java</span><span class="impact-code-tab-line">第 783 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">780</span><span class="impact-code-text">                // A Scan Logic</span></div><div class="impact-code-line"><span class="impact-code-no">781</span><span class="impact-code-text">                result = scanForHaveFile(encodingValue);</span></div><div class="impact-code-line"><span class="impact-code-no">782</span><span class="impact-code-text">            } else {</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">783</span><span class="impact-code-text">                result = scanForNoFile(encodingValue);</span></div><div class="impact-code-line"><span class="impact-code-no">784</span><span class="impact-code-text">            }</span></div><div class="impact-code-line"><span class="impact-code-no">785</span><span class="impact-code-text">            updateAscanForAudit(result, batch, trackingNumber, loginFacilityCode);</span></div><div class="impact-code-line"><span class="impact-code-no">786</span><span class="impact-code-text">        }</span></div></div></div><div class="impact-field"><div class="impact-field-label">判定依据</div><p>consumer_in_diff=false，未见消费点同步调整；删除告警中的 trackingNumber 不属于需求所述的 Beans API key 日志脱敏。同表多入口事实涉及 pos_label、pos_inbound_parcel、pos_inbound_receptacle，但给定 diff 未改变写表逻辑，此处风险直接来自返回提示内容变化。</p></div><div class="impact-field"><div class="impact-field-label">会出什么事</div><p>PDA 与分拣机通过 scan 触发重复 A-scan 且状态重置为 GEOCODED 的告警时，将收到不再包含 trackingNumber 的提示，无法仅凭该提示识别需要在另一批次重新编码的包裹。</p></div><div class="impact-field"><div class="impact-field-label">怎么办</div><p class="impact-action">需评估此改动对『方法 WebInboundParcelServiceImpl.scanForNoFile』的影响，建议实际验证消费点行为后再上线</p></div></div><div class="impact-card impact-merged-card impact-risk" data-impact-level="RISK" data-fkey="9e1107a628" data-fid="I23"><div class="impact-card-header"><span class="impact-badge impact-risk">Critical · 有风险</span><span class="impact-index">#23</span><span class="impact-source-tag">常量引用核对 · 多处调用</span></div><div class="impact-field"><div class="impact-field-label">场景</div><p>常量 SCAN_WARN_DUPLICATE_GEOCODED（MessageCodeEnum）——这 1 处改动被以下 5 个位置调用/引用，逐点判定如下</p></div><details class="impact-merged-details" open="open"><summary>展开查看全部 5 个消费点判定</summary><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-risk">Critical · 有风险</span><span>在 WebInboundParcelServiceImpl.processSortModeUnEDSP() 中被引用（定时任务功能（Job））</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/service/web/impl/WebInboundParcelServiceImpl.java</span><span class="impact-code-tab-line">第 1390 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">1387</span><span class="impact-code-text">                    ro.setLabelBase64(generateUnEdspRouteLabel(inboundBatch, inboundParcel, label.getRouteCode(), label.getRecipientName()));</span></div><div class="impact-code-line"><span class="impact-code-no">1388</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">1389</span><span class="impact-code-text">                    if (Boolean.TRUE.equals(duplicateScanned)) {</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">1390</span><span class="impact-code-text">                        return ResponseObject.build(ro, MessageCodeEnum.SCAN_WARN_DUPLICATE_GEOCODED, msg);</span></div><div class="impact-code-line"><span class="impact-code-no">1391</span><span class="impact-code-text">                    } else {</span></div><div class="impact-code-line"><span class="impact-code-no">1392</span><span class="impact-code-text">                        return ResponseObject.build(ro, MessageCodeEnum.SCAN_WARN_DUPLICATE, inboundParcel.getRemark());</span></div><div class="impact-code-line"><span class="impact-code-no">1393</span><span class="impact-code-text">                    }</span></div></div><p><span class="impact-field-label">判定依据</span>consumer_in_diff=false；SCAN_WARN_DUPLICATE_GEOCODED 的提示模板删除了 {0}，消费点仍传入 msg。该响应文案变化不属于需求描述的 Beans API key 日志脱敏。</p><p><span class="impact-field-label">会出什么事</span>操作员在 processSortModeUnEDSP 返回该重复扫描告警时，将收到不再包含原模板包裹标识信息的提示，丢失告警中的包裹定位信息。</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需评估此改动对『常量 SCAN_WARN_DUPLICATE_GEOCODED（MessageCodeEnum）』的影响，建议实际验证消费点行为后再上线</span></p></div><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-risk">Critical · 有风险</span><span>在 WebInboundParcelServiceImpl.processSortModeUnEDSP() 中被引用（定时任务功能（Job））</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/service/web/impl/WebInboundParcelServiceImpl.java</span><span class="impact-code-tab-line">第 1397 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">1394</span><span class="impact-code-text">                }</span></div><div class="impact-code-line"><span class="impact-code-no">1395</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">1396</span><span class="impact-code-text">                if (Boolean.TRUE.equals(duplicateScanned)) {</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">1397</span><span class="impact-code-text">                    return ResponseObject.build(ro, MessageCodeEnum.SCAN_WARN_DUPLICATE_GEOCODED, msg);</span></div><div class="impact-code-line"><span class="impact-code-no">1398</span><span class="impact-code-text">                } else {</span></div><div class="impact-code-line"><span class="impact-code-no">1399</span><span class="impact-code-text">                    return ResponseObject.build(ro, MessageCodeEnum.SCAN_WARN_DUPLICATE_NOPARAM);</span></div><div class="impact-code-line"><span class="impact-code-no">1400</span><span class="impact-code-text">                }</span></div></div><p><span class="impact-field-label">判定依据</span>consumer_in_diff=false；SCAN_WARN_DUPLICATE_GEOCODED 的提示模板删除了 {0}，消费点仍传入 msg。该响应文案变化不属于需求描述的 Beans API key 日志脱敏。</p><p><span class="impact-field-label">会出什么事</span>操作员在 processSortModeUnEDSP 返回该重复扫描告警时，将收到不再包含原模板包裹标识信息的提示，丢失告警中的包裹定位信息。</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需评估此改动对『常量 SCAN_WARN_DUPLICATE_GEOCODED（MessageCodeEnum）』的影响，建议实际验证消费点行为后再上线</span></p></div><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-risk">Critical · 有风险</span><span>在 WebInboundParcelServiceImpl.scanForHaveFile() 中被引用（定时任务功能（Job））</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/service/web/impl/WebInboundParcelServiceImpl.java</span><span class="impact-code-tab-line">第 1649 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">1646</span><span class="impact-code-text">                    ro.setLabelBase64(generateUnEdspRouteLabel(inboundBatch, inboundParcel, label.getRouteCode(), label.getRecipientName()));</span></div><div class="impact-code-line"><span class="impact-code-no">1647</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">1648</span><span class="impact-code-text">                    if (Boolean.TRUE.equals(duplicateScanned)) {</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">1649</span><span class="impact-code-text">                        return ResponseObject.build(ro, MessageCodeEnum.SCAN_WARN_DUPLICATE_GEOCODED, msg);</span></div><div class="impact-code-line"><span class="impact-code-no">1650</span><span class="impact-code-text">                    } else {</span></div><div class="impact-code-line"><span class="impact-code-no">1651</span><span class="impact-code-text">                        return ResponseObject.build(ro, MessageCodeEnum.SCAN_WARN_DUPLICATE, inboundParcel.getRemark());</span></div><div class="impact-code-line"><span class="impact-code-no">1652</span><span class="impact-code-text">                    }</span></div></div><p><span class="impact-field-label">判定依据</span>consumer_in_diff=false；SCAN_WARN_DUPLICATE_GEOCODED 的提示模板删除了 {0}，消费点仍传入 msg。该响应文案变化不属于需求描述的 Beans API key 日志脱敏。</p><p><span class="impact-field-label">会出什么事</span>操作员在 scanForHaveFile 返回该重复扫描告警时，将收到不再包含原模板包裹标识信息的提示，丢失告警中的包裹定位信息。</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需评估此改动对『常量 SCAN_WARN_DUPLICATE_GEOCODED（MessageCodeEnum）』的影响，建议实际验证消费点行为后再上线</span></p></div><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-risk">Critical · 有风险</span><span>在 WebInboundParcelServiceImpl.scanForHaveFile() 中被引用（定时任务功能（Job））</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/service/web/impl/WebInboundParcelServiceImpl.java</span><span class="impact-code-tab-line">第 1656 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">1653</span><span class="impact-code-text">                }</span></div><div class="impact-code-line"><span class="impact-code-no">1654</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">1655</span><span class="impact-code-text">                if (Boolean.TRUE.equals(duplicateScanned)) {</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">1656</span><span class="impact-code-text">                    return ResponseObject.build(ro, MessageCodeEnum.SCAN_WARN_DUPLICATE_GEOCODED, msg);</span></div><div class="impact-code-line"><span class="impact-code-no">1657</span><span class="impact-code-text">                } else {</span></div><div class="impact-code-line"><span class="impact-code-no">1658</span><span class="impact-code-text">                    return ResponseObject.build(ro, MessageCodeEnum.SCAN_WARN_DUPLICATE_NOPARAM);</span></div><div class="impact-code-line"><span class="impact-code-no">1659</span><span class="impact-code-text">                }</span></div></div><p><span class="impact-field-label">判定依据</span>consumer_in_diff=false；SCAN_WARN_DUPLICATE_GEOCODED 的提示模板删除了 {0}，消费点仍传入 msg。该响应文案变化不属于需求描述的 Beans API key 日志脱敏。</p><p><span class="impact-field-label">会出什么事</span>操作员在 scanForHaveFile 返回该重复扫描告警时，将收到不再包含原模板包裹标识信息的提示，丢失告警中的包裹定位信息。</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需评估此改动对『常量 SCAN_WARN_DUPLICATE_GEOCODED（MessageCodeEnum）』的影响，建议实际验证消费点行为后再上线</span></p></div><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-risk">Critical · 有风险</span><span>在 WebInboundParcelServiceImpl.scanForNoFile() 中被引用（定时任务功能（Job））</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/service/web/impl/WebInboundParcelServiceImpl.java</span><span class="impact-code-tab-line">第 2334 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">2331</span><span class="impact-code-text">            Boolean duplicateScanned = duplicateScanGeocoded(label);</span></div><div class="impact-code-line"><span class="impact-code-no">2332</span><span class="impact-code-text">            String msg = &quot;Duplicated A-scan,Status reset GEOCODED,Re-encode in another batch.&quot;;</span></div><div class="impact-code-line"><span class="impact-code-no">2333</span><span class="impact-code-text">            if (Boolean.TRUE.equals(duplicateScanned)) {</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">2334</span><span class="impact-code-text">                return ResponseObject.build(ro, MessageCodeEnum.SCAN_WARN_DUPLICATE_GEOCODED, msg);</span></div><div class="impact-code-line"><span class="impact-code-no">2335</span><span class="impact-code-text">            } else {</span></div><div class="impact-code-line"><span class="impact-code-no">2336</span><span class="impact-code-text">                return ResponseObject.build(ro, MessageCodeEnum.SCAN_WARN_DUPLICATE_NOPARAM);</span></div><div class="impact-code-line"><span class="impact-code-no">2337</span><span class="impact-code-text">            }</span></div></div><p><span class="impact-field-label">判定依据</span>consumer_in_diff=false；SCAN_WARN_DUPLICATE_GEOCODED 的提示模板删除了 {0}，消费点仍传入 msg。该响应文案变化不属于需求描述的 Beans API key 日志脱敏。</p><p><span class="impact-field-label">会出什么事</span>操作员在 scanForNoFile 返回该重复扫描告警时，将收到不再包含原模板包裹标识信息的提示，丢失告警中的包裹定位信息。</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需评估此改动对『常量 SCAN_WARN_DUPLICATE_GEOCODED（MessageCodeEnum）』的影响，建议实际验证消费点行为后再上线</span></p></div></details></div></div><details class="impact-needs-human-fold" open="open"><summary>Major · 需人工核实 · 1 处</summary><div class="impact-card impact-needs-human" data-impact-level="NEEDS_HUMAN" data-fkey="f92b0687a3" data-fid="I17"><div class="impact-card-header"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span class="impact-index">#17</span><span class="impact-source-tag">方法调用链核对</span></div><div class="impact-field"><div class="impact-field-label">场景</div><p>方法 WebInboundParcelServiceImpl.processSortModeUnEDSP，在 WebInboundParcelServiceImpl.scan() 中被调用（定时任务功能（Job））</p></div><div class="impact-field"><div class="impact-field-label">代码现状</div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/service/web/impl/WebInboundParcelServiceImpl.java</span><span class="impact-code-tab-line">第 654 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">651</span><span class="impact-code-text">    @Transactional(rollbackOn = Exception.class)</span></div><div class="impact-code-line"><span class="impact-code-no">652</span><span class="impact-code-text">    public ResponseObject&lt;ScanInboundParcelRo&gt; scan(InboundParcelScanForm form, Label label, String trackEndMsg) throws Exception {</span></div><div class="impact-code-line"><span class="impact-code-no">653</span><span class="impact-code-text">        EncodingValue encodingValue = new EncodingValue();</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">654</span><span class="impact-code-text">        encodingValue.setInboundParcelScanForm(form);</span></div><div class="impact-code-line"><span class="impact-code-no">655</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">656</span><span class="impact-code-text">        String loginFacilityCode = StrUtil.isNotBlank(form.getXhcLoginFacilityCode()) ? form.getXhcLoginFacilityCode() : LoginUserUtil.getCurFacilityCode();</span></div><div class="impact-code-line"><span class="impact-code-no">657</span><span class="impact-code-text">        encodingValue.setLoginFacilityCode(loginFacilityCode);</span></div></div></div><div class="impact-field"><div class="impact-field-label">判定依据</div><p>consumer_in_diff=false，未提供同步适配。processSortModeUnEDSP 修改了重复 A-scan 返回文案，不属于需求描述的 Beans API key 日志脱敏。程序化事实表明该方法与其他入口共同写入 pos_label、pos_inbound_parcel，需人工确认这些入口是否需要保持一致；给定材料无法确定该业务一致性要求。</p></div><div class="impact-field"><div class="impact-field-label">会出什么事</div><p>（未说明业务后果）</p></div><div class="impact-field"><div class="impact-field-label">怎么办</div><p class="impact-action">需人工核实：判定依据里的假设是否成立</p></div></div></details></div><div class="impact-group"><h3 class="impact-group-title">波及到：未归类</h3><div class="impact-risk-list"><div class="impact-card impact-merged-card impact-risk" data-impact-level="RISK" data-fkey="33148766c5" data-fid="I9"><div class="impact-card-header"><span class="impact-badge impact-risk">Critical · 有风险</span><span class="impact-index">#9</span><span class="impact-source-tag">方法调用链核对 · 多处调用</span></div><div class="impact-field"><div class="impact-field-label">场景</div><p>方法 PartnerLocationSyncDto.getZipCode——这 1 处改动被以下 3 个位置调用/引用，逐点判定如下</p></div><details class="impact-merged-details" open="open"><summary>展开查看全部 3 个消费点判定</summary><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-risk">Critical · 有风险</span><span>在 PartnerLocationConverter.toEntity() 中被调用（未归类）</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/service/impl/PartnerLocationConverter.java</span><span class="impact-code-tab-line">第 134 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">131</span><span class="impact-code-text">                .setState(normalizeState(dto.getState()))</span></div><div class="impact-code-line"><span class="impact-code-no">132</span><span class="impact-code-text">                .setCity(dto.getCity())</span></div><div class="impact-code-line"><span class="impact-code-no">133</span><span class="impact-code-text">                .setAddress(dto.getAddress())</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">134</span><span class="impact-code-text">                .setZipCode(dto.getZipCode())</span></div><div class="impact-code-line"><span class="impact-code-no">135</span><span class="impact-code-text">                .setLatitude(dto.getLatitude())</span></div><div class="impact-code-line"><span class="impact-code-no">136</span><span class="impact-code-text">                .setLongitude(dto.getLongitude())</span></div><div class="impact-code-line"><span class="impact-code-no">137</span><span class="impact-code-text">                .setContactName(StringUtils.left(dto.getName(), CONTACT_NAME_MAX_LENGTH))</span></div></div><p><span class="impact-field-label">判定依据</span>consumer_in_diff=false，消费点未同步调整；给定需求仅涉及 Beans API key 日志脱敏，不包含邮编截断。</p><p><span class="impact-field-label">会出什么事</span>Vinted 传入 90001-1234 时，PartnerLocationConverter.toEntity 构建的 PartnerLocation.zipCode 将变为 90001，丢失原始邮编的扩展部分。</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需评估此改动对『方法 PartnerLocationSyncDto.getZipCode』的影响，建议实际验证消费点行为后再上线</span></p></div><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-risk">Critical · 有风险</span><span>在 PartnerLocationSyncServiceImpl.syncAll() 中被调用（未归类）</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/service/impl/PartnerLocationSyncServiceImpl.java</span><span class="impact-code-tab-line">第 60 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">57</span><span class="impact-code-text">        }</span></div><div class="impact-code-line"><span class="impact-code-no">58</span><span class="impact-code-text">        // 提前异步查询 PUS 覆盖与仓库 zone，与下面的查库/构建实体并行</span></div><div class="impact-code-line"><span class="impact-code-no">59</span><span class="impact-code-text">        List&lt;String&gt; zipCodes = locations.stream()</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">60</span><span class="impact-code-text">                .map(PartnerLocationSyncDto::getZipCode)</span></div><div class="impact-code-line"><span class="impact-code-no">61</span><span class="impact-code-text">                .filter(StringUtils::isNotBlank)</span></div><div class="impact-code-line"><span class="impact-code-no">62</span><span class="impact-code-text">                .distinct().collect(Collectors.toList());</span></div><div class="impact-code-line"><span class="impact-code-no">63</span><span class="impact-code-text">        CompletableFuture&lt;Map&lt;String, PusCoverageConfigBo&gt;&gt; coverageFuture =</span></div></div><p><span class="impact-field-label">判定依据</span>consumer_in_diff=false；getZipCode 的截断会直接改变 zipCodes 的内容和 distinct 结果，此变化不属于给定的 Beans API key 日志脱敏需求。</p><p><span class="impact-field-label">会出什么事</span>Vinted 返回 90001-1234 与 90001-5678 两个邮编时，syncAll 会将它们合并成一个 90001 查询条件交给 findCoverageBatch，覆盖查询不再保留两个完整邮编的区别。</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需评估此改动对『方法 PartnerLocationSyncDto.getZipCode』的影响，建议实际验证消费点行为后再上线</span></p></div><p class="impact-safe-note">另有 1 处已排查判定安全，不在此列出；完整判定记录见同目录下的 <a href="impact_judgements.json" target="_blank">impact_judgements.json</a>（构建产物原始数据）。</p></details></div><div class="impact-card impact-risk" data-impact-level="RISK" data-fkey="ca53cf1f2f" data-fid="I14"><div class="impact-card-header"><span class="impact-badge impact-risk">Critical · 有风险</span><span class="impact-index">#14</span><span class="impact-source-tag">方法调用链核对</span></div><div class="impact-field"><div class="impact-field-label">场景</div><p>方法 AbstractPartnerService.createPickupStaging，在 AbstractPartnerService.createPickup() 中被调用（未归类）</p></div><div class="impact-field"><div class="impact-field-label">代码现状</div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/service/partner/impl/AbstractPartnerService.java</span><span class="impact-code-tab-line">第 148 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">145</span><span class="impact-code-text">            partnerPickupDto.setTrackingNumber(reversed.getRtsTrackingNumber()).setReversed(true);</span></div><div class="impact-code-line"><span class="impact-code-no">146</span><span class="impact-code-text">            partnerWebhookLogService.updateData(traceId, JSONUtil.toJsonStr(partnerPickupDto));</span></div><div class="impact-code-line"><span class="impact-code-no">147</span><span class="impact-code-text">        } else {</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">148</span><span class="impact-code-text">            createPickupStaging(partnerPickupDto);</span></div><div class="impact-code-line"><span class="impact-code-no">149</span><span class="impact-code-text">            partnerWebhookLogService.updateStatus(traceId, CallbackStatusEnum.PROCESSED.name(), null);</span></div><div class="impact-code-line"><span class="impact-code-no">150</span><span class="impact-code-text">        }</span></div><div class="impact-code-line"><span class="impact-code-no">151</span><span class="impact-code-text">    }</span></div></div></div><div class="impact-field"><div class="impact-field-label">判定依据</div><p>consumer_in_diff=false，消费点未同步适配；新增 facilityCode 非空校验改变了业务准入条件，不属于需求所述的 Beans API key 日志脱敏范围。</p></div><div class="impact-field"><div class="impact-field-label">会出什么事</div><p>正向揽收时，若 PartnerLocation 的 facilityCode 为空但 zoneId 有效，createPickupStaging 现在会抛出 RRException，阻断原本可继续的揽收流程，且 createPickup 不会执行后续将回调状态更新为 PROCESSED 的操作。</p></div><div class="impact-field"><div class="impact-field-label">怎么办</div><p class="impact-action">需评估此改动对『方法 AbstractPartnerService.createPickupStaging』的影响，建议实际验证消费点行为后再上线</p></div></div></div><details class="impact-needs-human-fold" open="open"><summary>Major · 需人工核实 · 5 处</summary><div class="impact-card impact-needs-human" data-impact-level="NEEDS_HUMAN" data-fkey="cc41cbc16e" data-fid="I4"><div class="impact-card-header"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span class="impact-index">#4</span><span class="impact-source-tag">方法调用链核对</span></div><div class="impact-field"><div class="impact-field-label">场景</div><p>方法 RateLimitProtectAspect.extractBizKey，在 RateLimitProtectAspect.around() 中被调用（未归类）</p></div><div class="impact-field"><div class="impact-field-label">代码现状</div><div class="impact-code-tab"><span class="impact-code-tab-path">backend-common-service/src/main/java/com/miq/backendcommonservice/aop/ratelimit/RateLimitProtectAspect.java</span><span class="impact-code-tab-line">第 69 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">66</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">67</span><span class="impact-code-text">        String bizKey;</span></div><div class="impact-code-line"><span class="impact-code-no">68</span><span class="impact-code-text">        try {</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">69</span><span class="impact-code-text">            bizKey = extractBizKey(pjp.getArgs());</span></div><div class="impact-code-line"><span class="impact-code-no">70</span><span class="impact-code-text">        } catch (Throwable t) {</span></div><div class="impact-code-line"><span class="impact-code-no">71</span><span class="impact-code-text">            log.warn(&quot;rate-limit aspect bizKey extraction error, fail-open. configKey={}&quot;,</span></div><div class="impact-code-line"><span class="impact-code-no">72</span><span class="impact-code-text">                    protect.configKey(), t);</span></div></div></div><div class="impact-field"><div class="impact-field-label">判定依据</div><p>提供的 diff 在 extractBizKey 的实现变更出现前已截断，需补充该方法的完整 diff，才能确认返回值或异常行为是否变化。around 将返回值用于构造 Redis 计数键，但现有材料不足以判断其是否受到影响；需求中的日志脱敏也不能作为限流行为变化的预期依据。</p></div><div class="impact-field"><div class="impact-field-label">会出什么事</div><p>（未说明业务后果）</p></div><div class="impact-field"><div class="impact-field-label">怎么办</div><p class="impact-action">需人工核实：判定依据里的假设是否成立</p></div></div><div class="impact-card impact-needs-human" data-impact-level="NEEDS_HUMAN" data-fkey="f355c700c1" data-fid="I6"><div class="impact-card-header"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span class="impact-index">#6</span><span class="impact-source-tag">方法调用链核对</span></div><div class="impact-field"><div class="impact-field-label">场景</div><p>方法 RateLimitProtectAspect.readKeyField，在 RateLimitProtectAspect.extractBizKey() 中被调用（未归类）</p></div><div class="impact-field"><div class="impact-field-label">代码现状</div><div class="impact-code-tab"><span class="impact-code-tab-path">backend-common-service/src/main/java/com/miq/backendcommonservice/aop/ratelimit/RateLimitProtectAspect.java</span><span class="impact-code-tab-line">第 186 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">183</span><span class="impact-code-text">                continue;</span></div><div class="impact-code-line"><span class="impact-code-no">184</span><span class="impact-code-text">            }</span></div><div class="impact-code-line"><span class="impact-code-no">185</span><span class="impact-code-text">            try {</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">186</span><span class="impact-code-text">                String value = readKeyField(arg);</span></div><div class="impact-code-line"><span class="impact-code-no">187</span><span class="impact-code-text">                if (value != null) {</span></div><div class="impact-code-line"><span class="impact-code-no">188</span><span class="impact-code-text">                    return value;</span></div><div class="impact-code-line"><span class="impact-code-no">189</span><span class="impact-code-text">                }</span></div></div></div><div class="impact-field"><div class="impact-field-label">判定依据</div><p>提供的 diff 已截断，未展示 readKeyField 的具体改动，无法确认其读取字段、返回值或异常行为是否变化；需补充 readKeyField 的改动前后实现，才能判断 extractBizKey 返回的值是否受影响。现有需求仅描述 Beans API key 日志脱敏，不能据此认定此处取值变化符合需求预期。</p></div><div class="impact-field"><div class="impact-field-label">会出什么事</div><p>（未说明业务后果）</p></div><div class="impact-field"><div class="impact-field-label">怎么办</div><p class="impact-action">需人工核实：判定依据里的假设是否成立</p></div></div><div class="impact-card impact-merged-card impact-needs-human" data-impact-level="NEEDS_HUMAN" data-fkey="4f36403ef4" data-fid="I16"><div class="impact-card-header"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span class="impact-index">#16</span><span class="impact-source-tag">方法调用链核对 · 多处调用</span></div><div class="impact-field"><div class="impact-field-label">场景</div><p>方法 UserServiceImpl.performLogin——这 1 处改动被以下 5 个位置调用/引用，逐点判定如下</p></div><details class="impact-merged-details"><summary>展开查看全部 5 个消费点判定</summary><details class="impact-needs-human-fold" open="open"><summary>Major · 需人工核实 · 5 处</summary><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span>在 SysLoginController.biLogin() 中被调用（接口层功能（Controller））</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-exchange-api/src/main/java/com/miq/posexchangeapi/controller/sys/SysLoginController.java</span><span class="impact-code-tab-line">第 66 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">63</span><span class="impact-code-text">    @RateLimitProtect(configKey = &quot;login&quot;)</span></div><div class="impact-code-line"><span class="impact-code-no">64</span><span class="impact-code-text">    @PostMapping(&quot;/bi-login&quot;)</span></div><div class="impact-code-line"><span class="impact-code-no">65</span><span class="impact-code-text">    public ResponseObject&lt;Object&gt; biLogin(@Valid @RequestBody LoginUserForm userForm, HttpServletRequest req) throws Exception {</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">66</span><span class="impact-code-text">        userService.performLogin(userForm);</span></div><div class="impact-code-line"><span class="impact-code-no">67</span><span class="impact-code-text">        return ResponseObject.success(Collections.singletonMap(&quot;authToken&quot;, req.getSession().getId()));</span></div><div class="impact-code-line"><span class="impact-code-no">68</span><span class="impact-code-text">    }</span></div><div class="impact-code-line"><span class="impact-code-no">69</span><span class="impact-code-text">&nbsp;</span></div></div><p><span class="impact-field-label">判定依据</span>performLogin 的凭证失败异常由 RRException 改为 RateLimitTargetException，biLogin 标有 @RateLimitProtect(configKey = &quot;login&quot;)，但未提供切面实现、login 配置实际值及异常响应映射，无法确定失败计数、限流和响应的实际变化；该变化不属于所附 Beans API key 日志脱敏需求。</p><p><span class="impact-field-label">会出什么事</span>（未说明业务后果）</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需人工核实：判定依据里的假设是否成立</span></p></div><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span>在 UserServiceImpl.login() 中被调用（未归类）</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/service/sys/impl/UserServiceImpl.java</span><span class="impact-code-tab-line">第 126 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">123</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">124</span><span class="impact-code-text">        if (!Boolean.TRUE.equals(baseFacilityPo.getMfa()) || !Boolean.TRUE.equals(sysUser.getMfa())) {</span></div><div class="impact-code-line"><span class="impact-code-no">125</span><span class="impact-code-text">            // 若未开启2fa 则直接登录</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">126</span><span class="impact-code-text">            LoginRes loginRes = performLogin(userForm);</span></div><div class="impact-code-line"><span class="impact-code-no">127</span><span class="impact-code-text">            loginRes.setMfa(false);</span></div><div class="impact-code-line"><span class="impact-code-no">128</span><span class="impact-code-text">            return loginRes;</span></div><div class="impact-code-line"><span class="impact-code-no">129</span><span class="impact-code-text">        }</span></div></div><p><span class="impact-field-label">判定依据</span>此处传入 LoginUserForm；login 虽已预先校验用户名和密码，但未提供 performLogin 的完整认证逻辑，不能确认其 UnknownAccountException、IncorrectCredentialsException 分支在此前置校验后是否仍可触发。若触发，新异常对调用方的实际影响还取决于未提供的异常处理和限流切面实现；不能仅凭前置校验判定不受影响。</p><p><span class="impact-field-label">会出什么事</span>（未说明业务后果）</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需人工核实：判定依据里的假设是否成立</span></p></div><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span>在 UserServiceImpl.login() 中被调用（未归类）</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/service/sys/impl/UserServiceImpl.java</span><span class="impact-code-tab-line">第 138 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">135</span><span class="impact-code-text">        // 当前用户所带有的角色是否都未启用2fa</span></div><div class="impact-code-line"><span class="impact-code-no">136</span><span class="impact-code-text">        boolean match = byIdIn.stream().noneMatch(sysRole -&gt; Boolean.TRUE.equals(sysRole.getMfa()));</span></div><div class="impact-code-line"><span class="impact-code-no">137</span><span class="impact-code-text">        if (match) {</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">138</span><span class="impact-code-text">            LoginRes loginRes = performLogin(userForm);</span></div><div class="impact-code-line"><span class="impact-code-no">139</span><span class="impact-code-text">            loginRes.setMfa(false);</span></div><div class="impact-code-line"><span class="impact-code-no">140</span><span class="impact-code-text">            return loginRes;</span></div><div class="impact-code-line"><span class="impact-code-no">141</span><span class="impact-code-text">        }</span></div></div><p><span class="impact-field-label">判定依据</span>此处传入 LoginUserForm，处于角色均未开启 MFA 的分支。此前的凭证校验及角色判断不能证明 performLogin 不会再抛出此次改动涉及的认证异常；需补充完整认证逻辑、RateLimitTargetException 的异常处理及入口限流切面，才能确认该分支的失败响应和计数是否变化。</p><p><span class="impact-field-label">会出什么事</span>（未说明业务后果）</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需人工核实：判定依据里的假设是否成立</span></p></div><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span>在 UserServiceImpl.loginSSO() 中被调用（未归类）</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/service/sys/impl/UserServiceImpl.java</span><span class="impact-code-tab-line">第 180 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">177</span><span class="impact-code-text">        if (baseFacilityPo == null) {</span></div><div class="impact-code-line"><span class="impact-code-no">178</span><span class="impact-code-text">            throw new RRException(&quot;The user&#x27;s facility does not exist!&quot;);</span></div><div class="impact-code-line"><span class="impact-code-no">179</span><span class="impact-code-text">        }</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">180</span><span class="impact-code-text">        LoginRes loginRes = performLogin(sysUser);</span></div><div class="impact-code-line"><span class="impact-code-no">181</span><span class="impact-code-text">        loginRes.setMfa(false);</span></div><div class="impact-code-line"><span class="impact-code-no">182</span><span class="impact-code-text">        return loginRes;</span></div><div class="impact-code-line"><span class="impact-code-no">183</span><span class="impact-code-text">    }</span></div></div><p><span class="impact-field-label">判定依据</span>此处实参类型是 SysUser，而其他消费点传入 LoginUserForm；提供的 performLogin diff 未包含方法声明及各重载实现，无法确认修改的 catch 分支属于哪个签名，也无法确认 performLogin(SysUser) 是否委托到被修改的实现。需补充重载声明及调用关系，不能将 LoginUserForm 调用的影响直接套用到 loginSSO。</p><p><span class="impact-field-label">会出什么事</span>（未说明业务后果）</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需人工核实：判定依据里的假设是否成立</span></p></div><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span>在 VerifyCodeServiceImpl.verifySmsCode() 中被调用（未归类）</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/service/verifycode/impl/VerifyCodeServiceImpl.java</span><span class="impact-code-tab-line">第 136 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">133</span><span class="impact-code-text">            LoginUserForm loginUserForm = new LoginUserForm();</span></div><div class="impact-code-line"><span class="impact-code-no">134</span><span class="impact-code-text">            loginUserForm.setLoginName(loginName);</span></div><div class="impact-code-line"><span class="impact-code-no">135</span><span class="impact-code-text">            loginUserForm.setPasswd(userInfo.getPasswd());</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">136</span><span class="impact-code-text">            userService.performLogin(loginUserForm);</span></div><div class="impact-code-line"><span class="impact-code-no">137</span><span class="impact-code-text">&nbsp;</span></div><div class="impact-code-line"><span class="impact-code-no">138</span><span class="impact-code-text">            String verificationCodeQtyKey = &quot;verificationCode:qty:&quot; + userInfo.getLoginName() + userInfo.getPhone();</span></div><div class="impact-code-line"><span class="impact-code-no">139</span><span class="impact-code-text">            redisUtils.deleteByKey(verificationCodeQtyKey);</span></div></div><p><span class="impact-field-label">判定依据</span>verifySmsCode 在验证码匹配后以 LoginUserForm 调用 performLogin，并直接向外传播异常。未提供完整认证逻辑，无法确认以 userInfo.getPasswd() 构造的凭证是否会进入改动的异常分支；也未提供 RateLimitTargetException 的响应映射及外层限流切面，无法确定验证码登录失败时的实际响应和计数变化。</p><p><span class="impact-field-label">会出什么事</span>（未说明业务后果）</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需人工核实：判定依据里的假设是否成立</span></p></div></details></details></div><div class="impact-card impact-needs-human" data-impact-level="NEEDS_HUMAN" data-fkey="6d6d97e45b" data-fid="I20"><div class="impact-card-header"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span class="impact-index">#20</span><span class="impact-source-tag">字段对账</span></div><div class="impact-field"><div class="impact-field-label">场景</div><p>字段 mixPoes（WorkshareMixPoeRuleBo），在 PosContainerImplService.scanWorkShareReceptacleToContainer() 中被读取（未归类）</p></div><div class="impact-field"><div class="impact-field-label">代码现状</div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerImplService.java</span><span class="impact-code-tab-line">第 2164 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">2161</span><span class="impact-code-text">        String createRemark = mixPoeRule == null</span></div><div class="impact-code-line"><span class="impact-code-no">2162</span><span class="impact-code-text">                ? &quot;Created container Workshare Scan Receptacle&quot;</span></div><div class="impact-code-line"><span class="impact-code-no">2163</span><span class="impact-code-text">                : String.format(&quot;Created container Workshare Scan Receptacle, mixed POE %s released by rule: %s-&gt;%s&quot;,</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">2164</span><span class="impact-code-text">                        destinationPoes, mixPoeRule.getMixPoes(), mixPoeRule.getContainerPoe());</span></div><div class="impact-code-line"><span class="impact-code-no">2165</span><span class="impact-code-text">        pushLogService.createContainerOperationLog(PosContainerOperationEnum.CONTAINER_CREATE,newContainer.getContainerNum(),</span></div><div class="impact-code-line"><span class="impact-code-no">2166</span><span class="impact-code-text">                JSONUtil.toJsonStr(newContainer),LoginUserUtil.getCurOperator(), createRemark);</span></div><div class="impact-code-line"><span class="impact-code-no">2167</span><span class="impact-code-text">        // 将label插入到container parcel</span></div></div></div><div class="impact-field"><div class="impact-field-label">判定依据</div><p>消费点未同步修改；提供的方法体在第2146行截断，缺少第2164行读取 mixPoes 的完整语句，无法确定该读取仅用于日志还是参与业务处理。需补充该处上下文才能判定；Beans API key 日志脱敏需求不能作为 Workshare 混装行为变更的预期依据。</p></div><div class="impact-field"><div class="impact-field-label">会出什么事</div><p>（未说明业务后果）</p></div><div class="impact-field"><div class="impact-field-label">怎么办</div><p class="impact-action">需人工核实：判定依据里的假设是否成立</p></div></div><div class="impact-card impact-merged-card impact-needs-human" data-impact-level="NEEDS_HUMAN" data-fkey="a64785c590" data-fid="I21"><div class="impact-card-header"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span class="impact-index">#21</span><span class="impact-source-tag">字段对账 · 多处调用</span></div><div class="impact-field"><div class="impact-field-label">场景</div><p>字段 containerPoe（WorkshareMixPoeRuleBo）——这 1 处改动被以下 3 个位置调用/引用，逐点判定如下</p></div><details class="impact-merged-details"><summary>展开查看全部 3 个消费点判定</summary><details class="impact-needs-human-fold" open="open"><summary>Major · 需人工核实 · 2 处</summary><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span>在 PosContainerImplService.scanWorkShareReceptacleToContainer() 中被读取（未归类）</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerImplService.java</span><span class="impact-code-tab-line">第 2130 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">2127</span><span class="impact-code-text">            log.info(&quot;[WsMixPoe] released receptacle={} facility={} poes={} containerPoe={}&quot;,</span></div><div class="impact-code-line"><span class="impact-code-no">2128</span><span class="impact-code-text">                    receptacleNo, LoginUserUtil.getCurFacilityCode(), destinationPoes, mixPoeRule.getContainerPoe());</span></div><div class="impact-code-line"><span class="impact-code-no">2129</span><span class="impact-code-text">        }</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">2130</span><span class="impact-code-text">        String containerPoe = mixPoeRule != null ? mixPoeRule.getContainerPoe() : destinationPoes.get(0);</span></div><div class="impact-code-line"><span class="impact-code-no">2131</span><span class="impact-code-text">        String effectiveDestPoe = resolveWorkshareEffectivePoe(label.getOrgId(), containerPoe);</span></div><div class="impact-code-line"><span class="impact-code-no">2132</span><span class="impact-code-text">        String resultMsg = checkWorksharePoe(label, effectiveDestPoe);</span></div><div class="impact-code-line"><span class="impact-code-no">2133</span><span class="impact-code-text">        if (StringUtils.isNotEmpty(resultMsg)) {</span></div></div><p><span class="impact-field-label">判定依据</span>混装时 containerPoe 会用于解析 effectiveDestPoe 并参与 routeCode 的确定；需确认 pos_system_dict 中 WS_MIX_POE_RULE 的实际 containerPoe 配置，以及 matchMixPoeRule 是否保证返回规则已通过 isValid 校验。给定代码无法确认目的地配置是否正确，且混装路由变化不在 Beans API key 日志脱敏需求范围内。</p><p><span class="impact-field-label">会出什么事</span>（未说明业务后果）</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需人工核实：判定依据里的假设是否成立</span></p></div><div class="impact-merged-row"><div class="impact-merged-row-head"><span class="impact-badge impact-needs-human">Major · 需人工核实</span><span>在 PosContainerImplService.scanWorkShareReceptacleToContainer() 中被读取（未归类）</span></div><div class="impact-code-tab"><span class="impact-code-tab-path">pos-service/src/main/java/com/miq/posservice/service/container/impl/PosContainerImplService.java</span><span class="impact-code-tab-line">第 2130 行</span></div><div class="impact-code-body"><div class="impact-code-line"><span class="impact-code-no">2127</span><span class="impact-code-text">            log.info(&quot;[WsMixPoe] released receptacle={} facility={} poes={} containerPoe={}&quot;,</span></div><div class="impact-code-line"><span class="impact-code-no">2128</span><span class="impact-code-text">                    receptacleNo, LoginUserUtil.getCurFacilityCode(), destinationPoes, mixPoeRule.getContainerPoe());</span></div><div class="impact-code-line"><span class="impact-code-no">2129</span><span class="impact-code-text">        }</span></div><div class="impact-code-line impact-code-line-hl"><span class="impact-code-no">2130</span><span class="impact-code-text">        String containerPoe = mixPoeRule != null ? mixPoeRule.getContainerPoe() : destinationPoes.get(0);</span></div><div class="impact-code-line"><span class="impact-code-no">2131</span><span class="impact-code-text">        String effectiveDestPoe = resolveWorkshareEffectivePoe(label.getOrgId(), containerPoe);</span></div><div class="impact-code-line"><span class="impact-code-no">2132</span><span class="impact-code-text">        String resultMsg = checkWorksharePoe(label, effectiveDestPoe);</span></div><div class="impact-code-line"><span class="impact-code-no">2133</span><span class="impact-code-text">        if (StringUtils.isNotEmpty(resultMsg)) {</span></div></div><p><span class="impact-field-label">判定依据</span>提供的方法体截断于 2146 行，2164 行仅给出实参片段，未显示被调用的方法或完整语句；需补充该处调用上下文，确认 containerPoe 是仅用于日志还是参与业务处理。evidence 引用已提供方法体内可核实的同字段读取，不代表 2164 行的用途。</p><p><span class="impact-field-label">会出什么事</span>（未说明业务后果）</p><p><span class="impact-field-label">怎么办</span><span class="impact-action">需人工核实：判定依据里的假设是否成立</span></p></div></details><p class="impact-safe-note">另有 1 处已排查判定安全，不在此列出；完整判定记录见同目录下的 <a href="impact_judgements.json" target="_blank">impact_judgements.json</a>（构建产物原始数据）。</p></details></div></details><p class="impact-safe-note">另有 13 处已排查判定安全，不在此列出；完整判定记录见同目录下的 <a href="impact_judgements.json" target="_blank">impact_judgements.json</a>（构建产物原始数据）。</p></div></section><details class="action-group action-group-verify-dropped" style="margin-bottom:14px;border:1px solid #718096;border-radius:8px;"><summary style="cursor:pointer;font-weight:700;font-size:15px;color:#718096;padding:8px 12px;list-style:none;">🧹 复核已剔除（在仓库里查到已实现/对不上） &middot; 1 个</summary><ul style="padding:0 12px 8px 28px;"><li style="margin-bottom:6px;"><b>需求外动作</b> backend-common/src/main/java/com/miq/backendcommon/enums/MessageCode.java:23 — 原因：需求要求隐藏 Beans API key 日志，MessageCode.SCAN_WARN_DUPLICATE_GEOCODED 却修改了重复 A-scan 的提示文案，并删除原文中的包裹编号占位符 {0}。可见需求及设计说明没有要求调整该扫描提示。
+
+影响：触发 SCAN_WARN_DUPLICATE_GEOC<br><span style="color:#718096;">模型自述的剔除依据（未经人工验证）：检索到的所有该枚举调用均传入固定字符串 msg，实际命中直接设置 message 的 String 重载，不使用枚举文案或 {0} 格式化，因此所述“移除占位符导致扫描提示不再呈现包裹编号”的影响不成立。至于文案修改是否获需求授权，现有仓库材料不足以确认。（证据：backend-common/src/main/java/com/miq/backendcommon/common/ResponseObject.java:161、backend-common/src/main/java/com/miq/backendcommon/common/ResponseObject.java:167、pos-service/src/main/java/com/miq/posservice/service/web/impl/WebInboundParcelServiceImpl.java:1384、pos-service/src/main/java/com/miq/posservice/service/web/impl/WebInboundParcelServiceImpl.java:1390、pos-service/src/main/java/com/miq/posservice/service/web/impl/WebInboundParcelServiceImpl.java:1643、pos-service/src/main/java/com/miq/posservice/service/web/impl/WebInboundParcelServiceImpl.java:1649、pos-service/src/main/java/com/miq/posservice/service/web/impl/WebInboundParcelServiceImpl.java:2332、pos-service/src/main/java/com/miq/posservice/service/web/impl/WebInboundParcelServiceImpl.java:2334）</span></li></ul></details><section class="endpoint-coverage"><details class="ec-details" open="open"><summary class="ec-summary">附录：接口权限核对（审查给出过结论的 16 个接口：1 个有风险、0 个没敢下结论、15 个没问题）</summary><p class="ec-note">这张表把各段审查对「接口权限」的结论逐个接口汇总；被删除的接口只会标「没问题」，没有处理动作。有风险的接口已经列在上面的问题列表里，这里只是对账备查。</p><p class="ec-note">每个接口都至少有一段审查给出了明确结论，没有留下「说不清」的接口。</p><div class="ec-table-wrap"><table class="ec-table"><thead><tr><th>方法</th><th>接口</th><th>结论</th><th>依据</th></tr></thead><tbody><tr class="ec-risk"><td class="ec-method">GET</td><td class="ec-path"><code>/delete/{id}</code></td><td class="ec-verdict"><span class="ec-badge ec-risk">有风险</span></td><td class="ec-reason">新增 pos:role:edit 校验；缺少权限定义，不能推断必须使用其他删除权限标识符。</td></tr><tr class="ec-safe"><td class="ec-method">POST</td><td class="ec-path"><code>/bi-login</code></td><td class="ec-verdict"><span class="ec-badge ec-safe">已确认没问题</span></td><td class="ec-reason">新增 RateLimitProtect(configKey = &quot;login&quot;)，仍调用 userService.performLogin(userForm)，无新增权限风险。</td></tr><tr class="ec-safe"><td class="ec-method">GET</td><td class="ec-path"><code>/deleteByKey</code></td><td class="ec-verdict"><span class="ec-badge ec-safe">已确认没问题</span></td><td class="ec-reason">新增 system:redis:syncAll 校验，未扩大删除权限。</td></tr><tr class="ec-safe"><td class="ec-method">POST</td><td class="ec-path"><code>/deleteByRedisCode</code></td><td class="ec-verdict"><span class="ec-badge ec-safe">已确认没问题</span></td><td class="ec-reason">新增 system:redis:syncAll 校验，未扩大访问权限。</td></tr><tr class="ec-safe"><td class="ec-method">GET</td><td class="ec-path"><code>/getByKey</code></td><td class="ec-verdict"><span class="ec-badge ec-safe">已确认没问题</span></td><td class="ec-reason">新增 system:redis:syncAll 校验，未新增读取逻辑。</td></tr><tr class="ec-safe"><td class="ec-method">POST</td><td class="ec-path"><code>/getByQueryKey</code></td><td class="ec-verdict"><span class="ec-badge ec-safe">已确认没问题</span></td><td class="ec-reason">新增 system:redis:syncAll 校验，未扩大查询权限。</td></tr><tr class="ec-safe"><td class="ec-method">GET</td><td class="ec-path"><code>/getIncrementByKey</code></td><td class="ec-verdict"><span class="ec-badge ec-safe">已确认没问题</span></td><td class="ec-reason">新增 system:redis:syncAll 校验，未扩大操作权限。</td></tr><tr class="ec-safe"><td class="ec-method">GET</td><td class="ec-path"><code>/getOne</code></td><td class="ec-verdict"><span class="ec-badge ec-safe">已确认没问题</span></td><td class="ec-reason">新增 pos:role:query、pos:role:add、pos:role:edit 任一权限校验，未新增数据返回逻辑。</td></tr><tr class="ec-safe"><td class="ec-method">POST</td><td class="ec-path"><code>/login</code></td><td class="ec-verdict"><span class="ec-badge ec-safe">已确认没问题</span></td><td class="ec-reason">新增 RateLimitProtect(configKey = &quot;login&quot;)，未修改身份验证及返回数据逻辑，无新增权限风险。</td></tr><tr class="ec-safe"><td class="ec-method">POST</td><td class="ec-path"><code>/login/bi-login（路径来自代码注释）</code></td><td class="ec-verdict"><span class="ec-badge ec-safe">已确认没问题</span></td><td class="ec-reason">关联 UserServiceImpl.performLogin，本次异常替换保留 currentUser.login(token) 认证流程，无新增权限风险。</td></tr><tr class="ec-safe"><td class="ec-method">POST</td><td class="ec-path"><code>/login（方法级映射，类级前缀未提供）</code></td><td class="ec-verdict"><span class="ec-badge ec-safe">已确认没问题</span></td><td class="ec-reason">关联 UserServiceImpl.login，本次异常替换无新增权限风险。</td></tr><tr class="ec-safe"><td class="ec-method">GET</td><td class="ec-path"><code>/permissionCodeList</code></td><td class="ec-verdict"><span class="ec-badge ec-safe">已确认没问题</span></td><td class="ec-reason">新增 pos:role:query、pos:role:add、pos:role:edit 任一权限校验，未新增数据返回逻辑。</td></tr><tr class="ec-safe"><td class="ec-method">POST</td><td class="ec-path"><code>/reset-pwd</code></td><td class="ec-verdict"><span class="ec-badge ec-safe">已确认没问题</span></td><td class="ec-reason">拒绝 currentUser 为 null 的请求，并使用 currentUser.getLoginName() 调用 resetPassword，不再接受请求指定重置对象，无新增权限风险。</td></tr><tr class="ec-safe"><td class="ec-method">GET</td><td class="ec-path"><code>/setIncrementByKey</code></td><td class="ec-verdict"><span class="ec-badge ec-safe">已确认没问题</span></td><td class="ec-reason">新增 system:redis:syncAll 校验，未扩大操作权限。</td></tr><tr class="ec-safe"><td class="ec-method">GET</td><td class="ec-path"><code>/syncAll</code></td><td class="ec-verdict"><span class="ec-badge ec-safe">已确认没问题</span></td><td class="ec-reason">保留 system:redis:syncAll 校验，仅调整注解位置。</td></tr><tr class="ec-safe"><td class="ec-method">POST</td><td class="ec-path"><code>/syncByRedisCode</code></td><td class="ec-verdict"><span class="ec-badge ec-safe">已确认没问题</span></td><td class="ec-reason">新增 system:redis:syncAll 校验，未扩大访问权限。</td></tr></tbody></table></div></details></section>
+    </div>
+
+    
+  </div>
+  <script>
+    function escHtml(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function formatSummaryInner(rawBlock) {
+      var lines = rawBlock.split(/\r?\n/);
+      var html = '';
+      var listType = null;
+
+      function closeList() {
+        if (listType) { html += '</' + listType + '>'; listType = null; }
+      }
+
+      function renderInline(text) {
+        var st = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        st = st.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        st = st.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+        return st;
+      }
+
+      lines.forEach(function(line) {
+        var trimmed = line.trim();
+        if (!trimmed) { closeList(); return; }
+
+        if (/^#{1,3}\s+/.test(trimmed)) {
+          closeList();
+          var title = trimmed.replace(/^#{1,3}\s+/, '');
+          html += '<p class="summary-section-title">' + renderInline(title) + '</p>';
+          return;
+        }
+
+        if (/^\*\*[^*]+\*\*[：:。]?$/.test(trimmed)) {
+          closeList();
+          var title2 = trimmed.replace(/^\*\*|\*\*[：:。]?$/g, '');
+          html += '<p class="summary-section-title">' + renderInline(title2) + '</p>';
+          return;
+        }
+
+        if (/^[【「『].*[】」』]$/.test(trimmed) ||
+            (trimmed.length <= 30 && /[：:]$/.test(trimmed) && !/^\d/.test(trimmed))) {
+          closeList();
+          var title3 = trimmed.replace(/^[【「『]|[】」』]$/g, '').replace(/[：:]$/, '');
+          html += '<p class="summary-section-title">' + renderInline(title3) + '</p>';
+          return;
+        }
+
+        if (/^[-*]\s+/.test(trimmed)) {
+          if (listType !== 'ul') { closeList(); html += '<ul>'; listType = 'ul'; }
+          var content = trimmed.replace(/^[-*]\s+/, '');
+          html += '<li>' + renderInline(content) + '</li>';
+          return;
+        }
+
+        if (/^[\(（]?\d+[\)）.\、]\s*/.test(trimmed)) {
+          if (listType !== 'ol') { closeList(); html += '<ol>'; listType = 'ol'; }
+          var content2 = trimmed.replace(/^[\(（]?\d+[\)）.\、]\s*/, '');
+          html += '<li>' + renderInline(content2) + '</li>';
+          return;
+        }
+
+        closeList();
+        if (trimmed.length > 280 && /[。！？][\s\u3000]/.test(trimmed)) {
+          var chunks = trimmed.split(/(?<=[。！？])[\s\u3000]+/).filter(function (c) { return c.trim(); });
+          if (chunks.length > 1) {
+            chunks.forEach(function (c) {
+              html += '<p>' + renderInline(c.trim()) + '</p>';
+            });
+            return;
+          }
+        }
+        html += '<p>' + renderInline(trimmed) + '</p>';
+      });
+
+      closeList();
+      return html;
+    }
+
+    function formatSummary() {
+      var el = document.getElementById('summary-text');
+      if (!el) return;
+      if (el.classList.contains('summary-preformatted')) return;
+      var raw = el.textContent || '';
+      raw = raw.replace(/\s+(?=本分片)/g, '\n---SHARD---\n');
+      var shards = raw.split(/\n---SHARD---\n/).map(function(s) { return s.trim(); }).filter(Boolean);
+      if (!shards.length) shards = [raw.trim()].filter(Boolean);
+
+      if (shards.length <= 1) {
+        var inner = formatSummaryInner(shards[0] || '');
+        if (inner) el.innerHTML = inner;
+        return;
+      }
+
+      var htmlShards = [];
+      for (var i = 0; i < shards.length; i++) {
+        var blockHtml = formatSummaryInner(shards[i]);
+        if (blockHtml) htmlShards.push('<div class="summary-shard">' + blockHtml + '</div>');
+      }
+      var head = htmlShards.slice(0, 3).join('');
+      var tail = htmlShards.slice(3).join('');
+      var moreBtn = '';
+      if (tail) {
+        moreBtn = '<button type="button" class="summary-toggle" id="summary-toggle-btn" aria-expanded="false">展开全部分片结论 (' + (htmlShards.length - 3) + ')</button>';
+      }
+      el.innerHTML = '<div class="summary-shards-wrap">' + head +
+        (tail ? '<div class="summary-more" id="summary-more-block" hidden>' + tail + '</div>' : '') +
+        moreBtn + '</div>';
+
+      var btn = document.getElementById('summary-toggle-btn');
+      var more = document.getElementById('summary-more-block');
+      if (btn && more) {
+        btn.addEventListener('click', function() {
+          var ex = btn.getAttribute('aria-expanded') === 'true';
+          more.hidden = ex;
+          btn.setAttribute('aria-expanded', ex ? 'false' : 'true');
+          btn.textContent = ex
+            ? ('展开全部分片结论 (' + (htmlShards.length - 3) + ')')
+            : '收起分片结论';
+        });
+      }
+    }
+
+    function switchReportTab(which) {
+      var panels = ['panel-general', 'panel-dp'];
+      var tabs = ['tab-general', 'tab-dp'];
+      var activePanel = which === 'dp' ? 'panel-dp' : 'panel-general';
+      var activeTab = which === 'dp' ? 'tab-dp' : 'tab-general';
+      panels.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) { el.classList.toggle('is-active', id === activePanel); }
+      });
+      tabs.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) { el.setAttribute('aria-selected', id === activeTab ? 'true' : 'false'); }
+      });
+    }
+
+    var activeFilter = null;
+
+    function getSearchQuery() {
+      var inp = document.getElementById('findings-search');
+      return inp ? String(inp.value || '').trim().toLowerCase() : '';
+    }
+
+    function applyFindingsFilter() {
+      var hint = document.getElementById('filter-hint');
+      var hintLabel = document.getElementById('filter-hint-label');
+
+      if (activeFilter) {
+        hintLabel.textContent = activeFilter.toUpperCase();
+        hint.style.display = 'block';
+      } else {
+        hint.style.display = 'none';
+      }
+
+      var q = getSearchQuery();
+
+      document.querySelectorAll('.findings-file-group').forEach(function(group) {
+        var visible = 0;
+        group.querySelectorAll('.finding-card').forEach(function(card) {
+          var sev = card.getAttribute('data-severity') || 'info';
+          var sevOk = !activeFilter || sev === activeFilter;
+          var textOk = !q || card.textContent.toLowerCase().indexOf(q) !== -1;
+          var show = sevOk && textOk;
+          card.style.display = show ? '' : 'none';
+          if (show) visible++;
+        });
+        group.style.display = visible === 0 ? 'none' : '';
+        // 任务115续作：finding 现在可能嵌套在 <details class="action-group"> 里，
+        // 该祖先关闭时子元素无论 style.display 如何都不会渲染，命中过滤结果时须一并展开。
+        if (visible > 0) {
+          var actionGroup = group.closest('.action-group');
+          if (actionGroup) actionGroup.open = true;
+        }
+      });
+
+      document.querySelectorAll('.file-block').forEach(function(block) {
+        if (block.classList.contains('findings-file-group')) return;
+        var rows = block.querySelectorAll('tbody tr');
+        if (!rows.length) return;
+        var vis = 0;
+        rows.forEach(function(row) {
+          if (!activeFilter || row.querySelector('.chip.' + activeFilter)) {
+            row.style.display = '';
+            vis++;
+          } else {
+            row.style.display = 'none';
+          }
+        });
+        block.style.display = vis === 0 ? 'none' : '';
+      });
+
+      // 顶部 Critical/Major 计数把「牵连影响」的 RISK/NEEDS_HUMAN 也并了进去
+      // （用户拍板口径），但这些卡片不是 .finding-card，之前点 Critical 只会
+      // 过滤上面两段、对牵连影响毫无反应，数字和实际看到的东西对不上
+      // （build TEST_pus-exchange-api/222 反馈）。按同一套口径把牵连影响的卡
+      // 也纳入过滤：RISK 对应 critical，NEEDS_HUMAN 对应 major；筛 minor/info
+      // 时牵连影响没有对应桶，全部隐藏是符合口径的。
+      var impactLevelMap = { critical: 'RISK', major: 'NEEDS_HUMAN' };
+      document.querySelectorAll('.impact-card[data-impact-level]').forEach(function(card) {
+        var level = card.getAttribute('data-impact-level');
+        var show = !activeFilter || impactLevelMap[activeFilter] === level;
+        card.style.display = show ? '' : 'none';
+        if (show && activeFilter) {
+          var d = card.closest('details');
+          if (d) d.open = true;
+        }
+      });
+    }
+
+    function filterBySeverity(chip) {
+      var filter = chip.dataset.filter;
+      if (activeFilter === filter) {
+        clearFilter();
+        return;
+      }
+      activeFilter = filter;
+      document.querySelectorAll('.filter-chip').forEach(function(c) {
+        if (c.dataset.filter === filter) {
+          c.classList.add('active');
+          c.classList.remove('dimmed');
+        } else {
+          c.classList.remove('active');
+          c.classList.add('dimmed');
+        }
+      });
+      applyFindingsFilter();
+    }
+
+    function clearFilter() {
+      activeFilter = null;
+      document.querySelectorAll('.filter-chip').forEach(function(c) {
+        c.classList.remove('active', 'dimmed');
+      });
+      applyFindingsFilter();
+    }
+
+    function initFindingsToolbar() {
+      var tb = document.getElementById('findings-toolbar');
+      if (!tb) return;
+      var groups = document.querySelectorAll('#panel-general .findings-file-group');
+      tb.style.display = groups.length ? '' : 'none';
+    }
+
+    (function () {
+      var chips = document.querySelectorAll('table .chip');
+      for (var i = 0; i < chips.length; i++) {
+        chips[i].textContent = chips[i].textContent.toUpperCase();
+      }
+
+      formatSummary();
+
+      initFindingsToolbar();
+
+      var ex = document.getElementById('expand-all-files');
+      var cl = document.getElementById('collapse-all-files');
+      if (ex) ex.addEventListener('click', function() {
+        document.querySelectorAll('.findings-file-group').forEach(function(d) { d.open = true; });
+        document.querySelectorAll('.action-group').forEach(function(d) { d.open = true; });
+      });
+      if (cl) cl.addEventListener('click', function() {
+        document.querySelectorAll('.findings-file-group').forEach(function(d) { d.open = false; });
+        document.querySelectorAll('.action-group').forEach(function(d) { d.open = false; });
+      });
+
+      var search = document.getElementById('findings-search');
+      if (search) {
+        search.addEventListener('input', function() { applyFindingsFilter(); });
+      }
+    })();
+
+    // Chart.js initialization
+    function renderCategoryChart(categoryData) {
+      var ctx = document.getElementById('categoryChart');
+      if (!ctx) return;
+      ctx = ctx.getContext('2d');
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: Object.keys(categoryData),
+          datasets: [{
+            label: '问题数量',
+            data: Object.values(categoryData),
+            // 跟报告主色（teal 系）协调的低饱和度调色板，替换 Chart.js 默认的
+            // 高饱和度七彩配色（用户反馈报告"不好看"，实测截图确认默认色彩
+            // 花哨刺眼、跟品牌色不搭）；18 色覆盖 VALID_CATEGORIES 全量枚举，
+            // 保证再多分类同时出现也不会因为数组不够长而退化成无色
+            backgroundColor: [
+              '#0f766e', '#b5651d', '#4a6fa5', '#8e6c96',
+              '#6b8f71', '#b58a3d', '#b56576', '#5c7a89',
+              '#3d8a8a', '#a3703f', '#5f7a9d', '#7a6b9d',
+              '#7fa17f', '#c29b5c', '#9d6b7a', '#6b8a9d',
+              '#8a9d6b', '#9d7a5f'
+            ]
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: true } }
+        }
+      });
+    }
+
+    // 这个短列表只是一句话摘要，不值得把 markdown 代码块渲染进一个 <li> 里——
+    // 直接去掉标记符本身，露出裸文本即可（跟 _render_markdown_lite 的完整
+    // 渲染不同，这里要的是"别露出字面 ** 和 ``` "，不是"渲染出富文本"）
+    function stripMdLite(text) {
+      return (text || '')
+        .replace(/```[a-zA-Z]*\n?/g, '')
+        .replace(/```/g, '')
+        .replace(/\*\*([^*]+)\*\*/g, '$1')
+        .replace(/`([^`]+)`/g, '$1');
+    }
+
+    function renderTopCriticals(topCriticals) {
+      var list = document.getElementById('top-criticals-list');
+      var box = document.getElementById('top-criticals');
+      if (!list) return;
+      // 一条都没有时整块收起，不留「标题 + 暂无 Critical 问题」空框占首屏
+      if (!topCriticals || !topCriticals.length) {
+        if (box) box.hidden = true;
+        list.innerHTML = '';
+        return;
+      }
+      if (box) box.hidden = false;
+      list.innerHTML = topCriticals.map(function(c) {
+        var desc = stripMdLite(c.description || '');
+        if (desc.length > 120) desc = desc.substring(0, 120) + '…';
+        // source 只有牵连影响条目才带：不标来源的话，读者会把"改动波及到的
+        // 其他调用点"当成"这段代码本身写错了"，两者要采取的动作不一样
+        var tag = c.source
+          ? '<span class="tc-source">' + escHtml(c.source) + '</span>'
+          : '';
+        return '<li>' + tag + '<strong>' + escHtml(c.file + (c.line ? ':' + c.line : '')) +
+               '</strong><span class="tc-desc">' + escHtml(desc) + '</span></li>';
+      }).join('');
+    }
+
+    // Export stubs (implemented in Task 5)
+    function exportJira() { alert('导出为 Jira 功能待实现'); }
+    function exportExcel() { alert('导出为 Excel 功能待实现'); }
+    function exportCsv() { alert('导出为 CSV 功能待实现'); }
+
+    // Inject summary data (Task 5)
+    if (typeof renderCategoryChart === 'function') renderCategoryChart({"\u5e76\u53d1\u5b89\u5168": 2, "\u9700\u6c42\u5916\u52a8\u4f5c": 2, "\u5b89\u5168\u98ce\u9669": 1});
+if (typeof renderTopCriticals === 'function') renderTopCriticals([{"file": "pos-admin-api/src/main/java/com/miq/posadminapi/controller/businessdata/RefreshRouteController.java", "line": "270", "description": "常量 UPLOAD_TRACKEND_PARCEL_RESET_STATUS_LIMIT（ExcelRowLimit）——在 RefreshRouteController.resetTrackendLabelStatus() 中被引用（接口层功能（Controller））；管理员上传包含5001至50000个不同trkNos的文件时，RefreshRouteController.resetTrackendLabelStatus将不再按原5000条上限拒绝，而会将这些trkNos提交给beanRefreshRouteService.resetTrackendLabelStatus处理。", "source": "牵连影响"}, {"file": "pos-api/src/main/java/com/miq/posapi/job/VintedPudoJob.java", "line": "81", "description": "方法 PartnerLocationSyncServiceImpl.syncAll——在 VintedPudoJob.syncVintedPudoPointsJob() 中被调用（定时任务功能（Job））；syncVintedPudoPointsJob 全量同步 Vinted 点位时，syncAll 不再按邮编获取 zone_id，而改为按所属 facility 获取，导致点位分区结果改变，且无 facility 或 facility 不存在的点位会得到空 zone_id。", "source": "牵连影响"}, {"file": "pos-service/src/main/java/com/miq/posservice/service/impl/PartnerLocationConverter.java", "line": "134", "description": "方法 PartnerLocationSyncDto.getZipCode——在 PartnerLocationConverter.toEntity() 中被调用（未归类）；Vinted 传入 90001-1234 时，PartnerLocationConverter.toEntity 构建的 PartnerLocation.zipCode 将变为 90001，丢失原始邮编的扩展部分。", "source": "牵连影响"}]);
+
+    // Export dropdown toggle
+    (function() {
+      var btn = document.getElementById('export-btn');
+      var menu = document.getElementById('export-menu');
+      if (!btn || !menu) return;
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var shown = menu.style.display === 'block';
+        menu.style.display = shown ? 'none' : 'block';
+      });
+      document.addEventListener('click', function() {
+        menu.style.display = 'none';
+      });
+    })();
+  </script>
+
+<style>
+.fbw-bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:14px;padding:10px 12px;
+  border-top:1px dashed #b8c4d6;background:#f3f7fd;border-radius:0 0 8px 8px}
+.fbw-q{font-size:13.5px;font-weight:600;color:#1f3a5f;margin-right:auto}
+.fbw-act{min-height:32px;padding:5px 16px;font-size:14px;font-weight:600;border:0;border-radius:6px;
+  color:#fff;cursor:pointer;transition:transform .08s,box-shadow .12s,filter .12s}
+.fbw-act:hover{filter:brightness(1.08);box-shadow:0 2px 6px rgba(0,0,0,.25);transform:translateY(-1px)}
+.fbw-act:focus-visible{outline:3px solid #ffb300;outline-offset:2px}
+.fbw-act.ok{background:#2e7d32}.fbw-act.no{background:#c62828}.fbw-act.later{background:#607d8b}
+.fbw-bar.done{background:#e8f5e9;border-top-color:#81c784}
+.fbw-bar.done .fbw-q{color:#1b5e20}
+.fbw-edit{min-height:28px;padding:3px 12px;font-size:13px;border:1px solid #2e7d32;color:#2e7d32;
+  background:#fff;border-radius:6px;cursor:pointer}
+.fbw-hint{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0 0 12px;padding:10px 14px;
+  background:#fff8e1;border:1px solid #ffe082;border-left:4px solid #ffb300;border-radius:8px;
+  font-size:14px;color:#5d4037}
+.fbw-hint b{color:#e65100}
+.fbw-next{margin-left:auto;padding:4px 12px;font-size:13px;font-weight:600;border:1px solid #e65100;
+  color:#e65100;background:#fff;border-radius:6px;cursor:pointer}
+.fbw-mask{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;z-index:9999;
+  align-items:center;justify-content:center}
+.fbw-mask.open{display:flex}
+.fbw-box{background:#fff;color:#222;border-radius:8px;padding:18px 20px;width:min(480px,92vw);
+  max-height:90vh;overflow:auto;box-shadow:0 8px 30px rgba(0,0,0,.3);font-size:14px}
+.fbw-box h3{margin:0 0 10px;font-size:16px}
+.fbw-box label{display:block;margin:8px 0 3px;font-size:12px;color:#555}
+.fbw-box select,.fbw-box input,.fbw-box textarea{width:100%;box-sizing:border-box;padding:6px 8px;
+  border:1px solid #ccc;border-radius:4px;font-size:13px}
+.fbw-err{color:#c62828;font-size:12px;min-height:16px;margin-top:8px}
+.fbw-row{display:flex;gap:8px;justify-content:flex-end;margin-top:10px}
+.fbw-row button{padding:6px 14px;border-radius:4px;border:1px solid #1565c0;cursor:pointer;
+  background:#1565c0;color:#fff}
+.fbw-row button.sec{background:#fff;color:#1565c0}
+</style>
+
+<div class="fbw-mask" id="fbw-mask" role="dialog" aria-modal="true">
+ <div class="fbw-box" id="fbw-form">  <!-- 不用表单标签：托管页沙箱没有 allow-forms，表单提交会被浏览器直接拦掉 -->
+  <h3>对这个问题的反馈</h3>
+  <label>结论</label>
+  <select id="fbw-verdict">
+   <option value="confirmed">认可（确实是问题）</option>
+   <option value="rejected">驳回（不是问题）</option>
+   <option value="deferred">暂缓</option>
+  </select>
+  <div id="fbw-sub-wrap"><label>怎么处理</label><select id="fbw-sub"></select>
+   <div id="fbw-commit-wrap"><label>修复提交号（选填）</label><input id="fbw-commit" maxlength="40"></div></div>
+  <div id="fbw-reason-wrap"><label>驳回原因</label><select id="fbw-reason"></select></div>
+  <div id="fbw-ev-wrap"><label id="fbw-ev-label">证据（出处或代码位置）</label>
+   <textarea id="fbw-evidence" rows="2" maxlength="1000"></textarea></div>
+  <label id="fbw-note-label">补充说明</label>
+  <textarea id="fbw-note" rows="2" maxlength="1000"></textarea>
+  <label>你的邮箱（用于记录是谁反馈的）</label>
+  <input id="fbw-email" type="email" maxlength="128" placeholder="name@speedx.io">
+  <div class="fbw-err" id="fbw-err"></div>
+  <div class="fbw-row"><button type="button" class="sec" id="fbw-cancel">取消</button>
+   <button type="button" id="fbw-submit">提交</button></div>
+ </div>
+</div>
+
+<script>
+(function () {
+  var API = "https://spxqa-platform.speedx.io";
+  var m = (location.pathname || '').match(/\/api\/review-reports\/(\d{8}-[A-Za-z0-9_-]{1,40}-[0-9a-f]{8})/);
+  if (!m) return;  // Jenkins 拷贝 / 本地打开：不显示反馈入口
+  var REPORT_ID = m[1];
+  var SUB = { 'this': '本期修', next: '下期修', fixed: '已修复' };
+  var REASON = { design_as_intended: '需求就这样设计', guarded_elsewhere: '别处已有兜底',
+    misread_code: 'AI 看错了代码', cannot_happen: '这种情况不会发生', fixed_elsewhere: '别处已修',
+    other: '其它', ignored: '直接忽略' };
+  var VERDICT_TEXT = { confirmed: '已认可', rejected: '已驳回', deferred: '已暂缓' };
+  var EV_REQ = { design_as_intended: 1, guarded_elsewhere: 1 };
+  var memEmail = '';
+  var cur = null;
+
+  function $(id) { return document.getElementById(id); }
+  function fill(sel, map) {
+    Object.keys(map).forEach(function (k) {
+      var o = document.createElement('option'); o.value = k; o.textContent = map[k]; sel.appendChild(o);
+    });
+  }
+  fill($('fbw-sub'), SUB); fill($('fbw-reason'), REASON);
+
+  function syncForm() {
+    var v = $('fbw-verdict').value, r = $('fbw-reason').value;
+    $('fbw-sub-wrap').style.display = v === 'confirmed' ? '' : 'none';
+    $('fbw-commit-wrap').style.display = v === 'confirmed' && $('fbw-sub').value === 'fixed' ? '' : 'none';
+    $('fbw-reason-wrap').style.display = v === 'rejected' ? '' : 'none';
+    $('fbw-ev-label').textContent = v === 'rejected' && EV_REQ[r] ? '证据（必填：出处或代码位置）' : '证据（出处或代码位置，选填）';
+    $('fbw-note-label').textContent = v === 'rejected' && r === 'other' ? '补充说明（必填）' : '补充说明（选填）';
+  }
+  ['fbw-verdict', 'fbw-sub', 'fbw-reason'].forEach(function (id) { $(id).addEventListener('change', syncForm); });
+
+  function close() { $('fbw-mask').classList.remove('open'); cur = null; }
+  $('fbw-cancel').addEventListener('click', close);
+  $('fbw-mask').addEventListener('click', function (e) { if (e.target === $('fbw-mask')) close(); });
+
+  function open(card, verdict) {
+    cur = card;
+    $('fbw-err').textContent = '';
+    $('fbw-email').value = memEmail;
+    ['fbw-evidence', 'fbw-note', 'fbw-commit'].forEach(function (id) { $(id).value = ''; });  // 每张卡片重新填，不带上上一条的内容
+    $('fbw-verdict').value = verdict || 'confirmed'; $('fbw-sub').selectedIndex = 0; $('fbw-reason').selectedIndex = 0;
+    syncForm();
+    $('fbw-mask').classList.add('open');
+    // 一键表态后把光标直接送到下一个要填的位置
+    var focusId = verdict === 'rejected' ? 'fbw-reason' : (memEmail ? 'fbw-submit' : 'fbw-email');
+    setTimeout(function () { $(focusId).focus(); }, 0);
+  }
+
+  var doneMap = {};
+  var total = 0;
+  var countEl = null;
+
+  function refreshCount() {
+    if (countEl) countEl.textContent = String(Object.keys(doneMap).length);
+  }
+
+  function mkBtn(cls, text, label, onClick) {
+    var b = document.createElement('button');
+    b.type = 'button'; b.className = cls; b.textContent = text; b.setAttribute('aria-label', label);
+    b.addEventListener('click', onClick);
+    return b;
+  }
+
+  function renderBar(bar, card, verdict) {
+    while (bar.firstChild) bar.removeChild(bar.firstChild);
+    var q = document.createElement('span'); q.className = 'fbw-q';
+    if (verdict) {
+      bar.classList.add('done');
+      q.textContent = '✓ ' + (VERDICT_TEXT[verdict] || '已反馈') + '，谢谢你的反馈';
+      bar.appendChild(q);
+      bar.appendChild(mkBtn('fbw-edit', '修改', '修改对这个问题的反馈', function () { open(card, verdict); }));
+      return;
+    }
+    bar.classList.remove('done');
+    q.textContent = '这条判断对吗？点一下告诉我们：';
+    bar.appendChild(q);
+    bar.appendChild(mkBtn('fbw-act ok', '👍 认可', '认可：确实是问题', function () { open(card, 'confirmed'); }));
+    bar.appendChild(mkBtn('fbw-act no', '👎 驳回', '驳回：不是问题', function () { open(card, 'rejected'); }));
+    bar.appendChild(mkBtn('fbw-act later', '⏸ 暂缓', '暂缓处理', function () { open(card, 'deferred'); }));
+  }
+
+  function mark(fkey, verdict) {
+    doneMap[fkey] = verdict;
+    refreshCount();
+    document.querySelectorAll('.fbw-bar[data-fkey="' + fkey + '"]').forEach(function (bar) {
+      renderBar(bar, bar.parentNode, verdict);
+    });
+  }
+
+  function buildBody(email) {
+    var v = $('fbw-verdict').value;
+    var body = { report_id: REPORT_ID, fkey: cur.getAttribute('data-fkey'), fid: cur.getAttribute('data-fid') || '',
+      verdict: v, actor: email, evidence: $('fbw-evidence').value.trim(), note: $('fbw-note').value.trim() };
+    if (v === 'confirmed') {
+      body.sub = $('fbw-sub').value;
+      if (body.sub === 'fixed' && $('fbw-commit').value.trim()) body.fix_commit = $('fbw-commit').value.trim();
+    }
+    if (v === 'rejected') body.reason_code = $('fbw-reason').value;
+    return body;
+  }
+
+  $('fbw-submit').addEventListener('click', function () {
+    if (!cur) return;
+    var err = $('fbw-err'); err.textContent = '';
+    var email = $('fbw-email').value.trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { err.textContent = '请填写有效邮箱'; return; }
+    var body = buildBody(email);
+    if (body.verdict === 'rejected' && EV_REQ[body.reason_code] && !body.evidence) { err.textContent = '这个驳回原因必须填证据'; return; }
+    if (body.verdict === 'rejected' && body.reason_code === 'other' && !body.note) { err.textContent = '选「其它」必须填补充说明'; return; }
+    var btn = $('fbw-submit'); btn.disabled = true;
+    fetch(API + '/api/cr-feedback', { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=UTF-8' },  // 平台按原始 body 解析 JSON；text/plain 属简单请求，躲开跨域预检
+      body: JSON.stringify(body) })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        btn.disabled = false;
+        if (!res.ok) { err.textContent = '提交失败：' + (res.j.message || res.j.detail || res.j.error || '未知错误'); return; }
+        memEmail = email;
+        mark(body.fkey, body.verdict);
+        close();
+      })
+      .catch(function (ex) { btn.disabled = false; err.textContent = '网络失败：' + ex.message; });
+  });
+
+  var cards = document.querySelectorAll('.finding-card[data-fkey], .impact-card[data-fkey]');
+  cards.forEach(function (card) {
+    var bar = document.createElement('div');
+    bar.className = 'fbw-bar';
+    bar.setAttribute('data-fkey', card.getAttribute('data-fkey'));
+    renderBar(bar, card, null);
+    card.appendChild(bar);
+  });
+  var seen = {};
+  cards.forEach(function (c) { seen[c.getAttribute('data-fkey')] = 1; });
+  total = Object.keys(seen).length;  // 按不重复的 fkey 计
+  if (total) {
+    var hint = document.createElement('div'); hint.className = 'fbw-hint';
+    var t1 = document.createElement('span');
+    t1.textContent = '请对每条问题点表态（认可 / 驳回 / 暂缓），你的反馈会让评审越来越准。已反馈 ';
+    countEl = document.createElement('b'); countEl.textContent = '0';
+    var folded = 0;
+    cards.forEach(function (c) { var d = c.closest('details'); if (d && !d.open) folded++; });
+    var t2 = document.createElement('span');
+    t2.textContent = ' / ' + total + ' 条' + (folded ? '（其中 ' + folded + ' 条在折叠分组里，点右边按钮会自动展开）' : '');
+    hint.appendChild(t1); hint.appendChild(countEl); hint.appendChild(t2);
+    hint.appendChild(mkBtn('fbw-next', '跳到下一条未反馈 ↓', '滚动到下一条还没反馈的问题', function () {
+      for (var i = 0; i < cards.length; i++) {
+        if (!doneMap[cards[i].getAttribute('data-fkey')]) {
+          // 卡片在默认折叠的分组里时先展开，否则滚到一个看不见的位置
+          var d = cards[i].closest('details');
+          while (d) { d.open = true; d = d.parentElement ? d.parentElement.closest('details') : null; }
+          cards[i].scrollIntoView({ behavior: 'smooth', block: 'center' }); return;
+        }
+      }
+    }));
+    cards[0].parentNode.insertBefore(hint, cards[0]);
+  }
+
+  fetch(API + '/api/cr-feedback?report_id=' + encodeURIComponent(REPORT_ID))
+    .then(function (r) { return r.ok ? r.json() : { items: [] }; })
+    .then(function (j) { (j.items || []).forEach(function (it) { if (it && it.fkey && it.verdict) mark(it.fkey, it.verdict); }); })
+    .catch(function () { /* 回显失败不影响提交 */ });
+})();
+</script>
+</body>
+</html>
